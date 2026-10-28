@@ -1,0 +1,17 @@
+# Upstream WebKit checkout (fetched by tools/webkit.py at WEBKIT_REVISION)
+/third_party/webkit/
+/third_party/sysroot/
+
+# Build outputs
+/build/
+/out/
+/zig-out/
+/.zig-cache/
+*.pdb
+*.ilk
+
+# Editors
+/.vs/
+/.vscode/
+/.idea/
+/third_party/vcpkg/

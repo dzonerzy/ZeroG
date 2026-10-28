@@ -1,0 +1,6 @@
+* text=auto
+*.patch -text
+*.sh text eol=lf
+*.py text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf

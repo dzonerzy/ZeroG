@@ -1,0 +1,12 @@
+{
+  "name": "zerog-deps",
+  "version-string": "0",
+  "description": "Static dependency sysroot for the ZeroG port. Libraries are added one at a time, when the feature that needs them lands (ZeroG.md, 'Ordine di lavoro').",
+  "dependencies": [
+    {
+      "name": "icu",
+      "default-features": false
+    }
+  ],
+  "builtin-baseline": "0e5eb43501dab17aa055dd54bd7a8c018f330fe2"
+}
