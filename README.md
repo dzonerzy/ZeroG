@@ -35,8 +35,34 @@ python tools/webkit.py prepare   # reset, apply patches/series, copy port/overla
 python tools/webkit.py status
 ```
 
-Windows needs long paths enabled (`git config --global core.longpaths true` and
-the `LongPathsEnabled` registry key).
+## Building (phase 0: static WTF + JavaScriptCore via the upstream JSCOnly port)
+
+```sh
+python tools/build.py deps        # static ICU into third_party/sysroot (vcpkg)
+python tools/build.py configure   # build/jsconly-minimal
+python tools/build.py build
+```
+
+Windows requirements:
+
+- Visual Studio 2022 (C++ workload, Windows SDK), LLVM/clang-cl >= 19, Ninja,
+  Python 3, Perl (Git for Windows' perl works), Ruby, gperf;
+  vcpkg cloned and bootstrapped in `third_party/vcpkg`.
+- **Developer Mode** (Settings → System → For developers), or a shell with the
+  symlink privilege. JavaScriptCore's private headers are symlinks upstream, and
+  clang-cl matches `#pragma once` by final resolved path: copies and hardlinks
+  cause redefinition errors, only symlinks work.
+- Long paths enabled (`LongPathsEnabled` registry key; `tools/webkit.py` sets
+  `core.longpaths` and `core.autocrlf=false` on the checkout).
+
+Linux builds run in the pinned Docker image:
+
+```sh
+docker build -t zerog-linux-builder -f tools/docker/linux-builder.Dockerfile tools/docker
+docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builder \
+    sh -c 'python3 tools/build.py configure --build-dir /build/jsconly-minimal &&
+           python3 tools/build.py build --build-dir /build/jsconly-minimal'
+```
 
 ## License
 

@@ -75,6 +75,8 @@ def build_env():
 
 
 def build_dir(args):
+    if args.build_dir:
+        return Path(args.build_dir)
     return ROOT / "build" / f"{args.port.lower()}-{args.profile}"
 
 
@@ -154,6 +156,7 @@ def main():
     parser.add_argument("--profile", default="minimal", choices=sorted(PROFILES))
     parser.add_argument("-D", "--define", action="append", help="extra CMake definition KEY=VALUE")
     parser.add_argument("-j", "--jobs", type=int)
+    parser.add_argument("--build-dir", help="default: build/<port>-<profile>")
     args = parser.parse_args()
     {"deps": cmd_deps, "configure": cmd_configure, "build": cmd_build, "all": cmd_all}[args.command](args)
 

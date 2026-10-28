@@ -64,6 +64,8 @@ def cmd_fetch(args):
         WEBKIT.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init", "-q", str(WEBKIT)], check=True)
         git("config", "core.longpaths", "true")
+        # Keep upstream line endings: generator scripts and patches expect LF.
+        git("config", "core.autocrlf", "false")
         git("remote", "add", "origin", REMOTE)
     if head_revision() == rev and not args.force:
         print(f"webkit already at {rev}")
