@@ -182,12 +182,41 @@ ZG_API void zg_runtime_collect_garbage(zg_runtime *rt);
 /* ------------------------------------------------------------------------ */
 /* Context: session state (data dir, schemes, network, fonts)                */
 
+/* Trust decisions an origin can ask for. */
+typedef enum zg_trust_request {
+    ZG_TRUST_NAVIGATE,   /* load or navigate to a page from this origin */
+    ZG_TRUST_BINDINGS    /* receive the native bindings (zg_view_bind) */
+} zg_trust_request;
+
+/* Optional policy for origins the default rules do not trust. Return nonzero to
+   allow. `main_frame` is zero for iframes. Called on the runtime thread. */
+typedef int (*zg_trust_fn)(const char *origin, zg_trust_request request, int main_frame, void *user);
+
 typedef struct zg_context_config {
     size_t size;
     const char *app_id;     /* reverse-DNS id, used for the per-app data directory */
     const char *data_dir;   /* NULL = OS default from app_id */
     int ephemeral;          /* nonzero: never write cookies or storage to disk */
-    int allow_external_content; /* nonzero: allow navigation/iframes outside app:// (high risk) */
+
+    /* Trusted origins. By default only the app's own assets are trusted: the schemes
+       mounted with zg_context_mount_assets or registered with
+       zg_context_register_scheme. Bindings go to the main frame only, and the
+       origin is checked again on every call. */
+
+    /* Dev server origin (e.g. "http://localhost:5173"), trusted for navigation and
+       bindings. Honored only by the dev and debug engine profiles; ignored in
+       release profiles, so it cannot ship to production by mistake. */
+    const char *dev_server_url;
+
+    /* Optional host policy for any other origin; NULL = deny. */
+    zg_trust_fn trust;
+    void *trust_user;
+
+    /* Nonzero: content outside trusted origins may be loaded (navigation, iframes).
+       The developer takes responsibility for it: ZeroG adds no sandbox, and the JIT
+       follows zg_runtime_config.jit, which is not changed by this flag. Untrusted
+       origins never receive bindings. */
+    int allow_external_content;
 } zg_context_config;
 
 ZG_API zg_context *zg_context_create(zg_runtime *rt, const zg_context_config *config);
@@ -280,9 +309,13 @@ ZG_API void zg_view_resize(zg_view *view, unsigned width, unsigned height);
 ZG_API void zg_view_set_scale(zg_view *view, float scale);
 ZG_API void zg_view_set_focus(zg_view *view, int focused);
 
-/* Run pending work for this view, update style and layout, repaint dirty
-   regions into the surface. Presentation advances requestAnimationFrame. */
-ZG_API zg_result zg_view_render(zg_view *view);
+/* Texture and CPU modes: render one frame of the app's own loop. Runs pending work
+   for this view, advances requestAnimationFrame and animations to
+   `frame_time_ms` (the app's frame clock, monotonic milliseconds), updates style
+   and layout and repaints dirty regions into the surface. The engine does not
+   pace these views itself: call it once per app frame.
+   Window mode: the engine paces rendering from the display's vsync; do not call. */
+ZG_API zg_result zg_view_render(zg_view *view, double frame_time_ms);
 
 /* Evaluate a script in the main frame. `result` may be NULL; otherwise the
    caller owns *result and frees it with zg_value_release. */
@@ -378,10 +411,10 @@ ZG_API void zg_view_set_callbacks(zg_view *view, const zg_view_callbacks *callba
 typedef zg_value *(*zg_bind_fn)(zg_call *call, void *user);
 
 /* Bind a native function at a dotted path on `window` (e.g. "App.greet").
-   Installed each time a frame's window object is created, only for origins
-   allowed by zg_view_allow_binding_origin (default: the mounted asset schemes). */
+   Installed each time a frame's window object is created, for trusted origins
+   only (see zg_context_config) and in the main frame only; the origin is checked
+   again on every call. */
 ZG_API zg_result zg_view_bind(zg_view *view, const char *path, zg_bind_fn fn, void *user);
-ZG_API zg_result zg_view_allow_binding_origin(zg_view *view, const char *origin);
 
 /* Dispatch `new CustomEvent(name, { detail: JSON.parse(json_detail) })` on window. */
 ZG_API zg_result zg_view_emit(zg_view *view, const char *name,

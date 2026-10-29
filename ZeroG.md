@@ -214,7 +214,11 @@ WebCore separa le parti della pagina in layer (trasformazioni CSS, animazioni, v
 1. L'applicazione chiama `zg_view_render()`, oppure lo fa il loop del motore in modalità finestra.
 2. Il motore esegue i task pendenti, aggiorna stile e layout, e ridisegna con Skia solo le regioni modificate.
 3. Il risultato è nella swapchain (finestra), nella texture dell'applicazione (texture) o nel buffer di pixel (CPU).
-4. La presentazione avvenuta fa avanzare `requestAnimationFrame`, così le animazioni seguono il vsync dell'applicazione.
+4. La presentazione avvenuta fa avanzare `requestAnimationFrame`, così le animazioni seguono il vsync. Chi dà il ritmo dipende dalla modalità:
+   - **finestra**: il motore, con la propria sorgente di vsync (swapchain DXGI con attesa, CVDisplayLink, timing di swap EGL);
+   - **texture e CPU**: l'applicazione, che chiama `zg_view_render(view, timestamp)` una volta per frame del proprio loop. Il motore non stima il ritmo da solo, così l'UI resta allineata al frame del gioco.
+
+   Nel port, l'aggiornamento del rendering è guidato dal layer di embedding (un `DisplayRefreshMonitor` proprio), perché con `RunLoopGeneric` gli observer del run loop non vengono eseguiti.
 
 ### DPI e dimensioni
 
@@ -365,7 +369,11 @@ Con un solo processo il JavaScript della pagina gira nello stesso processo e sul
 
 - **Chiamate sincrone (default)**: il callback nativo gira durante la chiamata JS e il valore di ritorno arriva subito al JavaScript (`const r = App.greet("Daniele")`).
 - **Chiamate asincrone (supportate, da dichiarare)**: per lavoro lungo il callback crea una `Promise` con `zg_call_promise`, la restituisce subito al JavaScript ed esegue il lavoro su un thread dell'applicazione. `zg_promise_resolve` / `zg_promise_reject` si possono chiamare da qualunque thread: ricevono dati C semplici (JSON o UTF-8) che il motore copia, e il motore risolve la `Promise` sul thread principale. I valori JSC (`zg_value`) non passano mai tra thread.
-- **Installazione**: le binding si installano quando WebCore crea l'oggetto `window` di un frame (il callback di "window object cleared" del frame loader client), solo per le origini autorizzate.
+- **Installazione**: le binding si installano quando WebCore crea l'oggetto `window` di un frame (il callback di "window object cleared" del frame loader client), solo per le origini fidate, e solo nel frame principale salvo richiesta esplicita. L'origine si controlla anche a ogni chiamata, non solo all'installazione.
+- **Origini fidate**, in tre livelli:
+  1. **automatico (default)**: gli asset dell'applicazione (`app://` e gli schemi registrati con `zg_context_register_scheme`). Nessuna configurazione.
+  2. **dev server**: un solo campo, `dev_server_url` in `zg_context_config`, impostato dal framework nel profilo dev. Il motore lo ignora nei profili di release, quindi non può finire in produzione per errore.
+  3. **policy opzionale**: un callback dell'host che decide a runtime se un'origine può navigare o ricevere le binding, per i casi che i primi due livelli non coprono. Facoltativo.
 - **Eventi verso il JS**: `zg_view_emit` crea e invia direttamente un `CustomEvent` sul `window` della pagina.
 
 ### Esempio d'uso
@@ -580,7 +588,7 @@ Con un solo processo **non c'è sandbox per il contenuto web**: un bug di memori
 | Superficie | Rischio | Mitigazione |
 | --- | --- | --- |
 | WebCore e JSC | Bug di memoria sfruttabili da contenuto malevolo, senza sandbox | Contenuto esterno disattivato di default, JIT disattivabile, funzioni web non necessarie escluse dalla build |
-| Binding host | Chiamate native da origini non previste | Binding installate solo per le origini `app://` dichiarate, controllo dell'origine per ogni chiamata |
+| Binding host | Chiamate native da origini non previste | Binding solo per le origini fidate (asset dell'app; dev server solo nel profilo dev; policy opzionale dell'host), solo nel frame principale di default, controllo dell'origine per ogni chiamata |
 | Schema `app://` | Path traversal, MIME sniffing | Archivio in sola lettura, nessun accesso al filesystem, MIME espliciti |
 | Navigazione | Pagina dell'app portata su un sito esterno | Navigazione fuori da `app://` bloccata di default; i link esterni si aprono nel browser di sistema |
 | Contenuto esterno (navigazione e iframe) | Codice non fidato nello stesso processo dell'app | Disattivato di default. Si abilita solo con un flag esplicito dello sviluppatore (`allow_external_content` in `zg_context_config`), che se ne assume la responsabilità: il motore non aggiunge una sandbox e la sicurezza dipende da quella di WebKit upstream e dalla rapidità degli aggiornamenti. Le binding non vengono comunque installate per origini non fidate; il JIT segue la sua opzione e non viene spento automaticamente |
