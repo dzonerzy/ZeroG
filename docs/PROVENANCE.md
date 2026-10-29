@@ -14,6 +14,9 @@ under `patches/` is listed here when it is created.
 | `port/overlay/Source/cmake/OptionsZeroG.cmake` | Derived from upstream `OptionsJSCOnly.cmake` (BSD) | BSD-2-Clause |
 | `port/overlay/Source/{WTF/wtf,bmalloc,JavaScriptCore}/PlatformZeroG.cmake` | Original (includes upstream `PlatformJSCOnly.cmake`) | BSD-2-Clause |
 | `tests/link/jsc_c_api.c` | Original | BSD-2-Clause |
+| `tests/link/icu_converters.c` | Original | BSD-2-Clause |
+| `tools/icu_data.py`, `deps/icu-data.json` | Original | BSD-2-Clause |
+| `deps/triplets/*`, `deps/toolchains/*`, `tools/docker/*` | Original | BSD-2-Clause |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from
 `Source/WebKitLegacy`, BSD), **Ultralight WebCore** (derived from

@@ -66,8 +66,40 @@ sets static libraries, RunLoopGeneric, the allocator per OS, no thin archives an
 
 ICU data (~32-34 MB) is about half of either binary: the ICU data filter is next.
 
+## ICU data filter (step 1)
+
+`tools/icu_data.py` builds a filtered `icudt` from ICU 79.1's prebuilt data with
+ICU's own tools (icupkg, genrb, genccode); `deps` produces one library per
+profile in `deps/icu-data.json`, and `OptionsZeroG.cmake` links the profile's
+library (`ZEROG_ICU_DATA`). Both platforms build ICU 79.1 through vcpkg at the
+same baseline, so the data is identical.
+
+| ICU data | Size | Items |
+| --- | --- | --- |
+| stock `icudt79l.dat` | 33.6 MB | 4321 |
+| `full` (all languages, only WebCore's converters) | 28.5 MB | 4154 |
+| `minimal` (17 languages) | 12.6 MB | 1516 |
+| English only (measured, not a profile) | 8.5 MB | 830 |
+
+Removed: locale bundles of other languages in every tree (res_index rewritten,
+so `Intl` does not advertise them) and converters WebCore never asks ICU for.
+Kept: time zones, normalization, break rules and segmentation dictionaries.
+`icupkg` dependency checks restore cross-language parents (rbnf/yue for zh_Hant_HK).
+
+Link test (`minimal`) checks Italian and Japanese formatting, that a dropped
+locale is not advertised, Thai word segmentation and every WebCore encoding:
+
+| | Windows | Linux |
+| --- | --- | --- |
+| `jsc` | 69.5 MB -> 49.1 MB | 67.4 MB -> 46.5 MB stripped |
+| Link test `minimal` / `standard` | 46.1 / 62.0 MB | 51.7 / 67.6 MB stripped |
+| Runtime deps of `jsc` | system DLLs only | glibc only (libc, libm) |
+
+Found on the way: stock ICU 79.1 data has no ISO-8859-16 converter, so WebCore's
+`iso-8859-16` codec cannot work with any stock ICU build (recorded in
+`deps/icu-data.json`; the build fails if another encoding goes missing).
+
 ## Gaps to the single-binary goal
 
-- ICU data filter (both platforms).
 - Linux: build against an older glibc baseline (ZeroG.md suggests 2.28).
 - Windows: symbols exported from the final executable (`dllexport`).

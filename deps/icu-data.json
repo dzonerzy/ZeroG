@@ -1,0 +1,15 @@
+{
+  "_comment": "ICU data profiles (ZeroG.md, 'ICU e dimensioni del binario'). tools/icu_data.py builds a filtered icudt library from the prebuilt ICU data package. 'languages' are language subtags kept in every locale tree (root is always kept); '*' keeps all. Converters are always reduced to the ones WebCore routes to ICU (TextCodecICU.cpp). Segmentation dictionaries are kept: removing them breaks line breaking for those scripts on any page, whatever the UI language.",
+  "converters_missing_upstream": {
+    "_comment": "WebCore encodings with no converter even in the stock ICU data package; tools/icu_data.py fails if any other encoding is unmatched.",
+    "iso-8859-16": "Not in ICU 79.1's default data (stock icudt79l.dat has no iso-8859_16 table)."
+  },
+  "profiles": {
+    "minimal": {
+      "languages": ["en", "it", "de", "fr", "es", "pt", "nl", "pl", "ru", "uk", "tr", "ar", "he", "hi", "ja", "ko", "zh"]
+    },
+    "full": {
+      "languages": "*"
+    }
+  }
+}

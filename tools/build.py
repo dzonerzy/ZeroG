@@ -25,8 +25,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WEBKIT = ROOT / "third_party" / "webkit"
-VCPKG = ROOT / "third_party" / "vcpkg"
-SYSROOT = ROOT / "third_party" / "sysroot"
+# Overridable so the Linux Docker builder can keep both on a writable volume.
+VCPKG = Path(os.environ.get("ZEROG_VCPKG_ROOT", ROOT / "third_party" / "vcpkg"))
+SYSROOT = Path(os.environ.get("ZEROG_SYSROOT", ROOT / "third_party" / "sysroot"))
 IS_WINDOWS = sys.platform == "win32"
 TRIPLET = "x64-windows-zerog" if IS_WINDOWS else "x64-linux-zerog"
 
@@ -37,6 +38,9 @@ PROFILES = {
     "standard": {"CMAKE_BUILD_TYPE": "Release"},
     "dev": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "DEVELOPER_MODE": "ON"},
 }
+
+# ICU data profile linked by each build profile (deps/icu-data.json).
+ICU_DATA = {"minimal": "minimal", "standard": "full", "dev": "full"}
 
 
 def run(cmd, env=None, cwd=None):
@@ -87,12 +91,28 @@ def cmd_deps(args):
     exe = VCPKG / ("vcpkg.exe" if IS_WINDOWS else "vcpkg")
     if not exe.exists():
         sys.exit("vcpkg missing: clone https://github.com/microsoft/vcpkg into third_party/vcpkg and bootstrap it")
+    # vcpkg refuses cache/download locations that do not exist yet (fresh Docker volume).
+    for var in ("VCPKG_DEFAULT_BINARY_CACHE", "VCPKG_DOWNLOADS"):
+        if os.environ.get(var):
+            Path(os.environ[var]).mkdir(parents=True, exist_ok=True)
     run([exe, "install",
          f"--x-manifest-root={ROOT / 'deps'}",
          f"--x-install-root={SYSROOT}",
          f"--overlay-triplets={ROOT / 'deps' / 'triplets'}",
          f"--triplet={TRIPLET}", f"--host-triplet={TRIPLET}",
          "--disable-metrics"], env=env)
+
+    # Filtered ICU data libraries, one per ICU data profile.
+    downloads = Path(os.environ.get("VCPKG_DOWNLOADS", VCPKG / "downloads"))
+    tarballs = sorted(downloads.glob("icu4c-*-sources.tgz"))
+    if not tarballs:
+        sys.exit("ICU source tarball not found in vcpkg downloads")
+    for profile in sorted(set(ICU_DATA.values())):
+        run([sys.executable, ROOT / "tools" / "icu_data.py", "--profile", profile,
+             "--tools", SYSROOT / TRIPLET / "tools" / "icu" / "bin",
+             "--icu-sources", tarballs[-1],
+             "--work", ROOT / "build" / "icu-data" / profile if IS_WINDOWS else SYSROOT / "icu-data-work" / profile,
+             "--out", SYSROOT / TRIPLET / "lib"], env=env)
 
 
 def configure_options(args):
@@ -112,6 +132,8 @@ def configure_options(args):
         opts["USE_MIMALLOC"] = "ON" if IS_WINDOWS else "OFF"
     # Thin archives only work inside the build tree (OptionsCommon.cmake).
     opts["USE_THIN_ARCHIVES"] = "OFF"
+    if args.port == "ZeroG":
+        opts["ZEROG_ICU_DATA"] = ICU_DATA[args.profile]
     if IS_WINDOWS:
         opts.update({"CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl"})
     else:
@@ -188,21 +210,36 @@ def cmd_linktest(args):
     src = ROOT / "tests" / "link" / "jsc_c_api.c"
     exe = out / "bin" / ("zerog-linktest.exe" if IS_WINDOWS else "zerog-linktest")
     headers = out / "JavaScriptCore" / "Headers"
+    icu_data = ICU_DATA[args.profile]
+    lib = SYSROOT / TRIPLET / "lib"
+    include = SYSROOT / TRIPLET / "include"
+    conv_src = ROOT / "tests" / "link" / "icu_converters.c"
+    conv_exe = out / "bin" / ("zerog-icu-converters.exe" if IS_WINDOWS else "zerog-icu-converters")
     if IS_WINDOWS:
-        icu = SYSROOT / TRIPLET / "lib"
+        icu = [lib / "icuin.lib", lib / "icuuc.lib", lib / f"icudt-{icu_data}.lib"]
         system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib"]
         crt = "/MT" if args.port == "ZeroG" else "/MD"
         run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", f"/I{headers}", src,
              f"/Fe{exe}", f"/Fo{out / 'zerog-linktest.obj'}", "/link", bundle_path(out),
-             icu / "icuin.lib", icu / "icuuc.lib", icu / "icudt.lib", *system], env=build_env())
+             *icu, *system], env=build_env())
+        run(["clang-cl", "/nologo", crt, "/O2", f"/I{include}", conv_src, f"/Fe{conv_exe}",
+             f"/Fo{out / 'zerog-icu-converters.obj'}", "/link", *icu, *system], env=build_env())
     else:
+        # Everything static except glibc (ZeroG.md, "Cosa resta dinamico a runtime").
+        icu = [lib / "libicui18n.a", lib / "libicuuc.a", lib / f"libicudt-{icu_data}.a"]
+        static_runtime = ["-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-latomic",
+                          "-Wl,-Bdynamic", "-lpthread", "-ldl", "-lm"]
         obj = out / "zerog-linktest.o"
         run(["clang", "-O2", "-DJS_NO_EXPORT", f"-I{headers}", "-c", src, "-o", obj])
-        # Everything static except glibc (ZeroG.md, "Cosa resta dinamico a runtime").
-        run(["clang++", obj, bundle_path(out), "-o", exe,
-             "-Wl,-Bstatic", "-licui18n", "-licuuc", "-licudata", "-latomic", "-Wl,-Bdynamic",
-             "-static-libstdc++", "-static-libgcc", "-lpthread", "-ldl"])
-    run([exe])
+        run(["clang++", obj, bundle_path(out), *icu, "-o", exe, *static_runtime])
+        conv_obj = out / "zerog-icu-converters.o"
+        run(["clang", "-O2", f"-I{include}", "-c", conv_src, "-o", conv_obj])
+        run(["clang++", conv_obj, *icu, "-o", conv_exe, *static_runtime])
+    run([exe, icu_data])
+    sys.path.insert(0, str(ROOT / "tools"))
+    import icu_data as icu_data_tool
+    missing = json.loads((ROOT / "deps" / "icu-data.json").read_text())["converters_missing_upstream"]
+    run([conv_exe, *sorted(icu_data_tool.webcore_encodings() - set(missing))])
 
 
 def cmd_all(args):

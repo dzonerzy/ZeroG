@@ -15,6 +15,20 @@ else ()
     set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 endif ()
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Executables built in the port (jsc, tests) carry the C++ runtime: only glibc
+    # stays dynamic (ZeroG.md, "Cosa resta dinamico a runtime").
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " -static-libstdc++ -static-libgcc")
+    # WTF/JSC link the bare name "atomic" when ATOMICS_REQUIRE_LIBATOMIC; an
+    # imported target of that name takes precedence and points at the static library.
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libatomic.a
+        OUTPUT_VARIABLE _zerog_libatomic OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (IS_ABSOLUTE "${_zerog_libatomic}" AND EXISTS "${_zerog_libatomic}")
+        add_library(atomic STATIC IMPORTED GLOBAL)
+        set_target_properties(atomic PROPERTIES IMPORTED_LOCATION "${_zerog_libatomic}")
+    endif ()
+endif ()
+
 add_definitions(-DBUILDING_ZEROG__)
 
 set(PROJECT_VERSION_MAJOR 0)
@@ -72,7 +86,20 @@ if (WIN32)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 endif ()
 
+# ICU data comes from the filtered library built by tools/icu_data.py for the
+# selected profile (deps/icu-data.json), not from ICU's stock icudt.
+# The variable name carries the profile, so switching profiles re-runs the search
+# instead of reusing a cached path.
+set(ZEROG_ICU_DATA "minimal" CACHE STRING "ICU data profile from deps/icu-data.json")
+find_library(ZEROG_ICU_DATA_LIBRARY_${ZEROG_ICU_DATA} NAMES icudt-${ZEROG_ICU_DATA} REQUIRED)
+set(ICU_DATA_LIBRARY_RELEASE "${ZEROG_ICU_DATA_LIBRARY_${ZEROG_ICU_DATA}}" CACHE FILEPATH "" FORCE)
+
 find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
+
+# Static ICU: declare i18n -> uc -> data so single-pass linkers (GNU ld) see the
+# libraries in dependency order; FindICU lists data first.
+set_property(TARGET ICU::i18n APPEND PROPERTY INTERFACE_LINK_LIBRARIES ICU::uc)
+set_property(TARGET ICU::uc APPEND PROPERTY INTERFACE_LINK_LIBRARIES ICU::data)
 if (APPLE)
     add_definitions(-DU_DISABLE_RENAMING=1)
 endif ()
