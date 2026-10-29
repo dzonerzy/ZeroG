@@ -9,6 +9,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/OpaqueJSString.h>
 #include <JavaScriptCore/JSContextRef.h>
 #include <JavaScriptCore/JSObjectRef.h>
 #include <JavaScriptCore/JSStringRef.h>
@@ -60,9 +61,11 @@ struct zg_promise {
 
 namespace {
 
+// The whole UTF-8 text, embedded NULs included (JSStringCreateWithUTF8CString
+// stops at the first one); invalid sequences become U+FFFD.
 struct JSStringHolder {
     explicit JSStringHolder(const std::string& text)
-        : string(JSStringCreateWithUTF8CString(text.c_str()))
+        : string(OpaqueJSString::tryCreate(String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(std::span { text.data(), text.size() }))).leakRef())
     {
     }
     ~JSStringHolder() { JSStringRelease(string); }
@@ -368,8 +371,15 @@ int64_t zg_call_arg_int64(zg_call* call, size_t index)
         return 0;
     if (JSValueIsBigInt(call->context, value))
         return JSValueToInt64(call->context, value, nullptr);
+    // Truncated toward zero, saturating at the int64 range; NaN is 0.
     double number = JSValueToNumber(call->context, value, nullptr);
-    return std::isfinite(number) ? static_cast<int64_t>(number) : 0;
+    if (std::isnan(number))
+        return 0;
+    if (number >= 9223372036854775808.0)
+        return std::numeric_limits<int64_t>::max();
+    if (number < -9223372036854775808.0)
+        return std::numeric_limits<int64_t>::min();
+    return static_cast<int64_t>(number);
 }
 
 const char* zg_call_arg_string(zg_call* call, size_t index, size_t* length)

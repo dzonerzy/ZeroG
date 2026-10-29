@@ -34,6 +34,7 @@ run "resource loader" "$bin/ZeroGLoader"
 run "window on X11" xvfb-run -a "$bin/ZeroGWindow"
 run "C API" xvfb-run -a "$bin/ZeroGAPITest"
 run "C API without a display" "$bin/ZeroGAPITest" --no-window
+run "value conversions" "$bin/ZeroGValuesTest"
 run "hello example" xvfb-run -a "$bin/ZeroGHello" --smoke
 run "binding latency" "$bin/ZeroGBindingBench"
 grep "us per" /tmp/test.log

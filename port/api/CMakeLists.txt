@@ -57,6 +57,14 @@ set(ZeroGHello_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGHello)
 WEBKIT_EXECUTABLE(ZeroGHello)
 
+# Value conversions, every type, both ways.
+set(ZeroGValuesTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/values_test.c)
+set(ZeroGValuesTest_LIBRARIES ZeroGAPI)
+set(ZeroGValuesTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGValuesTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGValuesTest)
+WEBKIT_EXECUTABLE(ZeroGValuesTest)
+
 # Binding latency, through the public API.
 set(ZeroGBindingBench_SOURCES ${ZEROG_SOURCE_DIR}/tests/bench/bindings.c)
 set(ZeroGBindingBench_LIBRARIES ZeroGAPI)

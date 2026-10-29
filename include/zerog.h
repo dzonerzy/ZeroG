@@ -544,14 +544,21 @@ typedef enum zg_value_type {
     ZG_TYPE_FUNCTION
 } zg_value_type;
 
+/* Each reader converts as JavaScript does (Boolean(), Number(), String(),
+   JSON.stringify()). A missing argument reads as undefined: false, NaN, 0, and
+   NULL for the strings. */
 ZG_API size_t        zg_call_argc(const zg_call *call);
 ZG_API zg_value_type zg_call_arg_type(const zg_call *call, size_t index);
 ZG_API int           zg_call_arg_bool(zg_call *call, size_t index);
 ZG_API double        zg_call_arg_number(zg_call *call, size_t index);
+/* A BigInt's low 64 bits; a Number truncated toward zero and saturated to the
+   int64 range, NaN as 0. */
 ZG_API int64_t       zg_call_arg_int64(zg_call *call, size_t index);
-/* The returned string lives until the callback returns. */
+/* UTF-8, NUL-terminated; `len` counts embedded NULs. Lives until the callback
+   returns. */
 ZG_API const char   *zg_call_arg_string(zg_call *call, size_t index, size_t *len);
-/* Structured arguments as JSON (arrays, objects); lives until the callback returns. */
+/* JSON (arrays, objects); "null" for what JSON cannot hold (undefined,
+   functions, BigInts, NaN). Lives until the callback returns. */
 ZG_API const char   *zg_call_arg_json(zg_call *call, size_t index, size_t *len);
 ZG_API zg_view      *zg_call_view(const zg_call *call);
 ZG_API const char   *zg_call_origin(const zg_call *call);
