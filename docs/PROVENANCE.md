@@ -55,6 +55,8 @@ under `patches/` is listed here when it is created.
 | `patches/0016-wtf-generic-run-loop-next-wake-up-time.patch` | Original, modifies `RunLoop.h` and `RunLoopGeneric.cpp` (BSD) | BSD-2-Clause; upstream candidate |
 | `patches/0017-webcore-threadable-loader-redirected-after-restart.patch` | Original, modifies `DocumentThreadableLoader.{h,cpp}` | Same as the modified files; upstream candidate |
 | `patches/0018-webcore-console-message-call-stack-to-chrome-client.patch` | Original, modifies `ConsoleMessage.h`, `ChromeClient.{h,cpp}` and `FrameConsoleClient.cpp` | Same as the modified files; upstream candidate |
+| `patches/0019-jsc-precommit-windows-stack-pages-once.patch` | Original, modifies `VM.cpp` | Same as the modified file; upstream candidate |
+| `examples/hello/*`, `tests/bench/*` | Original | BSD-2-Clause |
 | `port/embedding/WebSocketChannelZeroG.*` | Upstream, derived from `Source/WebKit/WebProcess/Network/WebSocketChannel.cpp` (Apple) and `Source/WebKit/NetworkProcess/curl/WebSocketTaskCurl.cpp` (Sony) | BSD-2-Clause (Apple and Sony headers kept) |
 | `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |
 

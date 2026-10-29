@@ -7,6 +7,8 @@
 #include "APIInternal.h"
 
 #include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSContextRef.h>
 #include <JavaScriptCore/JSObjectRef.h>
 #include <JavaScriptCore/JSStringRef.h>
@@ -174,15 +176,9 @@ JSValueRef argument(const zg_call* call, size_t index)
     return call->argv[index];
 }
 
-// A function bound at a path: its object carries the binding.
-struct BoundFunction {
-    std::shared_ptr<zg_binding> binding;
-};
-
-JSValueRef callBinding(JSContextRef context, JSObjectRef function, JSObjectRef, size_t argc, const JSValueRef argv[], JSValueRef* exception)
+JSValueRef callBinding(JSContextRef context, zg_binding& binding, size_t argc, const JSValueRef argv[], JSValueRef* exception)
 {
-    auto* bound = static_cast<BoundFunction*>(JSObjectGetPrivate(function));
-    auto* view = bound ? bound->binding->view : nullptr;
+    auto* view = binding.view;
     if (!view) {
         *exception = makeError(context, "the view of this binding was destroyed");
         return JSValueMakeUndefined(context);
@@ -203,25 +199,32 @@ JSValueRef callBinding(JSContextRef context, JSObjectRef function, JSObjectRef, 
     call.view = view;
     auto origin = document->securityOrigin().toString().utf8();
     call.origin.assign(byteCast<char>(origin.data()), origin.length());
-    zg_value* result = bound->binding->function(&call, bound->binding->user);
+    zg_value* result = binding.function(&call, binding.user);
     return toJS(context, result, exception);
 }
 
-void finalizeBinding(JSObjectRef object)
+// A bound function is a JSC native function, as WebCore's DOM functions are,
+// not a C API callback object: those release the JavaScript lock around every
+// call (draining microtasks and handing heap access to the collector), which cost
+// some 40 µs per call. The application's function runs with the lock held; the
+// zg_* calls it may make take it again.
+JSC::JSObject* makeBoundFunction(JSC::JSGlobalObject* globalObject, const std::shared_ptr<zg_binding>& binding, const String& name)
 {
-    delete static_cast<BoundFunction*>(JSObjectGetPrivate(object));
-}
-
-JSClassRef bindingClass()
-{
-    static JSClassRef bindingClass = [] {
-        JSClassDefinition definition = kJSClassDefinitionEmpty;
-        definition.className = "ZeroGBinding";
-        definition.callAsFunction = callBinding;
-        definition.finalize = finalizeBinding;
-        return JSClassCreate(&definition);
-    }();
-    return bindingClass;
+    auto& vm = globalObject->vm();
+    return JSC::JSNativeStdFunction::create(vm, globalObject, 0, name, [binding](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Vector<JSValueRef, 8> arguments(callFrame->argumentCount(), [&](size_t i) {
+            return toRef(globalObject, callFrame->uncheckedArgument(i));
+        });
+        JSValueRef exception = nullptr;
+        JSValueRef result = callBinding(toRef(globalObject), *binding, arguments.size(), arguments.span().data(), &exception);
+        if (exception) {
+            JSC::throwException(globalObject, scope, toJS(globalObject, exception));
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+        return JSC::JSValue::encode(result ? toJS(globalObject, result) : JSC::jsUndefined());
+    });
 }
 
 void install(JSContextRef context, const std::shared_ptr<zg_binding>& binding)
@@ -233,8 +236,10 @@ void install(JSContextRef context, const std::shared_ptr<zg_binding>& binding)
         std::string name { path.substr(0, dot) };
         JSStringHolder property(name);
         if (dot == std::string_view::npos) {
-            JSObjectRef function = JSObjectMake(context, bindingClass(), new BoundFunction { binding });
-            JSObjectSetProperty(context, object, property.string, function, kJSPropertyAttributeReadOnly | kJSPropertyAttributeDontDelete, nullptr);
+            auto* globalObject = toJS(context);
+            JSC::JSLockHolder lock(globalObject);
+            auto* function = makeBoundFunction(globalObject, binding, String::fromUTF8(name.c_str()));
+            JSObjectSetProperty(context, object, property.string, toRef(function), kJSPropertyAttributeReadOnly | kJSPropertyAttributeDontDelete, nullptr);
             return;
         }
         JSValueRef next = JSObjectGetProperty(context, object, property.string, nullptr);
@@ -516,26 +521,36 @@ zg_value* zg_call_promise(zg_call* call, zg_promise** out)
     return value;
 }
 
+static void settleNow(zg_promise* promise, bool resolved, const std::string& payload)
+{
+    auto context = promise->context;
+    JSValueRef argument;
+    if (resolved) {
+        JSStringHolder json(payload.empty() ? std::string("null") : payload);
+        argument = JSValueMakeFromJSONString(context, json.string);
+        if (!argument) {
+            argument = makeError(context, "a native binding resolved a Promise with invalid JSON");
+            resolved = false;
+        }
+    } else
+        argument = makeError(context, payload);
+    JSObjectCallAsFunction(context, resolved ? promise->resolve : promise->reject, nullptr, 1, &argument, nullptr);
+    JSValueUnprotect(context, promise->resolve);
+    JSValueUnprotect(context, promise->reject);
+    JSGlobalContextRelease(context);
+    delete promise;
+}
+
+// Settled on the runtime thread: at once there (the page's continuation runs as a
+// microtask, as for any resolved Promise), else through the engine's run loop.
 static void settle(zg_promise* promise, bool resolved, std::string&& payload)
 {
-    // On the runtime thread, in the engine's run loop.
-    callOnMainThread([promise, resolved, payload = WTF::move(payload)]() mutable {
-        auto context = promise->context;
-        JSValueRef argument;
-        if (resolved) {
-            JSStringHolder json(payload.empty() ? std::string("null") : payload);
-            argument = JSValueMakeFromJSONString(context, json.string);
-            if (!argument) {
-                argument = makeError(context, "a native binding resolved a Promise with invalid JSON");
-                resolved = false;
-            }
-        } else
-            argument = makeError(context, payload);
-        JSObjectCallAsFunction(context, resolved ? promise->resolve : promise->reject, nullptr, 1, &argument, nullptr);
-        JSValueUnprotect(context, promise->resolve);
-        JSValueUnprotect(context, promise->reject);
-        JSGlobalContextRelease(context);
-        delete promise;
+    if (isMainThread()) {
+        settleNow(promise, resolved, payload);
+        return;
+    }
+    callOnMainThread([promise, resolved, payload = WTF::move(payload)] {
+        settleNow(promise, resolved, payload);
     });
 }
 

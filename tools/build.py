@@ -404,6 +404,16 @@ def cmd_linktest(args):
         # The window part needs a display (a desktop, or Xvfb on Linux).
         run([api, *([] if IS_WINDOWS or os.environ.get("DISPLAY") else ["--no-window"])])
 
+        # The example of ZeroG.md, built as an application builds it, run until its
+        # page has called the binding.
+        hello_assets = out / "zerog-hello-assets.c"
+        run([sys.executable, ROOT / "tools" / "assets.py", ROOT / "examples" / "hello" / "web", "-o", hello_assets, "--c-symbol", "hello_assets"])
+        hello = link_c(args, out, "zerog-hello", [ROOT / "examples" / "hello" / "main.c", hello_assets], [ROOT / "include"],
+                       [bundle_path(out), *system], cxx_runtime=bool(IS_WINDOWS or not os.environ.get("ZEROG_ZIG_TARGET")))
+        check_no_exports(hello)
+        if IS_WINDOWS or os.environ.get("DISPLAY"):
+            run([hello, "--smoke"])
+
     # 4. The filtered ICU data opens every converter WebCore routes to ICU.
     conv = link_c(args, out, "zerog-icu-converters", [tests / "icu_converters.c"], [include],
                   icu_archives(icu_data))

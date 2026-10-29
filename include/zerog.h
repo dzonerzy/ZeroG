@@ -157,7 +157,9 @@ ZG_API zg_runtime *zg_runtime_create(const zg_runtime_config *config);
 /* Valid only at application shutdown; the runtime cannot be recreated. */
 ZG_API void zg_runtime_destroy(zg_runtime *rt);
 
-/* Window mode: the engine owns the loop until zg_runtime_quit. */
+/* The engine owns the loop until zg_runtime_quit, or until the last window is
+   closed. Without windows (CPU and texture views) it runs the engine's work and
+   sleeps until there is more. */
 ZG_API zg_result zg_runtime_run(zg_runtime *rt);
 ZG_API void zg_runtime_quit(zg_runtime *rt);
 

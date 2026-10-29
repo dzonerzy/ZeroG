@@ -42,6 +42,32 @@ if (ZEROG_PROFILE STREQUAL "dev" OR ZEROG_PROFILE STREQUAL "debug")
     target_compile_definitions(ZeroGAPI PRIVATE ZEROG_DEV_PROFILE)
 endif ()
 
+# The example of ZeroG.md: a window, the frontend in app://, a binding.
+file(GLOB_RECURSE _zerog_hello_web "${ZEROG_SOURCE_DIR}/examples/hello/web/*")
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hello_assets.c
+    COMMAND ${Python_EXECUTABLE} ${ZEROG_SOURCE_DIR}/tools/assets.py ${ZEROG_SOURCE_DIR}/examples/hello/web
+        -o ${CMAKE_CURRENT_BINARY_DIR}/hello_assets.c --c-symbol hello_assets
+    DEPENDS ${ZEROG_SOURCE_DIR}/tools/assets.py ${_zerog_hello_web}
+    VERBATIM)
+set(ZeroGHello_SOURCES ${ZEROG_SOURCE_DIR}/examples/hello/main.c ${CMAKE_CURRENT_BINARY_DIR}/hello_assets.c)
+set(ZeroGHello_LIBRARIES ZeroGAPI)
+set(ZeroGHello_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGHello_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGHello)
+WEBKIT_EXECUTABLE(ZeroGHello)
+
+# Binding latency, through the public API.
+set(ZeroGBindingBench_SOURCES ${ZEROG_SOURCE_DIR}/tests/bench/bindings.c)
+set(ZeroGBindingBench_LIBRARIES ZeroGAPI)
+set(ZeroGBindingBench_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGBindingBench_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGBindingBench)
+WEBKIT_EXECUTABLE(ZeroGBindingBench)
+if (NOT WIN32)
+    target_link_libraries(ZeroGBindingBench PRIVATE Threads::Threads)
+endif ()
+
 # A C program using only include/zerog.h, with a frontend packed by
 # tools/assets.py and compiled in, as an application does.
 file(GLOB_RECURSE _zerog_test_assets "${ZEROG_SOURCE_DIR}/tests/api/assets/*")

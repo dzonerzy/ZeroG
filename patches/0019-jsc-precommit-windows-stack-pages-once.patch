@@ -1,0 +1,29 @@
+diff --git a/Source/JavaScriptCore/runtime/VM.cpp b/Source/JavaScriptCore/runtime/VM.cpp
+index 10c2a0170f..e5e6c31311 100644
+--- a/Source/JavaScriptCore/runtime/VM.cpp
++++ b/Source/JavaScriptCore/runtime/VM.cpp
+@@ -1189,13 +1189,23 @@ size_t VM::updateSoftReservedZoneSize(size_t softReservedZoneSize)
+ // By touching every page up to the stack limit with a dummy operation,
+ // we force the system to move the guard page, and commit memory.
+ 
++//
++// The limit changes on every entry into the VM (it follows the stack pointer at
++// entry), but stack pages stay committed once touched: only the pages below what
++// this thread already committed are touched, contiguously from there.
+ static void preCommitStackMemory(void* stackLimit)
+ {
++    static thread_local char* committedDownTo = nullptr;
+     const int pageSize = 4096;
+-    for (volatile char* p = reinterpret_cast<char*>(&stackLimit); p > stackLimit; p -= pageSize) {
++    char* start = reinterpret_cast<char*>(&stackLimit);
++    if (committedDownTo && committedDownTo < start)
++        start = committedDownTo;
++    for (volatile char* p = start; p > stackLimit; p -= pageSize) {
+         char ch = *p;
+         *p = ch;
+     }
++    if (!committedDownTo || static_cast<char*>(stackLimit) < committedDownTo)
++        committedDownTo = static_cast<char*>(stackLimit);
+ }
+ #endif
+ 

@@ -19,3 +19,4 @@
 0016-wtf-generic-run-loop-next-wake-up-time.patch
 0017-webcore-threadable-loader-redirected-after-restart.patch
 0018-webcore-console-message-call-stack-to-chrome-client.patch
+0019-jsc-precommit-windows-stack-pages-once.patch

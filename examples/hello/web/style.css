@@ -1,0 +1,46 @@
+:root {
+    font-family: system-ui, sans-serif;
+    color: #1d1d1f;
+    background: #f5f5f7;
+}
+
+main {
+    max-width: 28rem;
+    margin: 4rem auto;
+    padding: 2rem;
+    border-radius: 12px;
+    background: white;
+    box-shadow: 0 4px 24px rgb(0 0 0 / 0.08);
+}
+
+h1 {
+    margin-top: 0;
+    font-size: 1.6rem;
+}
+
+form {
+    display: flex;
+    gap: 0.5rem;
+}
+
+input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #c7c7cc;
+    border-radius: 8px;
+    font: inherit;
+}
+
+button {
+    padding: 0.5rem 1rem;
+    border: 0;
+    border-radius: 8px;
+    background: #0071e3;
+    color: white;
+    font: inherit;
+}
+
+#message {
+    font-size: 1.25rem;
+    min-height: 1.5em;
+}

@@ -41,6 +41,7 @@
 #else
 #include <csignal>
 #include <cstdlib>
+#include <poll.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
 #endif
@@ -520,6 +521,17 @@ void zg_runtime_destroy(zg_runtime* rt)
     delete rt;
 }
 
+// Sleeps on the wake-up handle, up to `milliseconds` (-1: until woken).
+static void waitForWork(zg_runtime& rt, int64_t milliseconds)
+{
+#if OS(WINDOWS)
+    WaitForSingleObject(reinterpret_cast<HANDLE>(rt.wakeUpHandle), milliseconds < 0 ? INFINITE : static_cast<DWORD>(milliseconds));
+#else
+    pollfd descriptor { static_cast<int>(rt.wakeUpHandle), POLLIN, 0 };
+    poll(&descriptor, 1, milliseconds < 0 ? -1 : static_cast<int>(std::min<int64_t>(milliseconds, std::numeric_limits<int>::max())));
+#endif
+}
+
 zg_result zg_runtime_run(zg_runtime* rt)
 {
     clearError();
@@ -528,14 +540,24 @@ zg_result zg_runtime_run(zg_runtime* rt)
     if (!checkThread())
         return ZG_ERROR_WRONG_THREAD;
     rt->quit = false;
+    bool hadWindows = !rt->windows.empty();
     while (!rt->quit) {
         std::vector<zg_window*> open;
         for (auto* window : rt->windows) {
             if (!window->window->isClosed())
                 open.push_back(window);
         }
-        if (open.empty())
+        // The last window was closed: the application is done.
+        if (open.empty() && hadWindows)
             break;
+        if (open.empty()) {
+            // No window (CPU and texture views): the engine's own work, sleeping
+            // until a timer is due or something wakes the loop.
+            zg_runtime_update(rt);
+            if (!rt->quit)
+                waitForWork(*rt, zg_runtime_next_timeout(rt));
+            continue;
+        }
         // One window waits for its events; several take turns without blocking.
         for (auto* window : open)
             window->window->runOnce(open.size() == 1 ? std::nullopt : std::optional { 1_ms });
