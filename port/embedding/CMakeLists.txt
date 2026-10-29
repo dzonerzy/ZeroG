@@ -11,6 +11,7 @@ set(ZeroGEmbedding_SOURCES
     FrameLoaderClientZeroG.cpp
     KeyboardSDL.cpp
     Loader.cpp
+    LoaderBlob.cpp
     LoaderCurl.cpp
     MemoryFS.cpp
     PlatformStrategiesZeroG.cpp

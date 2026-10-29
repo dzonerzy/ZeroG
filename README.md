@@ -12,9 +12,9 @@ design against the pinned WebKit revision lives in [docs/verification](docs/veri
 > Linux: runtime and event loop, views in CPU, texture and window mode, input,
 > callbacks, direct JavaScript bindings, and the resource loader: the app's files
 > served from memory under `app://`, custom schemes, `data:`, http/https over
-> curl with cookies, WebSockets (`ws://`, `wss://`), and fonts registered by
-> the application. Downloads, Blob URLs and HTTP authentication are not there
-> yet.
+> curl with cookies, WebSockets (`ws://`, `wss://`), Blobs and `blob:` URLs,
+> and fonts registered by the application. Downloads and HTTP authentication
+> are not there yet.
 
 ## Layout
 

@@ -556,6 +556,20 @@ int main()
         passed &= check(data == "hello"_s, "data: URL: %s", data.utf8().data());
         auto sync = view->evaluateScript("(() => { const x = new XMLHttpRequest(); x.open('GET', '/data.json', false); x.send(); return x.status + ' ' + x.responseText; })()"_s);
         passed &= check(sync == "200 {\"answer\":42}"_s, "synchronous XMLHttpRequest: %s", sync.utf8().data());
+        // Blobs.
+        auto blobText = await(*view, "new Blob(['hello ', 'blob'], { type: 'text/plain' }).text()"_s);
+        passed &= check(blobText == "hello blob"_s, "Blob.text(): %s", blobText.utf8().data());
+        auto sliced = await(*view, "new Blob(['hello blob']).slice(6).text()"_s);
+        passed &= check(sliced == "blob"_s, "a slice: %s", sliced.utf8().data());
+        auto reader = await(*view, "new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result); r.readAsText(new Blob(['read me'])); })"_s);
+        passed &= check(reader == "read me"_s, "FileReader: %s", reader.utf8().data());
+        auto objectURL = await(*view, "(async () => { const url = URL.createObjectURL(new Blob(['{\"from\":\"blob\"}'], { type: 'application/json' }));"
+            "const r = await fetch(url); const partial = await (await fetch(url, { headers: { Range: 'bytes=2-5' } })).text();"
+            "const sync = (() => { const x = new XMLHttpRequest(); x.open('GET', url, false); x.send(); return x.responseText; })();"
+            "URL.revokeObjectURL(url); const revoked = await fetch(url).then(() => 'still there', () => 'gone');"
+            "return [r.headers.get('content-type'), (await r.json()).from, partial, sync, revoked].join(' '); })()"_s);
+        passed &= check(objectURL == "application/json blob from {\"from\":\"blob\"} gone"_s, "object URL (fetch, range, synchronous XHR, revoke): %s", objectURL.utf8().data());
+
         auto unknown = await(*view, "fetch('nowhere://x/y').then(() => 'loaded')"_s);
         passed &= check(unknown.startsWith("error:"_s), "unregistered scheme fails: %s", unknown.utf8().data());
 
@@ -616,6 +630,10 @@ int main()
             "ws.onclose = e => { log.push(`close ${e.code} ${e.reason} ${e.wasClean}`); resolve(log.join('|')); }; })"_s));
         passed &= check(echo.startsWith("open chat|welcome, cookies: "_s) && echo.contains("hidden=2"_s)
             && echo.endsWith("|echo: hello|binary 1,2,3|long 100006|close 1000 bye true"_s), "WebSocket echo: %s", echo.utf8().data());
+        auto blobMessage = await(*view, makeString("new Promise(resolve => { const ws = new WebSocket('"_s, ws, "/echo'); ws.binaryType = 'arraybuffer'; let first = true;"
+            "ws.onopen = () => ws.send(new Blob([new Uint8Array([7, 8, 9])]));"
+            "ws.onmessage = e => { if (first) { first = false; return; } resolve([...new Uint8Array(e.data)].join(',')); ws.close(); }; })"_s));
+        passed &= check(blobMessage == "7,8,9"_s, "a Blob sent over a WebSocket: %s", blobMessage.utf8().data());
         auto socketCookie = view->evaluateScript("document.cookie"_s);
         passed &= check(socketCookie.contains("fromsocket=4"_s), "the handshake's Set-Cookie is stored: %s", socketCookie.utf8().data());
         auto rejected = await(*view, makeString("new Promise(resolve => { const log = []; const ws = new WebSocket('"_s, ws, "/ws-reject');"

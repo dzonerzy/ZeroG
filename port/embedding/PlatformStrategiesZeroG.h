@@ -2,8 +2,8 @@
 
 namespace ZeroG {
 
-// Installs WebCore's platform strategies once per process: loading goes to the
-// resource loader (Loader.h); pasteboard, media and blobs are still stubs.
+// Installs WebCore's platform strategies once per process: loading and blobs go
+// to the resource loader (Loader.h); pasteboard and media are still stubs.
 void installPlatformStrategies();
 
 } // namespace ZeroG

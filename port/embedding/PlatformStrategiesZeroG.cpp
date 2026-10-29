@@ -62,21 +62,6 @@ public:
     bool containsStringSafeForDOMToReadForType(const String&, const String&, const PasteboardContext*) final { return false; }
 };
 
-class BlobRegistryZeroG final : public BlobRegistry {
-public:
-    void registerInternalFileBlobURL(const URL&, Ref<BlobDataFileReference>&&, const String&, const String&) final { }
-    void registerInternalBlobURL(const URL&, Vector<BlobPart>&&, const String&) final { }
-    void registerBlobURL(const URL&, const URL&, const PolicyContainer&, const std::optional<SecurityOriginData>&) final { }
-    void registerInternalBlobURLOptionallyFileBacked(const URL&, const URL&, RefPtr<BlobDataFileReference>&&, const String&) final { }
-    void registerInternalBlobURLForSlice(const URL&, const URL&, long long, long long, const String&) final { }
-    void unregisterBlobURL(const URL&, const std::optional<SecurityOriginData>&) final { }
-    void registerBlobURLHandle(const URL&, const std::optional<SecurityOriginData>&) final { }
-    void unregisterBlobURLHandle(const URL&, const std::optional<SecurityOriginData>&) final { }
-    String blobType(const URL&) final { return emptyString(); }
-    unsigned long long blobSize(const URL&) final { return 0; }
-    void writeBlobsToTemporaryFilesForIndexedDB(const Vector<String>&, CompletionHandler<void(Vector<String>&&)>&& completionHandler) final { completionHandler({ }); }
-};
-
 class MediaStrategyZeroG final : public MediaStrategy {
 public:
 #if ENABLE(WEB_AUDIO)
@@ -89,7 +74,7 @@ private:
     LoaderStrategy* createLoaderStrategy() final { return ZeroG::createLoaderStrategy(); }
     PasteboardStrategy* createPasteboardStrategy() final { return new PasteboardStrategyZeroG; }
     MediaStrategy* createMediaStrategy() final { return new MediaStrategyZeroG; }
-    BlobRegistry* createBlobRegistry() final { return new BlobRegistryZeroG; }
+    BlobRegistry* createBlobRegistry() final { return ZeroG::createBlobRegistry(); }
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     PushStrategy* createPushStrategy() final { return nullptr; }
 #endif

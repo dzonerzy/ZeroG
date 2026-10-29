@@ -485,7 +485,9 @@ private:
         }
 
         RefPtr<LoadTask> task;
-        if (auto* handler = sessionForFrame(loader.frame()).schemeHandler(url.protocol()))
+        if (url.protocolIsBlob())
+            task = createBlobTask(loader);
+        else if (auto* handler = sessionForFrame(loader.frame()).schemeHandler(url.protocol()))
             task = SchemeTask::create(loader, *handler);
         else if (url.protocolIsInHTTPFamily())
             task = createNetworkTask(loader);
@@ -516,6 +518,10 @@ private:
             }
             response = ResourceResponse::dataURLResponse(url, *result);
             data = WTF::move(result->data);
+            return;
+        }
+        if (url.protocolIsBlob()) {
+            loadBlobSynchronously(&frameLoader.frame(), request, error, response, data);
             return;
         }
         if (auto* handler = sessionForFrame(&frameLoader.frame()).schemeHandler(url.protocol())) {

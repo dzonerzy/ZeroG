@@ -24,6 +24,7 @@
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
+class BlobRegistry;
 class CookieJar;
 class CookieJarDB;
 class LoaderStrategy;
@@ -167,5 +168,10 @@ WebCore::ResourceError failedError(const URL&, const String& description);
 
 // The loader strategy (PlatformStrategiesZeroG).
 WebCore::LoaderStrategy* createLoaderStrategy();
+
+// Blobs (LoaderBlob.cpp): the process's blob registry, and loads of blob: URLs.
+WebCore::BlobRegistry* createBlobRegistry();
+Ref<LoadTask> createBlobTask(WebCore::ResourceLoader&);
+bool loadBlobSynchronously(WebCore::LocalFrame*, const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);
 
 } // namespace ZeroG

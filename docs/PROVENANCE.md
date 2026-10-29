@@ -48,6 +48,7 @@ under `patches/` is listed here when it is created.
 | `port/embedding/FrameLoaderClientZeroG.*` | Upstream, derived from `EmptyFrameLoaderClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple, Eric Seidel, Nokia and Samsung headers kept) |
 | `port/api/*`, `tests/api/*` | Original | BSD-2-Clause |
 | `port/embedding/Loader.*` | Upstream, derived from WebKit's `WebLoaderStrategy`, `WebURLSchemeTaskProxy` (`Source/WebKit/WebProcess`), `WebErrors` (`Source/WebKit/Shared`) and `NetworkStorageSessionCurl` (`Source/WebKit/NetworkProcess/curl`) | BSD-2-Clause (Apple, Igalia and Sony headers kept) |
+| `port/embedding/LoaderBlob.cpp` | Original; the load follows `Source/WebKit/NetworkProcess/NetworkDataTaskBlob.cpp` over WebCore's `BlobResourceHandleBase` and `BlobRegistryImpl` | BSD-2-Clause |
 | `port/embedding/LoaderCurl.cpp` | Upstream, derived from `Source/WebKit/NetworkProcess/curl/NetworkDataTaskCurl.cpp` | BSD-2-Clause (Sony header kept) |
 | `port/embedding/MemoryFS.*`, `port/embedding/Fonts.cpp`, `tools/assets.py`, `tests/render/loader.cpp` | Original | BSD-2-Clause |
 | `patches/0015-webcore-embedder-frame-time.patch` | Original, modifies `Page.{h,cpp}` and `LocalDOMWindow.{h,cpp}` | Same as the modified files; upstream candidate |
