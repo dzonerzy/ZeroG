@@ -18,6 +18,8 @@ under `patches/` is listed here when it is created.
 | `tools/icu_data.py`, `deps/icu-data.json` | Original | BSD-2-Clause |
 | `deps/triplets/*`, `deps/toolchains/*`, `tools/docker/*` | Original | BSD-2-Clause |
 | `toolchain.json`, `tools/toolchain.py` | Original | BSD-2-Clause |
+| `patches/0003-no-export-decorations-for-zerog.patch` | Original, modifies `ExportMacros.h` (BSD), `BExport.h` (BSD) | BSD-2-Clause |
+| `tools/bundle.py`, `port/api/exports.txt`, `tests/link/host_conflicts.c` | Original | BSD-2-Clause |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from
 `Source/WebKitLegacy`, BSD), **Ultralight WebCore** (derived from

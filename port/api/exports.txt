@@ -1,0 +1,11 @@
+# Symbols that stay public in the engine bundle (tools/build.py bundle).
+# fnmatch patterns, one per line. Everything else defined in the bundle is made
+# local (Linux) or renamed with the zg_ prefix (Windows, C symbols), so it cannot
+# collide with the host (ZeroG.md, "Simboli nel link statico").
+
+zg_*
+
+# Temporary, until the zg_* API exists (roadmap phase 2): the JSC C API used by
+# tests/link. Remove these lines once the link tests go through zg_*.
+JS*
+kJS*

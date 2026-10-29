@@ -1,0 +1,35 @@
+diff --git a/Source/WTF/wtf/ExportMacros.h b/Source/WTF/wtf/ExportMacros.h
+index fd6ea09c43..abb401af1d 100644
+--- a/Source/WTF/wtf/ExportMacros.h
++++ b/Source/WTF/wtf/ExportMacros.h
+@@ -47,7 +47,12 @@
+ #define WTF_INTERNAL
+ #endif
+ 
+-#if USE(DECLSPEC_ATTRIBUTE)
++#if PLATFORM(ZEROG)
++/* One statically linked binary: nothing is exported. The ZeroG API layer marks
++   its own zg_* entry points. */
++#define WTF_EXPORT_DECLARATION
++#define WTF_IMPORT_DECLARATION
++#elif USE(DECLSPEC_ATTRIBUTE)
+ #define WTF_EXPORT_DECLARATION __declspec(dllexport)
+ #define WTF_IMPORT_DECLARATION __declspec(dllimport)
+ #elif USE(VISIBILITY_ATTRIBUTE)
+diff --git a/Source/bmalloc/bmalloc/BExport.h b/Source/bmalloc/bmalloc/BExport.h
+index e8cb5896df..04717385ca 100644
+--- a/Source/bmalloc/bmalloc/BExport.h
++++ b/Source/bmalloc/bmalloc/BExport.h
+@@ -27,7 +27,11 @@
+ 
+ #include "BPlatform.h"
+ 
+-#if BUSE(DECLSPEC_ATTRIBUTE)
++#if BPLATFORM(ZEROG)
++/* One statically linked binary: nothing is exported (see WTF's ExportMacros.h). */
++#define BEXPORT_DECLARATION
++#define BIMPORT_DECLARATION
++#elif BUSE(DECLSPEC_ATTRIBUTE)
+ #define BEXPORT_DECLARATION __declspec(dllexport)
+ #define BIMPORT_DECLARATION __declspec(dllimport)
+ #elif BUSE(VISIBILITY_ATTRIBUTE)

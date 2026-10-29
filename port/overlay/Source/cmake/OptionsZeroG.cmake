@@ -41,6 +41,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ZEROG_ZIG)
 endif ()
 
 add_definitions(-DBUILDING_ZEROG__)
+# No export decorations anywhere (patch 0003 does the same for WTF/bmalloc): the
+# JSC C API is internal to the engine; only zg_* is public (port/api/exports.txt).
+add_definitions(-DJS_NO_EXPORT)
 
 set(PROJECT_VERSION_MAJOR 0)
 set(PROJECT_VERSION_MINOR 0)

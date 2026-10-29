@@ -41,8 +41,8 @@ python tools/webkit.py status
 python tools/build.py deps        # static ICU 79.1 + filtered ICU data (vcpkg, deps/icu-data.json)
 python tools/build.py configure   # PORT=ZeroG into build/zerog-minimal
 python tools/build.py build
-python tools/build.py bundle      # one engine archive: lib/zerog-engine.{lib,a}
-python tools/build.py linktest    # C program linked against that archive
+python tools/build.py bundle      # engine + ICU in one archive; only port/api/exports.txt is public
+python tools/build.py linktest    # C programs against the bundle, incl. a host with its own ICU
 ```
 
 `--profile minimal|standard|dev` selects the build profile and its ICU data;

@@ -150,6 +150,48 @@ zig can also link the clang-cl-built engine archive for Windows
 imports only system DLLs. zig cannot compile C++ for the MSVC ABI (its libc++
 does not build against MSVC headers), so clang-cl stays the Windows compiler.
 
+## Symbol isolation (step 3)
+
+Patch 0003 makes every export decoration empty for `PLATFORM(ZEROG)` (WTF's
+`ExportMacros.h`, bmalloc's `BExport.h`) and `OptionsZeroG` defines
+`JS_NO_EXPORT`, so nothing is `dllexport`ed. `tools/bundle.py` then builds the
+engine bundle from the engine objects plus static ICU and the filtered ICU data;
+only names matching `port/api/exports.txt` stay public (`zg_*`, plus the JSC C
+API until `zg_*` exists).
+
+| | Linux (ELF) | Windows (COFF) |
+| --- | --- | --- |
+| Method | `ld -r --force-group-allocation`, then `objcopy --keep-global-symbols` | every defined symbol (C and mangled C++) renamed `zg_<name>` with `llvm-objcopy --redefine-syms`, linker directives rewritten |
+| Bundle | `libzerog-engine.a`, 1 object, 89.0 MB | `zerog-engine.lib`, 994 objects, 794 MB (CodeView inside) |
+| Public symbols | 161 | 160 (81,281 renamed) |
+| Exports of the linked exe | n/a | 0 (was 164) |
+
+`tests/link/host_conflicts.c` is a host that links its own stock ICU 79.1 (same
+version, same symbol names) and defines its own `mi_malloc`: it links with no
+duplicate symbols and each side keeps its own copy (host sees all 906 locales,
+the engine its minimal data). It passes on Linux, and on Windows with both lld
+and MSVC's link.exe; zig also links the Windows bundle (`zig cc -target
+x86_64-windows-msvc`).
+
+What it took, beyond the obvious:
+
+- COFF linker directives are text: clang emits `/INCLUDE:<name>` for
+  `__attribute__((used))` symbols (JSC's JIT operations), genccode emits
+  `/EXPORT:icudt79_dat`. `.drectve` is rewritten (renamed names, no `/EXPORT`
+  except the API) and its section flags restored (`LNK_INFO`), which
+  llvm-objcopy cannot set.
+- `/alternatename` pairs are shared with code outside the bundle (the MSVC STL
+  emits `_Avx2WmemEnabled=_Avx2WmemEnabledWeakValue` everywhere, its own static
+  library included): those names are kept, or lld reports a conflict.
+- Renaming only C symbols is not enough: ICU's C++ API (`icu_79::`) collides with
+  a host's identical ICU, so mangled names are renamed too.
+- ELF COMDAT groups are deduplicated by signature name even when the symbol is
+  local, so a host with the same inline code shared the engine's inline data and
+  crashed; `--force-group-allocation` removes the groups after the bundle's own
+  duplicates are merged.
+
 ## Gaps to the single-binary goal
 
-- Windows: symbols exported from the final executable (`dllexport`).
+- Linux: the engine references libc++ (`std::__1`), supplied by zig at the final
+  link. A host linking with another libc++ build would share it; embedding and
+  localizing libc++ in the bundle is still open.

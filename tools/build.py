@@ -4,8 +4,10 @@
     deps        install deps/vcpkg.json into third_party/sysroot/<triplet>
     configure   run CMake on third_party/webkit into build/<port>-<profile>
     build       run Ninja in that build directory
-    bundle      collect every engine object into one archive: lib/zerog-engine.{lib,a}
-    linktest    link tests/link/jsc_c_api.c against that archive alone and run it
+    bundle      engine + static dependencies in one archive, lib/zerog-engine.{lib,a},
+                where only port/api/exports.txt stays public (tools/bundle.py)
+    linktest    link C programs against that archive and run them, including a
+                host with its own ICU and mi_malloc (tests/link)
     all         deps + configure + build + bundle + linktest
 
 The default port is ZeroG (port/overlay, applied by `tools/webkit.py prepare`);
@@ -207,60 +209,98 @@ def bundle_path(out):
     return out / "lib" / ("zerog-engine.lib" if IS_WINDOWS else "libzerog-engine.a")
 
 
-def cmd_bundle(args):
-    out = build_dir(args)
-    objects = engine_objects(out)
-    archive = bundle_path(out)
-    archive.unlink(missing_ok=True)
-    rsp = out / "zerog-engine.rsp"
-    rsp.write_text("".join(f'"{o.as_posix()}"\n' for o in objects))
-    if IS_WINDOWS:
-        run(["llvm-lib", "/nologo", f"/out:{archive}", f"@{rsp}"], env=build_env())
-    else:
-        ar = os.environ.get("AR") or shutil.which("llvm-ar") or "ar"
-        run([ar, "rcs", archive, f"@{rsp}"])  # a real archive: thin ones only work in-tree
-    print(f"{archive.name}: {len(objects)} objects, {archive.stat().st_size / 1e6:.1f} MB")
-
-
-def cmd_linktest(args):
-    out = build_dir(args)
-    src = ROOT / "tests" / "link" / "jsc_c_api.c"
-    exe = out / "bin" / ("zerog-linktest.exe" if IS_WINDOWS else "zerog-linktest")
-    headers = out / "JavaScriptCore" / "Headers"
-    icu_data = ICU_DATA[args.profile]
+def icu_archives(icu_data):
+    """Static ICU libraries for an ICU data profile, or ICU's stock data (None)."""
     lib = SYSROOT / TRIPLET / "lib"
-    include = SYSROOT / TRIPLET / "include"
-    conv_src = ROOT / "tests" / "link" / "icu_converters.c"
-    conv_exe = out / "bin" / ("zerog-icu-converters.exe" if IS_WINDOWS else "zerog-icu-converters")
     if IS_WINDOWS:
-        icu = [lib / "icuin.lib", lib / "icuuc.lib", lib / f"icudt-{icu_data}.lib"]
-        system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib"]
+        data = lib / (f"icudt-{icu_data}.lib" if icu_data else "icudt.lib")
+        return [lib / "icuin.lib", lib / "icuuc.lib", data]
+    data = lib / (f"libicudt-{icu_data}.a" if icu_data else "libicudata.a")
+    return [lib / "libicui18n.a", lib / "libicuuc.a", data]
+
+
+def cmd_bundle(args):
+    """One archive with the engine and its static dependencies; only the symbols in
+    port/api/exports.txt stay public (tools/bundle.py)."""
+    out = build_dir(args)
+    rsp = out / "zerog-engine.rsp"
+    rsp.write_text("".join(f'"{o.as_posix()}"\n' for o in engine_objects(out)))
+    run([sys.executable, ROOT / "tools" / "bundle.py", "--objects", rsp,
+         "--archives", *icu_archives(ICU_DATA[args.profile]),
+         "--exports", ROOT / "port" / "api" / "exports.txt",
+         "--out", bundle_path(out), "--work", out / "bundle"], env=build_env())
+
+
+def link_c(args, out, name, sources, includes, libraries, linker="lld"):
+    """Compile and link a C test program the way an application would. On Windows
+    `linker` is "lld" (our toolchain, and zig's) or "link" (MSVC's link.exe, what
+    MSVC-built hosts use)."""
+    exe = out / "bin" / (f"{name}.exe" if IS_WINDOWS else name)
+    if IS_WINDOWS:
         crt = "/MT" if args.port == "ZeroG" else "/MD"
-        run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", f"/I{headers}", src,
-             f"/Fe{exe}", f"/Fo{out / 'zerog-linktest.obj'}", "/link", bundle_path(out),
-             *icu, *system], env=build_env())
-        run(["clang-cl", "/nologo", crt, "/O2", f"/I{include}", conv_src, f"/Fe{conv_exe}",
-             f"/Fo{out / 'zerog-icu-converters.obj'}", "/link", *icu, *system], env=build_env())
+        system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib"]
+        fuse = ["-fuse-ld=lld"] if linker == "lld" else []
+        run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", *fuse, *[f"/I{i}" for i in includes],
+             *sources, f"/Fe{exe}", f"/Fo{out / (name + '.obj')}", "/link", *libraries, *system],
+            env=build_env())
     else:
-        # Everything static except glibc (ZeroG.md, "Cosa resta dinamico a runtime").
-        icu = [lib / "libicui18n.a", lib / "libicuuc.a", lib / f"libicudt-{icu_data}.a"]
         cc, cxx = os.environ.get("CC", "clang"), os.environ.get("CXX", "clang++")
         if os.environ.get("ZEROG_ZIG_TARGET"):
             runtime = ["-lpthread", "-ldl", "-lm"]  # zig links libc++ and compiler-rt statically
         else:
+            # Everything static except glibc (ZeroG.md, "Cosa resta dinamico a runtime").
             runtime = ["-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-latomic",
                        "-Wl,-Bdynamic", "-lpthread", "-ldl", "-lm"]
-        obj = out / "zerog-linktest.o"
-        run([cc, "-O2", "-DJS_NO_EXPORT", f"-I{headers}", "-c", src, "-o", obj])
-        run([cxx, obj, bundle_path(out), *icu, "-o", exe, *runtime])
-        conv_obj = out / "zerog-icu-converters.o"
-        run([cc, "-O2", f"-I{include}", "-c", conv_src, "-o", conv_obj])
-        run([cxx, conv_obj, *icu, "-o", conv_exe, *runtime])
+        objs = []
+        for src in sources:
+            obj = out / f"{name}-{Path(src).stem}.o"
+            run([cc, "-O2", "-DJS_NO_EXPORT", *[f"-I{i}" for i in includes], "-c", src, "-o", obj])
+            objs.append(obj)
+        run([cxx, *objs, *libraries, "-o", exe, *runtime])
+    return exe
+
+
+def check_no_exports(exe):
+    """The bundle exports nothing: Windows executables get no export table."""
+    if not IS_WINDOWS:
+        return
+    out = subprocess.run(["llvm-readobj", "--coff-exports", str(exe)], text=True,
+                         capture_output=True, env=build_env()).stdout
+    exports = [l for l in out.splitlines() if l.strip().startswith("Name:")]
+    print(f"{'ok  ' if not exports else 'FAIL'}  {exe.name} exports {len(exports)} symbols")
+    if exports:
+        sys.exit(1)
+
+
+def cmd_linktest(args):
+    out = build_dir(args)
+    tests = ROOT / "tests" / "link"
+    headers = out / "JavaScriptCore" / "Headers"
+    include = SYSROOT / TRIPLET / "include"
+    icu_data = ICU_DATA[args.profile]
+
+    # 1. An application linking only the bundle.
+    exe = link_c(args, out, "zerog-linktest", [tests / "jsc_c_api.c"], [headers], [bundle_path(out)])
+    check_no_exports(exe)
     run([exe, icu_data])
+
+    # 2. A host with its own copies of the engine's dependencies (same ICU version,
+    #    its own mi_malloc): no duplicate symbols, each side keeps its own.
+    host = link_c(args, out, "zerog-host-conflicts", [tests / "host_conflicts.c"], [headers, include],
+                  [bundle_path(out), *icu_archives(None)])
+    run([host])
+    if IS_WINDOWS:
+        host = link_c(args, out, "zerog-host-conflicts-msvc", [tests / "host_conflicts.c"],
+                      [headers, include], [bundle_path(out), *icu_archives(None)], linker="link")
+        run([host])
+
+    # 3. The filtered ICU data opens every converter WebCore routes to ICU.
+    conv = link_c(args, out, "zerog-icu-converters", [tests / "icu_converters.c"], [include],
+                  icu_archives(icu_data))
     sys.path.insert(0, str(ROOT / "tools"))
     import icu_data as icu_data_tool
     missing = json.loads((ROOT / "deps" / "icu-data.json").read_text())["converters_missing_upstream"]
-    run([conv_exe, *sorted(icu_data_tool.webcore_encodings() - set(missing))])
+    run([conv, *sorted(icu_data_tool.webcore_encodings() - set(missing))])
 
 
 def cmd_all(args):
