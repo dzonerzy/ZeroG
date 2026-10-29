@@ -219,19 +219,40 @@ def icu_archives(icu_data):
     return [lib / "libicui18n.a", lib / "libicuuc.a", data]
 
 
+def zig_cxx_runtime(out):
+    """libc++, libc++abi and libunwind archives zig links for the pinned target, found
+    by probe-linking a C++ program the way a release build links."""
+    probe = out / "cxx-runtime-probe.cpp"
+    probe.write_text('#include <string>\nint main() { std::string s("x"); return (int)s.size() - 1; }\n')
+    env = {**os.environ, "ZIG_VERBOSE_LINK": "1"}
+    result = subprocess.run([os.environ.get("CXX", "zc++"), "-O2", str(probe), "-o", str(out / "cxx-runtime-probe")],
+                            text=True, capture_output=True, env=env)
+    archives = {}
+    for token in (result.stdout + result.stderr).split():
+        name = Path(token).name
+        if name in ("libc++.a", "libc++abi.a", "libunwind.a"):
+            archives[name] = token
+    if len(archives) != 3:
+        sys.exit(f"could not find zig's C++ runtime archives (found {sorted(archives)})")
+    return [archives["libc++.a"], archives["libc++abi.a"], archives["libunwind.a"]]
+
+
 def cmd_bundle(args):
     """One archive with the engine and its static dependencies; only the symbols in
-    port/api/exports.txt stay public (tools/bundle.py)."""
+    port/api/exports.txt stay public (tools/bundle.py). On Linux the C++ runtime
+    (zig's libc++, libc++abi, libunwind) is inside too, localized: hosts link the
+    bundle with a plain C driver, and their own C++ runtime, if any, stays separate."""
     out = build_dir(args)
     rsp = out / "zerog-engine.rsp"
     rsp.write_text("".join(f'"{o.as_posix()}"\n' for o in engine_objects(out)))
+    runtime = zig_cxx_runtime(out) if not IS_WINDOWS and os.environ.get("ZEROG_ZIG_TARGET") else []
     run([sys.executable, ROOT / "tools" / "bundle.py", "--objects", rsp,
-         "--archives", *icu_archives(ICU_DATA[args.profile]),
+         "--archives", *icu_archives(ICU_DATA[args.profile]), *runtime,
          "--exports", ROOT / "port" / "api" / "exports.txt",
          "--out", bundle_path(out), "--work", out / "bundle"], env=build_env())
 
 
-def link_c(args, out, name, sources, includes, libraries, linker="lld"):
+def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runtime=True):
     """Compile and link a C test program the way an application would. On Windows
     `linker` is "lld" (our toolchain, and zig's) or "link" (MSVC's link.exe, what
     MSVC-built hosts use)."""
@@ -256,7 +277,8 @@ def link_c(args, out, name, sources, includes, libraries, linker="lld"):
             obj = out / f"{name}-{Path(src).stem}.o"
             run([cc, "-O2", "-DJS_NO_EXPORT", *[f"-I{i}" for i in includes], "-c", src, "-o", obj])
             objs.append(obj)
-        run([cxx, *objs, *libraries, "-o", exe, *runtime])
+        # cxx_runtime=False links with the C driver: the bundle must bring its own C++ runtime.
+        run([cxx if cxx_runtime else cc, *objs, *libraries, "-o", exe, *runtime])
     return exe
 
 
@@ -280,7 +302,9 @@ def cmd_linktest(args):
     icu_data = ICU_DATA[args.profile]
 
     # 1. An application linking only the bundle.
-    exe = link_c(args, out, "zerog-linktest", [tests / "jsc_c_api.c"], [headers], [bundle_path(out)])
+    # Linked as a C program: on Linux the bundle carries its own C++ runtime.
+    exe = link_c(args, out, "zerog-linktest", [tests / "jsc_c_api.c"], [headers], [bundle_path(out)],
+                 cxx_runtime=bool(IS_WINDOWS or not os.environ.get("ZEROG_ZIG_TARGET")))
     check_no_exports(exe)
     run([exe, icu_data])
 

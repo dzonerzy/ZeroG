@@ -190,8 +190,15 @@ What it took, beyond the obvious:
   crashed; `--force-group-allocation` removes the groups after the bundle's own
   duplicates are merged.
 
+### C++ runtime inside the Linux bundle
+
+The Linux bundle also contains zig's libc++, libc++abi and libunwind (found by a
+probe link, so they always match the pinned zig and target), localized like the
+rest: no `std::__1`, `__cxa_*` or `_Unwind_*` symbol is global. The link test is
+now linked with the C driver (`zcc`), as a C, Zig, Go or Rust host would link it:
+the bundle needs nothing but glibc and compiler-rt builtins. Bundle 89.0 ->
+105.5 MB; stripped link test 49.48 -> 49.70 MB (unused libc++ sections are
+dropped by the final link).
+
 ## Gaps to the single-binary goal
 
-- Linux: the engine references libc++ (`std::__1`), supplied by zig at the final
-  link. A host linking with another libc++ build would share it; embedding and
-  localizing libc++ in the bundle is still open.
