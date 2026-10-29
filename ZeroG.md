@@ -437,7 +437,7 @@ Senza GLib, libsoup e GStreamer spariscono anche i moduli caricati a runtime, ch
 
 WebCore ha bisogno di un backend di riproduzione per `<video>`, `<audio>` e Web Audio, e nei port upstream è GStreamer o AVFoundation. Il port proprio ne deve fornire uno.
 
-- **Versione 1**: media disattivati (`ENABLE_VIDEO`, `ENABLE_WEB_AUDIO`).
+- **Versione 1**: nessun backend media, quindi niente riproduzione. `ENABLE_VIDEO` resta acceso senza backend: nessun port upstream compila con video spento e WebCore compila il codice media senza guardie, quindi spegnerlo vorrebbe dire una serie di patch crescente. Gli elementi `<video>` e `<audio>` esistono e segnalano che non possono riprodurre. `ENABLE_WEB_AUDIO` è spento (combinazione già usata dal port PlayStation).
 - **Dopo**: un backend unico basato su FFmpeg (LGPL, link statico con gli stessi obblighi di WebCore), oppure backend per OS (Media Foundation, AVFoundation). È una questione aperta.
 
 ### Profili di build
@@ -506,10 +506,11 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 
 | Funzione | Flag CMake | minimal | standard |
 | --- | --- | --- | --- |
-| Video e audio | `ENABLE_VIDEO` | No | Con backend media |
+| Video e audio | `ENABLE_VIDEO` | Acceso, senza backend (nessuna riproduzione) | Con backend media |
 | Web Audio | `ENABLE_WEB_AUDIO` | No | Con backend media |
 | WebGL | `ENABLE_WEBGL` | No | Sì |
 | WebAssembly | `ENABLE_WEBASSEMBLY` | No | Sì |
+| JIT FTL (quarto livello di JSC) | `ENABLE_FTL_JIT` | No: il suo backend B3 compila solo con WebAssembly; restano interprete, Baseline e DFG | Sì |
 | XSLT | `ENABLE_XSLT` | No | No |
 | WebRTC e MediaStream | `ENABLE_WEB_RTC`, `ENABLE_MEDIA_STREAM` | No | No |
 | Encrypted Media | `ENABLE_ENCRYPTED_MEDIA` | No | No |

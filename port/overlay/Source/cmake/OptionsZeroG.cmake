@@ -86,6 +86,10 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY PRIVATE ${_zerog_full_web})
 # left on without WebAssembly they pull Wasm types into B3 and fail to compile.
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY_BBQJIT PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY_OMGJIT PRIVATE ${_zerog_full_web})
+# FTL, JSC's top tier, follows WebAssembly: its B3 backend contains WebAssembly GC
+# nodes that only build with WebAssembly. Minimal keeps the interpreter, Baseline
+# and DFG (smaller, less JIT attack surface); other profiles have both.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_FTL_JIT PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE ${_zerog_inspector})
 # Media (ZeroG.md, "Media"): no backend yet, so nothing plays. ENABLE_VIDEO stays on:
 # no upstream port builds without it and WebCore compiles media code unguarded;
