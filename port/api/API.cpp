@@ -250,17 +250,22 @@ public:
 private:
     const zg_view_callbacks& callbacks() const { return m_view.callbacks; }
 
-    void consoleMessage(JSC::MessageSource source, JSC::MessageLevel level, const String& message, unsigned line, unsigned column, const String& sourceURL) final
+    void consoleMessage(JSC::MessageSource source, JSC::MessageLevel level, const String& message, unsigned line, unsigned column, const String& sourceURL, const String& stack) final
     {
         auto text = message.utf8();
         auto file = sourceURL.utf8();
-        zg_log_message log { ZG_LOG_SOURCE_CONSOLE, logLevel(level), byteCast<char>(text.data()), text.length(), byteCast<char>(file.data()), file.length(), line, column, &m_view };
+        // The page's console API is CONSOLE; what the engine reports about the page
+        // (network, security, content policy, script errors) is ENGINE.
+        auto logSource = source == JSC::MessageSource::ConsoleAPI ? ZG_LOG_SOURCE_CONSOLE : ZG_LOG_SOURCE_ENGINE;
+        zg_log_message log { logSource, logLevel(level), byteCast<char>(text.data()), text.length(), byteCast<char>(file.data()), file.length(), line, column, &m_view };
         if (callbacks().console)
             callbacks().console(&m_view, &log, callbacks().user);
         if (auto* rt = runtime(); rt && rt->config.log && log.level >= rt->config.log_level)
             rt->config.log(&log, rt->config.log_user);
         if (callbacks().js_error && source == JSC::MessageSource::JS && level == JSC::MessageLevel::Error) {
-            zg_js_error error { log.message, log.message_len, nullptr, 0, log.file, log.file_len, line, column, message.contains("Unhandled Promise Rejection"_s) };
+            auto stackText = stack.utf8();
+            zg_js_error error { log.message, log.message_len, stack.isEmpty() ? nullptr : byteCast<char>(stackText.data()), stackText.length(),
+                log.file, log.file_len, line, column, message.contains("Unhandled Promise Rejection"_s) };
             callbacks().js_error(&m_view, &error, callbacks().user);
         }
     }
@@ -453,9 +458,36 @@ zg_runtime* zg_runtime_create(const zg_runtime_config* configuration)
     }
 #endif
 
-    initializeProcess({ config.jit != ZG_JIT_DISABLED });
+    ProcessOptions options;
+    options.jit = config.jit != ZG_JIT_DISABLED;
+    options.gcThreads = config.gc_threads;
+    options.jitThreads = config.jit_threads;
+    options.heapLimit = config.js_heap_limit;
+    options.synchronousImageDecoding = config.sync_image_decoding;
+    initializeProcess(options);
+    if (config.cache_limit) {
+        auto limit = static_cast<unsigned>(std::min<size_t>(config.cache_limit, std::numeric_limits<unsigned>::max()));
+        MemoryCache::singleton().setCapacities(0, limit, limit);
+    }
     s_runtimeCreated = true;
     s_runtime = new zg_runtime { config };
+
+    // The engine's own diagnostics go to the log callback (or stderr without one).
+    if (config.log) {
+        setLogHandler([](LogLevel level, const String& message) {
+            auto* rt = runtime();
+            if (!rt || !rt->config.log)
+                return;
+            static constexpr zg_log_level levels[] = { ZG_LOG_DEBUG, ZG_LOG_INFO, ZG_LOG_WARNING, ZG_LOG_ERROR };
+            zg_log_message log { ZG_LOG_SOURCE_ENGINE, levels[static_cast<int>(level)], nullptr, 0, nullptr, 0, 0, 0, nullptr };
+            if (log.level < rt->config.log_level)
+                return;
+            auto text = message.utf8();
+            log.message = byteCast<char>(text.data());
+            log.message_len = text.length();
+            rt->config.log(&log, rt->config.log_user);
+        });
+    }
 
 #if OS(WINDOWS)
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);

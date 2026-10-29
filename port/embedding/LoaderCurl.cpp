@@ -32,6 +32,7 @@
 #include "config.h"
 #include "Loader.h"
 
+#include "Embedding.h"
 #include "View.h"
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/CertificateInfo.h>
@@ -73,6 +74,7 @@ void initializeCertificates()
                 return;
             }
         }
+        log(LogLevel::Warning, "No CA certificate bundle found in the standard locations: https and wss connections will fail certificate verification"_s);
     });
 #endif
 }

@@ -97,7 +97,8 @@ typedef enum zg_log_level {
 } zg_log_level;
 
 typedef enum zg_log_source {
-    ZG_LOG_SOURCE_ENGINE,   /* internal engine logs */
+    ZG_LOG_SOURCE_ENGINE,   /* the engine: about a page (network, security, script
+                               errors) or its own (GPU, certificates) */
     ZG_LOG_SOURCE_CONSOLE   /* console.log/warn/error from page JavaScript */
 } zg_log_source;
 
@@ -105,11 +106,12 @@ typedef struct zg_log_message {
     zg_log_source source;
     zg_log_level level;
     const char *message; size_t message_len;
-    const char *file;    size_t file_len;   /* source URL for console messages */
+    const char *file;    size_t file_len;   /* source URL, if any */
     unsigned line, column;
-    zg_view *view;                          /* NULL for engine logs */
+    zg_view *view;                          /* the page's view; NULL for the engine's own */
 } zg_log_message;
 
+/* The engine's own messages may come from any thread. */
 typedef void (*zg_log_fn)(const zg_log_message *msg, void *user);
 
 /* ------------------------------------------------------------------------ */
@@ -129,13 +131,16 @@ typedef struct zg_runtime_config {
        0 picks a free real-time signal. Replaces JSC_SIGNAL_FOR_GC. */
     int gc_signal;
 
-    /* 0 = engine default. Lets hosts with their own pools avoid oversubscription. */
+    /* 0 = engine default. Lets hosts with their own pools avoid oversubscription:
+       GC marking threads, and compiler threads per JIT tier. */
     unsigned gc_threads;
     unsigned jit_threads;
-    unsigned decode_threads;
+    /* Nonzero: images decode on the runtime thread, with no decoder threads. */
+    int sync_image_decoding;
 
     /* Soft limits in bytes, 0 = default. Apply to the whole runtime: all views
-       share one JavaScript VM. */
+       share one JavaScript VM and one resource cache. Near js_heap_limit the GC
+       collects more often; cache_limit caps WebCore's memory cache. */
     size_t js_heap_limit;
     size_t cache_limit;
 

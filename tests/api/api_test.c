@@ -124,12 +124,23 @@ static void onConsole(zg_view *view, const zg_log_message *message, void *user)
     snprintf(lastConsole, sizeof lastConsole, "%.*s", (int)message->message_len, message->message);
 }
 
+static char lastStack[512];
+
 static void onJSError(zg_view *view, const zg_js_error *error, void *user)
 {
     (void)view;
-    (void)error;
     (void)user;
+    snprintf(lastStack, sizeof lastStack, "%.*s", (int)error->stack_len, error->stack ? error->stack : "");
     ++jsErrors;
+}
+
+static int engineMessagesWithView;
+
+static void onLog(const zg_log_message *message, void *user)
+{
+    (void)user;
+    if (message->source == ZG_LOG_SOURCE_ENGINE && message->view)
+        ++engineMessagesWithView;
 }
 
 static void onTitle(zg_view *view, const char *title, size_t length, void *user)
@@ -449,8 +460,16 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("     ZeroG %d.%d.%d, WebKit %.12s, profile %s\n", version.major, version.minor, version.patch, version.webkit_revision, version.profile);
 
+    /* Every runtime option: thread counts, limits, the log. */
+    runtimeConfig.gc_threads = 2;
+    runtimeConfig.jit_threads = 1;
+    runtimeConfig.sync_image_decoding = 1;
+    runtimeConfig.js_heap_limit = 512u * 1024 * 1024;
+    runtimeConfig.cache_limit = 32u * 1024 * 1024;
+    runtimeConfig.log = onLog;
+    runtimeConfig.log_level = ZG_LOG_DEBUG;
     runtime = zg_runtime_create(&runtimeConfig);
-    CHECK(runtime != NULL, "runtime created");
+    CHECK(runtime != NULL, "runtime created with thread counts, limits and a log");
     CHECK(zg_runtime_create(&runtimeConfig) == NULL, "a second runtime is refused: %s", zg_last_error());
 
     context = zg_context_create(runtime, &contextConfig);
@@ -520,6 +539,17 @@ int main(int argc, char **argv)
     }
     CHECK(zg_surface_acquire(zg_view_surface(view), &frameData) == ZG_ERROR_NOT_FOUND, "no newer frame");
     CHECK(jsErrors == 0, "no JavaScript errors");
+
+    /* An uncaught error reaches js_error with its stack; the engine's message
+       about a page reaches the log with the view. */
+    evaluate(view, "setTimeout(() => { function outer() { inner(); } function inner() { throw new Error('deep'); } outer(); }, 0); 0");
+    for (i = 0; i < 100 && !jsErrors; ++i) {
+        sleepMilliseconds(5);
+        frame(view);
+    }
+    CHECK(jsErrors == 1 && strstr(lastStack, "inner@") && strstr(lastStack, "outer@"), "an uncaught error with its stack: %s", lastStack);
+    jsErrors = 0;
+    CHECK(engineMessagesWithView > 0, "the engine's messages about a page reach the log with its view (%d)", engineMessagesWithView);
 
     /* The application's files and schemes. */
     {

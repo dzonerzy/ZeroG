@@ -429,7 +429,7 @@ public:
         ++loads;
     }
 
-    void consoleMessage(JSC::MessageSource, JSC::MessageLevel, const String& message, unsigned, unsigned, const String&) final
+    void consoleMessage(JSC::MessageSource, JSC::MessageLevel, const String& message, unsigned, unsigned, const String&, const String&) final
     {
         std::printf("     console: %s\n", message.utf8().data());
     }

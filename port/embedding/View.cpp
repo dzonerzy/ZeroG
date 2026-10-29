@@ -97,6 +97,10 @@ View::View(Configuration&& configuration)
     settings.setScriptEnabled(configuration.scriptEnabled);
     // <a download> (WebKit2 turns it on; it is an embedder setting).
     settings.setDownloadAttributeEnabled(true);
+    if (processOptions().synchronousImageDecoding) {
+        settings.setLargeImageAsyncDecodingEnabled(false);
+        settings.setAnimatedImageAsyncDecodingEnabled(false);
+    }
     // Compositing version 1 (ZeroG.md, "Compositing"): one surface, dirty regions.
     settings.setAcceleratedCompositingEnabled(false);
     page->setDeviceScaleFactor(m_scale);

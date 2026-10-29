@@ -1,0 +1,74 @@
+diff --git a/Source/JavaScriptCore/inspector/ConsoleMessage.h b/Source/JavaScriptCore/inspector/ConsoleMessage.h
+index b3bc7fe5ec..ccb279f642 100644
+--- a/Source/JavaScriptCore/inspector/ConsoleMessage.h
++++ b/Source/JavaScriptCore/inspector/ConsoleMessage.h
+@@ -81,6 +81,7 @@ public:
+     void incrementCount() { ++m_repeatCount; }
+ 
+     ScriptArguments* arguments() const { return m_arguments.get(); }
++    ScriptCallStack* callStack() const { return m_callStack.get(); }
+     unsigned LEGACY_NODELETE argumentCount() const;
+ 
+     void setMessageIsFirstArgument(bool value) { m_messageIsFirstArgument = value; }
+diff --git a/Source/WebCore/page/ChromeClient.cpp b/Source/WebCore/page/ChromeClient.cpp
+index 8bf8d808ad..fe80d99d15 100644
+--- a/Source/WebCore/page/ChromeClient.cpp
++++ b/Source/WebCore/page/ChromeClient.cpp
+@@ -40,6 +40,7 @@
+ #include "ScrollingCoordinator.h"
+ #include "TextDetectorInterface.h"
+ #include "WorkerClient.h"
++#include <JavaScriptCore/ConsoleMessage.h>
+ #include <wtf/NativePromise.h>
+ 
+ #if ENABLE(WEBGL)
+@@ -52,6 +53,11 @@ ChromeClient::ChromeClient() = default;
+ 
+ ChromeClient::~ChromeClient() = default;
+ 
++void ChromeClient::addConsoleMessage(const Inspector::ConsoleMessage& consoleMessage, const String& message)
++{
++    addMessageToConsole(consoleMessage.source(), consoleMessage.level(), message, consoleMessage.line(), consoleMessage.column(), consoleMessage.url());
++}
++
+ void ChromeClient::transcodeChosenFiles(Vector<String>&& transcodingPaths, String&& destinationUTI, String&& destinationExtension, CompletionHandler<void(Vector<String>&&)>&& completion)
+ {
+ #if PLATFORM(MAC)
+diff --git a/Source/WebCore/page/ChromeClient.h b/Source/WebCore/page/ChromeClient.h
+index 8424a4d4a9..aaa773e650 100644
+--- a/Source/WebCore/page/ChromeClient.h
++++ b/Source/WebCore/page/ChromeClient.h
+@@ -95,6 +95,10 @@ enum class MessageSource : uint8_t;
+ enum class MessageLevel : uint8_t;
+ }
+ 
++namespace Inspector {
++class ConsoleMessage;
++}
++
+ namespace WebCore {
+ 
+ class AccessibilityObject;
+@@ -264,6 +268,9 @@ public:
+     virtual void setResizable(bool) = 0;
+ 
+     virtual void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String& message, unsigned lineNumber, unsigned columnNumber, const String& sourceID) = 0;
++    // A console message with everything it carries (its call stack, for one); by
++    // default the message as above.
++    WEBCORE_EXPORT virtual void addConsoleMessage(const Inspector::ConsoleMessage&, const String& message);
+ 
+     virtual bool canRunBeforeUnloadConfirmPanel() = 0;
+     virtual bool runBeforeUnloadConfirmPanel(String&& message, LocalFrame&) = 0;
+diff --git a/Source/WebCore/page/FrameConsoleClient.cpp b/Source/WebCore/page/FrameConsoleClient.cpp
+index f7761e434c..f31059f9d8 100644
+--- a/Source/WebCore/page/FrameConsoleClient.cpp
++++ b/Source/WebCore/page/FrameConsoleClient.cpp
+@@ -164,7 +164,7 @@ void FrameConsoleClient::addMessage(std::unique_ptr<Inspector::ConsoleMessage>&&
+         } else
+             message = consoleMessage->message();
+ 
+-        page->chrome().client().addMessageToConsole(consoleMessage->source(), consoleMessage->level(), message, consoleMessage->line(), consoleMessage->column(), consoleMessage->url());
++        page->chrome().client().addConsoleMessage(*consoleMessage, message);
+ 
+         if (RefPtr consoleMessageListener = page->consoleMessageListenerForTesting())
+             consoleMessageListener->invoke(message);

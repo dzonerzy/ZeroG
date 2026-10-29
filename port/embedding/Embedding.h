@@ -20,7 +20,16 @@ namespace ZeroG {
 
 struct ProcessOptions {
     bool jit { true };
+    // 0: JSC's defaults.
+    unsigned gcThreads { 0 };
+    unsigned jitThreads { 0 }; // per JIT tier
+    size_t heapLimit { 0 }; // bytes; the GC works harder near it
+    // Images decode on the main thread, with no decoder threads.
+    bool synchronousImageDecoding { false };
 };
+
+// What initializeProcess was given.
+const ProcessOptions& processOptions();
 
 // Initializes WTF, JSC and WebCore for this process. Call once, on the thread that
 // becomes the main thread; later calls do nothing (and ignore their options).
@@ -29,6 +38,13 @@ void initializeProcess(const ProcessOptions& = { });
 // Called, on any thread, whenever engine work is posted to the main thread
 // (network replies, tasks from workers): loops waiting for events wake up.
 void addWakeUpObserver(Function<void()>&&);
+
+// The engine's own diagnostics (a GPU that cannot be used, a missing CA bundle):
+// to the handler if there is one, else to stderr. Any thread; the handler runs
+// on the calling thread.
+enum class LogLevel : uint8_t { Debug, Info, Warning, Error };
+void setLogHandler(Function<void(LogLevel, const String&)>&&);
+void log(LogLevel, const String&);
 
 // Runs the engine's pending work on the main thread without waiting: expired
 // timers (animations, setTimeout) and tasks posted from other threads. Texture

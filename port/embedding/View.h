@@ -42,7 +42,9 @@ class Download;
 class ViewClient {
 public:
     virtual ~ViewClient() = default;
-    virtual void consoleMessage(JSC::MessageSource, JSC::MessageLevel, const String& /* message */, unsigned /* line */, unsigned /* column */, const String& /* sourceURL */) { }
+    // `stack`: one "function@url:line:column" per line, innermost first, when the
+    // message has one (errors); empty otherwise.
+    virtual void consoleMessage(JSC::MessageSource, JSC::MessageLevel, const String& /* message */, unsigned /* line */, unsigned /* column */, const String& /* sourceURL */, const String& /* stack */) { }
     virtual void cursorChanged(WebCore::PlatformCursorType) { }
     virtual void tooltipChanged(const String&) { }
     virtual void titleChanged(const String&) { }

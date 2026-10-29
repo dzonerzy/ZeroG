@@ -30,6 +30,9 @@
 #include "ChromeClientZeroG.h"
 
 #include "View.h"
+#include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/ScriptCallStack.h>
+#include <wtf/text/StringBuilder.h>
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/Cursor.h>
 #include <WebCore/HitTestResult.h>
@@ -125,7 +128,24 @@ RefPtr<SearchPopupMenu> ChromeClientZeroG::createSearchPopupMenu(PopupMenuClient
 void ChromeClientZeroG::addMessageToConsole(JSC::MessageSource source, JSC::MessageLevel level, const String& message, unsigned line, unsigned column, const String& sourceURL)
 {
     if (m_view)
-        m_view->client().consoleMessage(source, level, message, line, column, sourceURL);
+        m_view->client().consoleMessage(source, level, message, line, column, sourceURL, { });
+}
+
+// Messages with their call stack (patch 0018): exceptions and errors.
+void ChromeClientZeroG::addConsoleMessage(const Inspector::ConsoleMessage& consoleMessage, const String& message)
+{
+    if (!m_view)
+        return;
+    StringBuilder stack;
+    if (auto* callStack = consoleMessage.callStack()) {
+        for (size_t i = 0; i < callStack->size(); ++i) {
+            auto& frame = callStack->at(i);
+            if (i)
+                stack.append('\n');
+            stack.append(frame.functionName().isEmpty() ? "(anonymous)"_s : frame.functionName(), '@', frame.sourceURL(), ':', frame.lineNumber(), ':', frame.columnNumber());
+        }
+    }
+    m_view->client().consoleMessage(consoleMessage.source(), consoleMessage.level(), message, consoleMessage.line(), consoleMessage.column(), consoleMessage.url(), stack.toString());
 }
 
 void ChromeClientZeroG::runJavaScriptAlert(LocalFrame&, const String& message)

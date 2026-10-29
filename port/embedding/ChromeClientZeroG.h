@@ -69,6 +69,7 @@ private:
     void setResizable(bool) final { }
 
     void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String&, unsigned, unsigned, const String&) final;
+    void addConsoleMessage(const Inspector::ConsoleMessage&, const String&) final;
 
     bool canRunBeforeUnloadConfirmPanel() final { return false; }
     bool runBeforeUnloadConfirmPanel(String&&, WebCore::LocalFrame&) final { return true; }
