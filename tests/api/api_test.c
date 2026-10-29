@@ -14,10 +14,18 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <winsock2.h>
 #include <windows.h>
+typedef SOCKET socket_t;
+#define closesocket_ closesocket
 #else
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <pthread.h>
+#include <sys/socket.h>
 #include <unistd.h>
+typedef int socket_t;
+#define closesocket_ close
 #endif
 
 static int failures;
@@ -203,6 +211,94 @@ static void onNativeScheme(zg_scheme_request *request, void *user)
         zg_scheme_request_method(request), accept ? accept : "", (int)length, url);
     zg_scheme_request_add_header(request, "Access-Control-Allow-Origin", "*");
     zg_scheme_request_respond(request, 200, "application/json", body, strlen(body));
+}
+
+/* ---- HTTP authentication ---- */
+
+/* An HTTP server on 127.0.0.1 for one page behind Basic authentication
+   (user / secret); serves connections until the listener closes. */
+static socket_t listener;
+static int serverPort;
+
+#ifdef _WIN32
+static DWORD WINAPI serve(LPVOID argument)
+#else
+static void *serve(void *argument)
+#endif
+{
+    (void)argument;
+    for (;;) {
+        char request[4096];
+        int length = 0, received;
+        const char *reply;
+        socket_t client = accept(listener, NULL, NULL);
+#ifdef _WIN32
+        if (client == INVALID_SOCKET)
+            return 0;
+#else
+        if (client < 0)
+            return NULL;
+#endif
+        while (length < (int)sizeof request - 1 && (received = recv(client, request + length, (int)(sizeof request - 1 - length), 0)) > 0) {
+            length += received;
+            request[length] = 0;
+            if (strstr(request, "\r\n\r\n"))
+                break;
+        }
+        request[length] = 0;
+        if (strstr(request, "Authorization: Basic dXNlcjpzZWNyZXQ="))
+            reply = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 30\r\nConnection: close\r\n\r\n<title>signed in</title>hello!";
+        else
+            reply = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"api\"\r\nContent-Type: text/html\r\nContent-Length: 22\r\nConnection: close\r\n\r\n<title>denied</title>!";
+        send(client, reply, (int)strlen(reply), 0);
+        closesocket_(client);
+    }
+}
+
+static void startServer(void)
+{
+    struct sockaddr_in address;
+#ifdef _WIN32
+    WSADATA data;
+    int size = sizeof address;
+    WSAStartup(MAKEWORD(2, 2), &data);
+#else
+    socklen_t size = sizeof address;
+    pthread_t thread;
+#endif
+    listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    memset(&address, 0, sizeof address);
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    bind(listener, (struct sockaddr *)&address, sizeof address);
+    listen(listener, 8);
+    getsockname(listener, (struct sockaddr *)&address, &size);
+    serverPort = ntohs(address.sin_port);
+#ifdef _WIN32
+    CloseHandle(CreateThread(NULL, 0, serve, NULL, 0, NULL));
+#else
+    pthread_create(&thread, NULL, serve, NULL);
+    pthread_detach(thread);
+#endif
+}
+
+static char lastChallenge[256];
+
+/* A wrong password first, then the right one. */
+static void onAuthChallenge(zg_view *view, zg_auth_challenge *challenge, void *user)
+{
+    (void)view;
+    (void)user;
+    snprintf(lastChallenge, sizeof lastChallenge, "%s %s %u", zg_auth_challenge_scheme(challenge), zg_auth_challenge_realm(challenge), zg_auth_challenge_failures(challenge));
+    zg_auth_challenge_respond(challenge, "user", zg_auth_challenge_failures(challenge) ? "secret" : "wrong");
+}
+
+static int allowAll(zg_view *view, const char *url, void *user)
+{
+    (void)view;
+    (void)url;
+    (void)user;
+    return 1;
 }
 
 /* tests/api/assets, packed by tools/assets.py at build time. */
@@ -479,6 +575,24 @@ int main(int argc, char **argv)
             frame(view);
         }
         CHECK(!strcmp(evaluate(view, "location.href"), "\"packed://localhost/\""), "a data: navigation is blocked: %s", evaluate(view, "location.href"));
+
+        /* HTTP authentication through the callback. */
+        {
+            char url[128];
+            startServer();
+            snprintf(url, sizeof url, "http://127.0.0.1:%d/private", serverPort);
+            callbacks.navigation_blocked = allowAll;
+            callbacks.auth_challenge = onAuthChallenge;
+            zg_view_set_callbacks(view, &callbacks);
+            loads = loadsFinished;
+            CHECK(zg_view_load_url(view, url) == ZG_OK && waitForLoad(view, loads) && !strcmp(evaluate(view, "document.title"), "\"signed in\""),
+                "a page behind HTTP authentication: %s", evaluate(view, "document.title"));
+            CHECK(!strcmp(lastChallenge, "basic api 1"), "the challenge, asked again after a wrong password: %s", lastChallenge);
+            callbacks.navigation_blocked = NULL;
+            callbacks.auth_challenge = NULL;
+            zg_view_set_callbacks(view, &callbacks);
+            closesocket_(listener);
+        }
 
         zg_runtime_memory_stats(runtime, &stats);
         CHECK(stats.asset_bytes >= sizeof appPage - 1, "memory stats count the copied files: %zu bytes", stats.asset_bytes);

@@ -369,6 +369,13 @@ private:
             auto headerEnd = request.find("\r\n\r\n");
             return response("200 OK", "text/plain", headerEnd == std::string::npos ? "" : request.substr(headerEnd + 4));
         }
+        // Basic authentication: user / secret.
+        if (path == "/protected" || path == "/protected-other") {
+            if (header(request, "Authorization") == "Basic dXNlcjpzZWNyZXQ=")
+                return response("200 OK", "text/html", "<!DOCTYPE html><title>welcome</title>welcome");
+            auto realm = path == "/protected" ? "zerog" : "other";
+            return response("401 Unauthorized", "text/html", "<!DOCTYPE html><title>denied</title>denied", std::string("WWW-Authenticate: Basic realm=\"") + realm + "\"\r\n");
+        }
         if (path == "/set-cookie")
             return response("200 OK", "text/plain", "set", "Set-Cookie: visible=1; Path=/\r\nSet-Cookie: hidden=2; Path=/; HttpOnly\r\n");
         if (path == "/echo-cookie") {
@@ -421,6 +428,20 @@ public:
         std::printf("     console: %s\n", message.utf8().data());
     }
 
+    // Answers HTTP challenges from a queue; none left: no credential.
+    void authenticationChallenge(const AuthenticationChallenge& challenge, CompletionHandler<void(std::optional<Credential>&&)>&& completionHandler) final
+    {
+        challenges.append(makeString(challenge.protectionSpace().realm(), ' ', challenge.previousFailureCount()));
+        if (credentials.isEmpty()) {
+            completionHandler(std::nullopt);
+            return;
+        }
+        auto [user, password] = credentials.takeFirst();
+        completionHandler(Credential { user, password, CredentialPersistence::ForSession });
+    }
+
+    Vector<String> challenges;
+    Deque<std::pair<String, String>> credentials;
     URL finishedURL;
     bool loadFailed { false };
     int loads { 0 };
@@ -467,6 +488,8 @@ String await(ZeroG::View& view, const String& expression)
 
 int main()
 {
+    // Unbuffered: a crash still shows how far the test got.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     ZeroG::initializeProcess();
     bool passed = true;
 
@@ -654,6 +677,18 @@ int main()
         passed &= check(syncPost == "200 /echo-body posted body"_s, "sends a body: %s", syncPost.utf8().data());
         auto syncCookies = view->evaluateScript(makeString('(', syncXHR, ")('GET', '/echo-cookie')"_s));
         passed &= check(syncCookies.contains("hidden=2"_s), "and cookies: %s", syncCookies.utf8().data());
+
+        // HTTP authentication: a wrong password, then the right one.
+        client.credentials.append({ "user"_s, "wrong"_s });
+        client.credentials.append({ "user"_s, "secret"_s });
+        passed &= check(load(*view, client, makeString(http, "/protected"_s)) && view->evaluateScript("document.title"_s) == "welcome"_s,
+            "a protected page loads with the right credential: %s", view->evaluateScript("document.title"_s).utf8().data());
+        auto challenges = makeStringByJoining(client.challenges.span(), "|"_s);
+        passed &= check(challenges == "zerog 0|zerog 1"_s, "asked twice, the second time after a failure: %s", challenges.utf8().data());
+        auto again = await(*view, "fetch('/protected').then(r => r.status)"_s);
+        passed &= check(again == "200"_s && client.challenges.size() == 2, "the session keeps the credential: %s, %zu challenges", again.utf8().data(), client.challenges.size());
+        passed &= check(load(*view, client, makeString(http, "/protected-other"_s)) && view->evaluateScript("document.title"_s) == "denied"_s,
+            "no credential given: the server's 401 page: %s", view->evaluateScript("document.title"_s).utf8().data());
 
         int loads = client.loads;
         view->loadURL(URL { makeString(http, "/nothing-here"_s) });

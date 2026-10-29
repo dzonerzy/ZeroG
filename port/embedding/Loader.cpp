@@ -36,6 +36,7 @@
 #include <WebCore/Cookie.h>
 #include <WebCore/CookieJar.h>
 #include <WebCore/CookieJarDB.h>
+#include <WebCore/CredentialStorage.h>
 #include <WebCore/DataURLDecoder.h>
 #include <WebCore/Document.h>
 #include <WebCore/StorageSessionProvider.h>
@@ -304,6 +305,13 @@ Session::~Session()
 {
     // Cached responses keep their files alive; a session's go with it.
     MemoryCache::singleton().evictResources(m_sessionID);
+}
+
+CredentialStorage& Session::credentials()
+{
+    if (!m_credentials)
+        m_credentials = std::make_unique<CredentialStorage>();
+    return *m_credentials;
 }
 
 void Session::close()

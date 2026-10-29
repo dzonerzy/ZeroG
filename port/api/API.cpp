@@ -222,6 +222,15 @@ RefPtr<LocalFrame> mainFrame(zg_view& view)
 
 } // namespace
 
+// An HTTP challenge waiting for the application; answered on the runtime thread.
+struct zg_auth_challenge {
+    CompletionHandler<void(std::optional<Credential>&&)> completionHandler;
+    std::string url;
+    std::string realm;
+    const char* scheme;
+    unsigned failures;
+};
+
 // The view's events, as zg_view_callbacks.
 class ViewClientAPI final : public ViewClient {
 public:
@@ -335,6 +344,33 @@ private:
         String result = reply ? String::fromUTF8(reply) : emptyString();
         free(reply);
         return result;
+    }
+
+    void authenticationChallenge(const AuthenticationChallenge& challenge, CompletionHandler<void(std::optional<Credential>&&)>&& completionHandler) final
+    {
+        if (!callbacks().auth_challenge) {
+            completionHandler(std::nullopt);
+            return;
+        }
+        auto& space = challenge.protectionSpace();
+        auto scheme = [&] {
+            switch (space.authenticationScheme()) {
+            case ProtectionSpace::AuthenticationScheme::HTTPBasic: return "basic";
+            case ProtectionSpace::AuthenticationScheme::HTTPDigest: return "digest";
+            case ProtectionSpace::AuthenticationScheme::NTLM: return "ntlm";
+            case ProtectionSpace::AuthenticationScheme::Negotiate: return "negotiate";
+            default: return "other";
+            }
+        }();
+        auto* request = new zg_auth_challenge { WTF::move(completionHandler), toUTF8(challenge.failureResponse().url().string()),
+            toUTF8(space.realm()), scheme, challenge.previousFailureCount() };
+        callbacks().auth_challenge(&m_view, request, callbacks().user);
+    }
+
+    static std::string toUTF8(const String& string)
+    {
+        auto utf8 = string.utf8();
+        return { byteCast<char>(utf8.data()), utf8.length() };
     }
 
     zg_view& m_view;
@@ -810,6 +846,48 @@ void zg_scheme_request_fail(zg_scheme_request* request, const char* reason)
         return;
     answer(request, [reason = stringFromUTF8(reason).isolatedCopy()](SchemeTask& task) {
         task.didFail(failedError(task.request().url(), reason.isEmpty() ? "The scheme handler failed the request"_s : reason));
+    });
+}
+
+// ---- HTTP authentication ----
+
+const char* zg_auth_challenge_url(const zg_auth_challenge* challenge)
+{
+    return challenge ? challenge->url.c_str() : nullptr;
+}
+
+const char* zg_auth_challenge_realm(const zg_auth_challenge* challenge)
+{
+    return challenge ? challenge->realm.c_str() : nullptr;
+}
+
+const char* zg_auth_challenge_scheme(const zg_auth_challenge* challenge)
+{
+    return challenge ? challenge->scheme : nullptr;
+}
+
+unsigned zg_auth_challenge_failures(const zg_auth_challenge* challenge)
+{
+    return challenge ? challenge->failures : 0;
+}
+
+void zg_auth_challenge_respond(zg_auth_challenge* challenge, const char* user, const char* password)
+{
+    if (!challenge)
+        return;
+    ensureOnMainThread([challenge, user = stringFromUTF8(user).isolatedCopy(), password = stringFromUTF8(password).isolatedCopy()] {
+        challenge->completionHandler(Credential { user, password, CredentialPersistence::ForSession });
+        delete challenge;
+    });
+}
+
+void zg_auth_challenge_cancel(zg_auth_challenge* challenge)
+{
+    if (!challenge)
+        return;
+    ensureOnMainThread([challenge] {
+        challenge->completionHandler(std::nullopt);
+        delete challenge;
     });
 }
 

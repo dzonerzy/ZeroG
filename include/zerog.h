@@ -445,6 +445,23 @@ typedef struct zg_js_error {
 
 typedef enum zg_dialog_kind { ZG_DIALOG_ALERT, ZG_DIALOG_CONFIRM, ZG_DIALOG_PROMPT } zg_dialog_kind;
 
+/* A server asks for HTTP credentials (401 with WWW-Authenticate). Valid until
+   answered, which must happen exactly once, from any thread. Credentials that
+   are given are kept for the context's lifetime, in memory, for the same
+   protection space (host, port, realm); a failed one is asked again. */
+typedef struct zg_auth_challenge zg_auth_challenge;
+
+ZG_API const char *zg_auth_challenge_url(const zg_auth_challenge *challenge);
+ZG_API const char *zg_auth_challenge_realm(const zg_auth_challenge *challenge);
+/* "basic", "digest", "ntlm", "negotiate" or "other". */
+ZG_API const char *zg_auth_challenge_scheme(const zg_auth_challenge *challenge);
+/* How many credentials for this request were refused so far. */
+ZG_API unsigned zg_auth_challenge_failures(const zg_auth_challenge *challenge);
+/* Retry with these credentials (UTF-8, copied). */
+ZG_API void zg_auth_challenge_respond(zg_auth_challenge *challenge, const char *user, const char *password);
+/* No credentials: the server's 401 response is shown. */
+ZG_API void zg_auth_challenge_cancel(zg_auth_challenge *challenge);
+
 typedef struct zg_view_callbacks {
     size_t size;
     void *user;
@@ -464,6 +481,8 @@ typedef struct zg_view_callbacks {
        a malloc'd UTF-8 reply to *reply (the engine frees it). */
     int  (*dialog)(zg_view *view, zg_dialog_kind kind, const char *message,
                    const char *default_text, char **reply, void *user);
+    /* HTTP authentication; NULL: every challenge is cancelled. */
+    void (*auth_challenge)(zg_view *view, zg_auth_challenge *challenge, void *user);
 } zg_view_callbacks;
 
 ZG_API void zg_view_set_callbacks(zg_view *view, const zg_view_callbacks *callbacks);

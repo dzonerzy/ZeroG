@@ -27,6 +27,7 @@ namespace WebCore {
 class BlobRegistry;
 class CookieJar;
 class CookieJarDB;
+class CredentialStorage;
 class LoaderStrategy;
 class LocalFrame;
 class ResourceLoader;
@@ -132,6 +133,10 @@ public:
     // The pages' user content: the registered fonts' style sheet.
     WebCore::UserContentProvider& userContentProvider();
 
+    // HTTP credentials the application gave for the session's protection spaces;
+    // in memory only, for the session's lifetime.
+    WebCore::CredentialStorage& credentials();
+
     // Cookies, as WebKit's curl network session keeps them.
     WebCore::CookieJarDB& cookieDatabase();
     // The Cookie header for a request (HttpOnly cookies included), and the
@@ -145,6 +150,7 @@ private:
     HashMap<String, Ref<SchemeHandler>> m_schemeHandlers;
     std::unique_ptr<WebCore::CookieJarDB> m_cookieDatabase;
     RefPtr<WebCore::UserContentProvider> m_userContentProvider;
+    std::unique_ptr<WebCore::CredentialStorage> m_credentials;
 };
 
 // The cookie jar of a page in a session: document.cookie and the DOM's cookie APIs.

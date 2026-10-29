@@ -6,7 +6,10 @@
 
 #include "Loader.h"
 #include "Surface.h"
+#include <WebCore/AuthenticationChallenge.h>
+#include <WebCore/Credential.h>
 #include <WebCore/Cursor.h>
+#include <wtf/CompletionHandler.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FloatSize.h>
 #include <WebCore/IntRect.h>
@@ -49,6 +52,10 @@ public:
     virtual void openExternal(const URL&) { }
     // A frame's window object was (re)created: bindings are installed here.
     virtual void windowObjectCleared(WebCore::LocalFrame&) { }
+    // A server asks for HTTP credentials (401). Answer with a credential to retry
+    // with it, or nullopt to show the server's response; the answer may come
+    // later. The default answers nullopt.
+    virtual void authenticationChallenge(const WebCore::AuthenticationChallenge&, CompletionHandler<void(std::optional<WebCore::Credential>&&)>&& completionHandler) { completionHandler(std::nullopt); }
     virtual void alert(const String&) { }
     virtual bool confirm(const String&) { return false; }
     virtual std::optional<String> prompt(const String& /* message */, const String& /* defaultValue */) { return std::nullopt; }

@@ -32,7 +32,13 @@
 #include "config.h"
 #include "Loader.h"
 
+#include "View.h"
+#include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/CertificateInfo.h>
+#include <WebCore/CredentialStorage.h>
+#include <WebCore/DocumentPage.h>
+#include <WebCore/LocalFrame.h>
+#include <WebCore/Page.h>
 #include <WebCore/CurlContext.h>
 #include <WebCore/CurlRequest.h>
 #include <WebCore/CurlRequestClient.h>
@@ -174,7 +180,76 @@ private:
     void send()
     {
         m_curlRequest = CurlRequest::create(withCookies(m_session, m_request), *this);
+        if (!m_credential.isEmpty()) {
+            m_curlRequest->setAuthenticationScheme(m_authenticationScheme);
+            m_curlRequest->setUserPass(m_credential.user(), m_credential.password());
+        }
         m_curlRequest->resume();
+    }
+
+    // ---- HTTP authentication, as NetworkDataTaskCurl::tryHttpAuthentication ----
+
+    void authenticate(AuthenticationChallenge&& challenge)
+    {
+        // One partition per session (the storage is the session's own); a null
+        // String cannot be a hash key.
+        auto& credentials = m_session->credentials();
+        auto& space = challenge.protectionSpace();
+        if (challenge.previousFailureCount())
+            credentials.remove(emptyString(), space);
+        else {
+            // A credential the application gave before for this protection space.
+            auto stored = credentials.get(emptyString(), space);
+            if (!stored.isEmpty() && stored != m_credential) {
+                restart(space, stored);
+                return;
+            }
+        }
+
+        auto* view = viewForLoader();
+        if (!view) {
+            deliverResponse();
+            return;
+        }
+        view->client().authenticationChallenge(challenge, [this, protectedThis = Ref { *this }, challenge](std::optional<Credential>&& credential) {
+            if (!this->loader() || !m_curlRequest)
+                return;
+            // No credential: the server's own 401 response is the page.
+            if (!credential || credential->isEmpty()) {
+                deliverResponse();
+                return;
+            }
+            m_session->credentials().set(emptyString(), *credential, challenge.protectionSpace(), challenge.failureResponse().url());
+            restart(challenge.protectionSpace(), *credential);
+        });
+    }
+
+    void restart(const ProtectionSpace& space, const Credential& credential)
+    {
+        cancelRequest();
+        m_credential = credential;
+        m_authenticationScheme = space.authenticationScheme();
+        send();
+    }
+
+    View* viewForLoader()
+    {
+        RefPtr loader = this->loader();
+        RefPtr frame = loader ? loader->frame() : nullptr;
+        RefPtr page = frame ? frame->page() : nullptr;
+        return page ? View::fromPage(*page) : nullptr;
+    }
+
+    void deliverResponse()
+    {
+        RefPtr loader = this->loader();
+        if (!loader)
+            return;
+        loader->didReceiveResponse(ResourceResponse { m_response }, [this, protectedThis = Ref { *this }] {
+            // WebCore keeps the load: let curl deliver the body.
+            if (this->loader() && m_curlRequest)
+                m_curlRequest->completeDidReceiveResponse();
+        });
     }
 
     void cancelRequest()
@@ -208,12 +283,12 @@ private:
             redirect(*loader);
             return;
         }
-
-        loader->didReceiveResponse(ResourceResponse { m_response }, [this, protectedThis = Ref { *this }] {
-            // WebCore keeps the load: let curl deliver the body.
-            if (this->loader() && m_curlRequest)
-                m_curlRequest->completeDidReceiveResponse();
-        });
+        // Loads that may ask (not fetch with credentials: 'omit', for example).
+        if (m_response.isUnauthorized() && curlResponse.availableHttpAuth && loader->options().clientCredentialPolicy == ClientCredentialPolicy::MayAskClientForCredentials) {
+            authenticate(AuthenticationChallenge { curlResponse, m_authenticationFailures++, m_response });
+            return;
+        }
+        deliverResponse();
     }
 
     void curlDidReceiveData(CurlRequest&, Ref<SharedBuffer>&& buffer) final
@@ -280,6 +355,9 @@ private:
     ResourceResponse m_response;
     RefPtr<CurlRequest> m_curlRequest;
     unsigned m_redirectCount { 0 };
+    unsigned m_authenticationFailures { 0 };
+    Credential m_credential;
+    ProtectionSpace::AuthenticationScheme m_authenticationScheme { ProtectionSpace::AuthenticationScheme::Default };
 };
 
 } // anonymous namespace
