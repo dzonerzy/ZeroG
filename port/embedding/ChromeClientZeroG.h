@@ -130,7 +130,7 @@ private:
     void elementDidFocus(WebCore::Element&, const WebCore::FocusOptions&) final { }
     void elementDidBlur(WebCore::Element&) final { }
 
-    void setCursor(const WebCore::Cursor&) final { }
+    void setCursor(const WebCore::Cursor&) final;
     void setCursorHiddenUntilMouseMoves(bool) final { }
 
     void scrollContainingScrollViewsToRevealRect(const WebCore::IntRect&) const final { }

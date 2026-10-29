@@ -14,6 +14,7 @@
 #include <WebCore/Page.h>
 #include <WebCore/PixelBuffer.h>
 #include <WebCore/PixelBufferFormat.h>
+#include <SDL3/SDL.h>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -113,6 +114,47 @@ int main()
         ok &= check(different <= static_cast<unsigned>(size.width() * size.height() / 100), "presented frame matches a CPU render (%u pixels differ)", different);
     } else
         ok &= check(false, "CPU reference");
+
+    // Input through the window's own events: SDL events in, page effects out.
+    window->view().evaluateScript("const field = document.createElement('input'); field.id = 'field';"
+        "field.style.cssText = 'position: absolute; left: 20px; top: 150px; width: 150px; height: 25px';"
+        "document.body.appendChild(field); 0"_s);
+    runUntil(*window, 200_ms, [&] { return false; });
+    auto push = [](SDL_Event event) {
+        SDL_PushEvent(&event);
+    };
+    SDL_Event motion { };
+    motion.type = SDL_EVENT_MOUSE_MOTION;
+    motion.motion.x = 60;
+    motion.motion.y = 162;
+    push(motion);
+    ok &= check(runUntil(*window, 2_s, [&] { return window->view().cursor() == PlatformCursorType::IBeam; }), "text cursor over the text field");
+    for (auto type : { SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP }) {
+        SDL_Event button { };
+        button.type = type;
+        button.button.button = SDL_BUTTON_LEFT;
+        button.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+        button.button.clicks = 1;
+        button.button.x = 60;
+        button.button.y = 162;
+        push(button);
+    }
+    for (auto [scancode, text] : { std::pair { SDL_SCANCODE_H, "h" }, std::pair { SDL_SCANCODE_I, "i" } }) {
+        SDL_Event key { };
+        key.type = SDL_EVENT_KEY_DOWN;
+        key.key.scancode = scancode;
+        key.key.down = true;
+        push(key);
+        SDL_Event input { };
+        input.type = SDL_EVENT_TEXT_INPUT;
+        input.text.text = text;
+        push(input);
+        key.type = SDL_EVENT_KEY_UP;
+        key.key.down = false;
+        push(key);
+    }
+    ok &= check(runUntil(*window, 2_s, [&] { return window->view().evaluateScript("field.value"_s) == "hi"_s; }),
+        "click and typing reach the text field: '%s'", window->view().evaluateScript("field.value"_s).utf8().data());
 
     // Resizing the window resizes the page.
     window->setSize({ 500, 300 });

@@ -6,6 +6,7 @@
 // the presentations (engine-driven, unlike texture mode).
 
 #include "View.h"
+#include <array>
 #include <memory>
 #include <optional>
 #include <wtf/Seconds.h>
@@ -13,6 +14,7 @@
 #include <wtf/text/WTFString.h>
 
 struct SDL_Window;
+struct SDL_Cursor;
 
 namespace WebCore {
 class GLContext;
@@ -61,6 +63,10 @@ public:
 private:
     Window(SDL_Window*, std::unique_ptr<View>&&, std::unique_ptr<WebCore::GLContext>&&, void* nativeWindow);
     void handleEvents();
+    WebCore::FloatPoint viewPoint(float x, float y) const;
+    void updateCursor(WebCore::PlatformCursorType);
+    static View::MouseButton mouseButton(uint8_t);
+    static View::MouseButton pressedButton(uint32_t);
     void updateSize();
     bool present();
 
@@ -78,6 +84,7 @@ private:
     bool m_showWhenPresented { true };
     bool m_captureRequested { false };
     Vector<uint8_t> m_capture;
+    std::array<SDL_Cursor*, 32> m_cursors { }; // by SDL_SystemCursor
     WebCore::IntSize m_captureSize;
 };
 

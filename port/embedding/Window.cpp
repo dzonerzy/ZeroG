@@ -2,6 +2,7 @@
 #include "Window.h"
 
 #include "Embedding.h"
+#include "KeyboardSDL.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -158,6 +159,8 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     std::unique_ptr<Window> result(new Window(window, WTF::move(view), WTF::move(presentContext), native->window));
     result->m_showWhenPresented = configuration.visible;
     result->updateSize();
+    // Text input events (typed characters, input method commits).
+    SDL_StartTextInput(window);
     return std::unique_ptr<Window> { result.release() };
 }
 
@@ -181,6 +184,9 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
         eglSwapInterval(eglGetCurrentDisplay(), interval);
         glGenFramebuffers(1, &m_readFramebuffer);
     }
+    m_view->setCursorChangedCallback([this](PlatformCursorType type) {
+        updateCursor(type);
+    });
 }
 
 Window::~Window()
@@ -189,6 +195,10 @@ Window::~Window()
         glDeleteFramebuffers(1, &m_readFramebuffer);
     m_presentContext = nullptr;
     m_view = nullptr;
+    for (auto* cursor : m_cursors) {
+        if (cursor)
+            SDL_DestroyCursor(cursor);
+    }
 #if !OS(WINDOWS)
     if (isWayland() && m_nativeWindow)
         WaylandEGL::singleton().destroy(m_nativeWindow);
@@ -240,6 +250,106 @@ void Window::updateSize()
     m_view->resize({ static_cast<int>(width / scale), static_cast<int>(height / scale) });
 }
 
+static SDL_SystemCursor systemCursor(PlatformCursorType type)
+{
+    switch (type) {
+    case PlatformCursorType::Hand:
+        return SDL_SYSTEM_CURSOR_POINTER;
+    case PlatformCursorType::IBeam:
+    case PlatformCursorType::VerticalText:
+        return SDL_SYSTEM_CURSOR_TEXT;
+    case PlatformCursorType::Wait:
+        return SDL_SYSTEM_CURSOR_WAIT;
+    case PlatformCursorType::Progress:
+        return SDL_SYSTEM_CURSOR_PROGRESS;
+    case PlatformCursorType::Cross:
+    case PlatformCursorType::Cell:
+        return SDL_SYSTEM_CURSOR_CROSSHAIR;
+    case PlatformCursorType::Move:
+    case PlatformCursorType::MiddlePanning:
+    case PlatformCursorType::Grab:
+    case PlatformCursorType::Grabbing:
+        return SDL_SYSTEM_CURSOR_MOVE;
+    case PlatformCursorType::NotAllowed:
+    case PlatformCursorType::NoDrop:
+        return SDL_SYSTEM_CURSOR_NOT_ALLOWED;
+    case PlatformCursorType::EastResize:
+    case PlatformCursorType::WestResize:
+    case PlatformCursorType::EastWestResize:
+    case PlatformCursorType::ColumnResize:
+        return SDL_SYSTEM_CURSOR_EW_RESIZE;
+    case PlatformCursorType::NorthResize:
+    case PlatformCursorType::SouthResize:
+    case PlatformCursorType::NorthSouthResize:
+    case PlatformCursorType::RowResize:
+        return SDL_SYSTEM_CURSOR_NS_RESIZE;
+    case PlatformCursorType::NorthEastResize:
+    case PlatformCursorType::SouthWestResize:
+    case PlatformCursorType::NorthEastSouthWestResize:
+        return SDL_SYSTEM_CURSOR_NESW_RESIZE;
+    case PlatformCursorType::NorthWestResize:
+    case PlatformCursorType::SouthEastResize:
+    case PlatformCursorType::NorthWestSouthEastResize:
+        return SDL_SYSTEM_CURSOR_NWSE_RESIZE;
+    default:
+        return SDL_SYSTEM_CURSOR_DEFAULT;
+    }
+}
+
+void Window::updateCursor(PlatformCursorType type)
+{
+    if (type == PlatformCursorType::None) {
+        SDL_HideCursor();
+        return;
+    }
+    SDL_ShowCursor();
+    auto cursor = systemCursor(type);
+    if (!m_cursors[cursor])
+        m_cursors[cursor] = SDL_CreateSystemCursor(cursor);
+    SDL_SetCursor(m_cursors[cursor]);
+}
+
+// SDL window coordinates to the view's logical pixels.
+FloatPoint Window::viewPoint(float x, float y) const
+{
+    int width, height, pixelWidth, pixelHeight;
+    SDL_GetWindowSize(m_window, &width, &height);
+    SDL_GetWindowSizeInPixels(m_window, &pixelWidth, &pixelHeight);
+    float toPixelsX = width ? static_cast<float>(pixelWidth) / width : 1;
+    float toPixelsY = height ? static_cast<float>(pixelHeight) / height : 1;
+    return { x * toPixelsX / m_view->scale(), y * toPixelsY / m_view->scale() };
+}
+
+View::MouseButton Window::mouseButton(uint8_t button)
+{
+    switch (button) {
+    case SDL_BUTTON_LEFT:
+        return View::MouseButton::Left;
+    case SDL_BUTTON_MIDDLE:
+        return View::MouseButton::Middle;
+    case SDL_BUTTON_RIGHT:
+        return View::MouseButton::Right;
+    case SDL_BUTTON_X1:
+        return View::MouseButton::Back;
+    case SDL_BUTTON_X2:
+        return View::MouseButton::Forward;
+    default:
+        return View::MouseButton::None;
+    }
+}
+
+// The button held during a move, for drags and selections.
+View::MouseButton Window::pressedButton(uint32_t buttons)
+{
+    if (buttons & SDL_BUTTON_LMASK)
+        return View::MouseButton::Left;
+    if (buttons & SDL_BUTTON_MMASK)
+        return View::MouseButton::Middle;
+    if (buttons & SDL_BUTTON_RMASK)
+        return View::MouseButton::Right;
+    return View::MouseButton::None;
+}
+
 void Window::handleEvents()
 {
     SDL_Event event;
@@ -255,6 +365,43 @@ void Window::handleEvents()
             break;
         case SDL_EVENT_WINDOW_EXPOSED:
             m_view->invalidate({ { }, m_view->size() });
+            break;
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            m_view->setFocused(event.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
+            break;
+        case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+            m_view->mouseLeave();
+            break;
+        case SDL_EVENT_MOUSE_MOTION:
+            m_view->mouseMove(viewPoint(event.motion.x, event.motion.y), pressedButton(event.motion.state), modifiersFromSDL(SDL_GetModState()));
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP: {
+            auto point = viewPoint(event.button.x, event.button.y);
+            auto button = mouseButton(event.button.button);
+            auto modifiers = modifiersFromSDL(SDL_GetModState());
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+                m_view->mouseDown(point, button, event.button.clicks, modifiers);
+            else
+                m_view->mouseUp(point, button, event.button.clicks, modifiers);
+            break;
+        }
+        case SDL_EVENT_MOUSE_WHEEL: {
+            // One notch scrolls 100 pixels; SDL's y is positive away from the user.
+            float x = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.x : event.wheel.x;
+            float y = event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y;
+            m_view->wheel(viewPoint(event.wheel.mouse_x, event.wheel.mouse_y), { -x * 100, y * 100 }, modifiersFromSDL(SDL_GetModState()));
+            break;
+        }
+        case SDL_EVENT_KEY_DOWN:
+            m_view->keyDown(keyEventFromSDL(event.key.scancode, event.key.mod, event.key.repeat));
+            break;
+        case SDL_EVENT_KEY_UP:
+            m_view->keyUp(keyEventFromSDL(event.key.scancode, event.key.mod, false));
+            break;
+        case SDL_EVENT_TEXT_INPUT:
+            m_view->insertText(String::fromUTF8(event.text.text), modifiersFromSDL(SDL_GetModState()));
             break;
         default:
             if (event.type == s_wakeUpEvent)

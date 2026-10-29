@@ -5,7 +5,9 @@ set(ZeroGEmbedding_LIBRARY_TYPE STATIC)
 
 set(ZeroGEmbedding_SOURCES
     ChromeClientZeroG.cpp
+    EditorClientZeroG.cpp
     Embedding.cpp
+    KeyboardSDL.cpp
     PlatformStrategiesZeroG.cpp
     Surface.cpp
     SurfaceGL.cpp
@@ -89,9 +91,18 @@ WEBKIT_EXECUTABLE_DECLARE(ZeroGTexture)
 WEBKIT_EXECUTABLE(ZeroGTexture)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGTexture)
 
+# Input: mouse, keyboard, text, wheel.
+set(ZeroGInput_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/input.cpp)
+set(ZeroGInput_LIBRARIES ZeroGEmbedding)
+set(ZeroGInput_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGInput_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGInput)
+WEBKIT_EXECUTABLE(ZeroGInput)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGInput)
+
 # Window mode: a native window presented at vsync.
 set(ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window.cpp)
-set(ZeroGWindow_LIBRARIES ZeroGEmbedding)
+set(ZeroGWindow_LIBRARIES ZeroGEmbedding SDL3::SDL3-static)
 set(ZeroGWindow_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
 set(ZeroGWindow_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
 WEBKIT_EXECUTABLE_DECLARE(ZeroGWindow)

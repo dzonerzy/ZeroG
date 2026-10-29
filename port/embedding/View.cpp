@@ -2,6 +2,14 @@
 #include "View.h"
 
 #include "ChromeClientZeroG.h"
+#include "EditorClientZeroG.h"
+#include <WebCore/EventHandler.h>
+#include <WebCore/FocusController.h>
+#include <WebCore/HandleUserInputEventResult.h>
+#include <WebCore/PlatformKeyboardEvent.h>
+#include <WebCore/PlatformMouseEvent.h>
+#include <WebCore/PlatformWheelEvent.h>
+#include <WebCore/ScrollingCoordinatorTypes.h>
 #include "Embedding.h"
 #include <WebCore/ActivityState.h>
 #include <WebCore/Chrome.h>
@@ -41,6 +49,7 @@ static Ref<Page> createPage(View& view)
     // a ZeroG page is the application's own UI.
     std::get<PageConfiguration::LocalMainFrameCreationParameters>(configuration.mainFrameCreationParameters).effectiveSandboxFlags = { };
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
+    configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     return Page::create(WTF::move(configuration));
 }
 
@@ -176,6 +185,130 @@ bool View::render(MonotonicTime frameTime)
     }
     m_surface->endFrame();
     return true;
+}
+
+// Input.
+
+static WebCore::MouseButton platformButton(View::MouseButton button)
+{
+    switch (button) {
+    case View::MouseButton::None:
+        return WebCore::MouseButton::None;
+    case View::MouseButton::Left:
+        return WebCore::MouseButton::Left;
+    case View::MouseButton::Middle:
+        return WebCore::MouseButton::Middle;
+    case View::MouseButton::Right:
+        return WebCore::MouseButton::Right;
+    case View::MouseButton::Back:
+        return WebCore::MouseButton::Back;
+    case View::MouseButton::Forward:
+        return WebCore::MouseButton::Forward;
+    }
+    return WebCore::MouseButton::None;
+}
+
+static RefPtr<LocalFrame> mainFrame(Page& page)
+{
+    return page.localMainFrame();
+}
+
+bool View::mouseMove(const FloatPoint& position, MouseButton pressed, Modifiers modifiers)
+{
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return false;
+    PlatformMouseEvent event(position, position, platformButton(pressed), PlatformEvent::Type::MouseMoved, 0, modifiers, MonotonicTime::now(), 0,
+        SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    return frame->eventHandler().mouseMoved(event).wasHandled();
+}
+
+bool View::mouseDown(const FloatPoint& position, MouseButton button, int clickCount, Modifiers modifiers)
+{
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return false;
+    PlatformMouseEvent event(position, position, platformButton(button), PlatformEvent::Type::MousePressed, clickCount, modifiers, MonotonicTime::now(), 0,
+        SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    return frame->eventHandler().handleMousePressEvent(event).wasHandled();
+}
+
+bool View::mouseUp(const FloatPoint& position, MouseButton button, int clickCount, Modifiers modifiers)
+{
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return false;
+    PlatformMouseEvent event(position, position, platformButton(button), PlatformEvent::Type::MouseReleased, clickCount, modifiers, MonotonicTime::now(), 0,
+        SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    return frame->eventHandler().handleMouseReleaseEvent(event).wasHandled();
+}
+
+void View::mouseLeave()
+{
+    // A move far outside the view: hover and :hover end.
+    mouseMove({ -1e6, -1e6 }, MouseButton::None, { });
+}
+
+bool View::wheel(const FloatPoint& position, const FloatSize& delta, Modifiers modifiers)
+{
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return false;
+    // Ticks as Windows reports them: one per 120 units, here 100 pixels.
+    PlatformWheelEvent event(flooredIntPoint(position), flooredIntPoint(position), delta.width(), delta.height(), delta.width() / 100, delta.height() / 100,
+        PlatformWheelEventGranularity::ScrollByPixelWheelEvent, modifiers.contains(PlatformEvent::Modifier::ShiftKey),
+        modifiers.contains(PlatformEvent::Modifier::ControlKey), modifiers.contains(PlatformEvent::Modifier::AltKey), modifiers.contains(PlatformEvent::Modifier::MetaKey));
+    auto [result, handling] = frame->eventHandler().handleWheelEvent(event, { WheelEventProcessingSteps::SynchronousScrolling, WheelEventProcessingSteps::BlockingDOMEventDispatch });
+    return result.wasHandled();
+}
+
+static PlatformKeyboardEvent keyboardEvent(PlatformEvent::Type type, const View::KeyEvent& key, const String& text)
+{
+    bool isSystemKey = key.modifiers.contains(PlatformEvent::Modifier::AltKey) && !key.modifiers.contains(PlatformEvent::Modifier::ControlKey);
+    return PlatformKeyboardEvent(type, text, text, key.key, key.code, key.key, key.windowsKeyCode, key.isAutoRepeat, key.isKeypad, isSystemKey, key.modifiers, MonotonicTime::now());
+}
+
+bool View::keyDown(const KeyEvent& key)
+{
+    RefPtr frame = m_page->focusController().focusedOrMainFrame();
+    if (!frame)
+        return false;
+    // The text comes separately (insertText), as with WM_KEYDOWN and WM_CHAR.
+    return frame->eventHandler().keyEvent(keyboardEvent(PlatformEvent::Type::RawKeyDown, key, { }));
+}
+
+bool View::keyUp(const KeyEvent& key)
+{
+    RefPtr frame = m_page->focusController().focusedOrMainFrame();
+    if (!frame)
+        return false;
+    return frame->eventHandler().keyEvent(keyboardEvent(PlatformEvent::Type::KeyUp, key, { }));
+}
+
+bool View::insertText(const String& text, Modifiers modifiers)
+{
+    RefPtr frame = m_page->focusController().focusedOrMainFrame();
+    if (!frame || text.isEmpty())
+        return false;
+    KeyEvent key { text, { }, 0, false, false, modifiers };
+    // One keypress per text, as an input method commit is one insertion.
+    return frame->eventHandler().keyEvent(keyboardEvent(PlatformEvent::Type::Char, key, text));
+}
+
+void View::setCursor(PlatformCursorType cursor)
+{
+    if (cursor == m_cursor)
+        return;
+    m_cursor = cursor;
+    if (m_cursorChanged)
+        m_cursorChanged(cursor);
+}
+
+void View::setFocused(bool focused)
+{
+    auto& focusController = m_page->focusController();
+    focusController.setActive(focused);
+    focusController.setFocused(focused);
 }
 
 } // namespace ZeroG

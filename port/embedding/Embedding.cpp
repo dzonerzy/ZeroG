@@ -33,6 +33,7 @@
 #include <mutex>
 #include <pal/SessionID.h>
 #include <wtf/MainThread.h>
+#include <wtf/RunLoop.h>
 #include <wtf/text/WTFString.h>
 
 namespace ZeroG {
@@ -49,6 +50,11 @@ void initializeProcess()
         populateJITOperations();
         ProcessWarming::prewarmGlobally();
     });
+}
+
+void runPendingWork()
+{
+    RunLoop::cycle();
 }
 
 Ref<Page> createPage(const PageOptions& options)

@@ -20,6 +20,12 @@ namespace ZeroG {
 // becomes the main thread; later calls do nothing.
 void initializeProcess();
 
+// Runs the engine's pending work on the main thread without waiting: expired
+// timers (animations, setTimeout) and tasks posted from other threads. Texture
+// and CPU modes call it once per application tick (zg_runtime_update); window mode
+// does it in its loop.
+void runPendingWork();
+
 struct PageOptions {
     WebCore::IntSize viewportSize { 800, 600 };
     bool scriptEnabled { true };

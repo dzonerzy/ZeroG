@@ -30,6 +30,7 @@
 #include "ChromeClientZeroG.h"
 
 #include "View.h"
+#include <WebCore/Cursor.h>
 #include <WebCore/PopupMenu.h>
 #include <WebCore/SearchPopupMenu.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -116,6 +117,12 @@ RefPtr<PopupMenu> ChromeClientZeroG::createPopupMenu(PopupMenuClient&) const
 RefPtr<SearchPopupMenu> ChromeClientZeroG::createSearchPopupMenu(PopupMenuClient&) const
 {
     return adoptRef(*new SearchPopupMenuZeroG);
+}
+
+void ChromeClientZeroG::setCursor(const Cursor& cursor)
+{
+    if (m_view)
+        m_view->setCursor(cursor.type());
 }
 
 void ChromeClientZeroG::triggerRenderingUpdate()
