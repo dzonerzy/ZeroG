@@ -141,9 +141,11 @@ Un motore single-process vive dentro il processo di qualcun altro: un gioco, un'
 ### Allocatore di memoria
 
 - WebKit usa un allocatore proprio (libpas e bmalloc) con Gigacage, che [riserva enormi quantità di spazio di indirizzamento](https://blogs.gnome.org/mcatanzaro/2018/11/02/on-webkit-build-options-also-how-to-accidentally-disable-important-security-features/) e richiede l'overcommit. È una fonte di conflitti con host che gestiscono la memoria per conto loro.
-- **Decisione: malloc di sistema** (`USE_SYSTEM_MALLOC=ON`), per convivere con qualunque host senza riserve di memoria virtuale.
-- **Conseguenza**: si perdono Gigacage, gli heap isolati e le altre protezioni dell'heap di WebKit. Senza sandbox, è una difesa in meno contro i bug di memoria; il contenuto esterno resta ancora più sconsigliato.
-- **Mitigazione da valutare**: al posto del malloc della libc si può linkare un allocatore con hardening (per esempio mimalloc in modalità secure o Scudo), recuperando parte delle protezioni senza riserve di memoria enormi.
+- **Decisione: mimalloc su tutte le piattaforme** (`USE_MIMALLOC=ON`), la copia inclusa in WebKit (`Source/bmalloc/mimalloc`). Stesso allocatore e stesso comportamento su Linux, Windows e macOS. Il malloc di sistema non è un'opzione su Windows: `BPlatform.h` lo rifiuta con un `#error`, perché la memoria allineata non si può liberare con `::free`.
+- mimalloc non sostituisce il malloc dell'host (upstream lo compila con `MI_OVERRIDE=OFF`) e i suoi simboli restano privati nel bundle, quindi un host che usa a sua volta mimalloc non va in conflitto (verificato da `tests/link/host_conflicts.c`).
+- **Conseguenza**: si perdono Gigacage, gli heap isolati e le altre protezioni dell'heap di WebKit (libpas). Senza sandbox, è una difesa in meno contro i bug di memoria; il contenuto esterno resta ancora più sconsigliato.
+- **Hardening opzionale**: `ZEROG_MIMALLOC_SECURE` attiva la modalità secure di mimalloc (guard page, allocazione randomizzata, rilevamento di double free e corruzione delle free list), a costo di prestazioni. Default: spento.
+- **Riserve di memoria virtuale**: non spariscono con nessun allocatore. JSC riserva sempre uno Structure heap da 4 GB sui 64 bit, il JIT un pool eseguibile da 1 GB su x86\_64, mimalloc arene da 1 GiB. Con `vm.overcommit_memory=2` su Linux contano nel limite di commit. Togliere libpas elimina solo Gigacage.
 - L'API espone le statistiche di memoria del motore (heap JSC, cache di WebCore, superfici grafiche), così l'host può includerle nei propri budget.
 
 ### Segnali (Linux)
@@ -361,8 +363,8 @@ L'API è C99 puro, con handle opachi, nessun tipo WebKit esposto, e il prefisso 
 
 Con un solo processo il JavaScript della pagina gira nello stesso processo e sullo stesso thread dell'applicazione. Le funzioni native si registrano **direttamente nel contesto JSC della pagina**, con l'API C di JavaScriptCore, senza IPC.
 
-- **Chiamate sincrone**: il callback nativo gira durante la chiamata JS e il valore di ritorno arriva subito al JavaScript (`const r = App.greet("Daniele")`). È il caso di default.
-- **Chiamate asincrone**: per lavoro lungo il callback restituisce una `Promise`, esegue il lavoro su un thread dell'applicazione e la risolve con `zg_promise_resolve`, che il motore esegue sul thread principale.
+- **Chiamate sincrone (default)**: il callback nativo gira durante la chiamata JS e il valore di ritorno arriva subito al JavaScript (`const r = App.greet("Daniele")`).
+- **Chiamate asincrone (supportate, da dichiarare)**: per lavoro lungo il callback crea una `Promise` con `zg_call_promise`, la restituisce subito al JavaScript ed esegue il lavoro su un thread dell'applicazione. `zg_promise_resolve` / `zg_promise_reject` si possono chiamare da qualunque thread: ricevono dati C semplici (JSON o UTF-8) che il motore copia, e il motore risolve la `Promise` sul thread principale. I valori JSC (`zg_value`) non passano mai tra thread.
 - **Installazione**: le binding si installano quando WebCore crea l'oggetto `window` di un frame (il callback di "window object cleared" del frame loader client), solo per le origini autorizzate.
 - **Eventi verso il JS**: `zg_view_emit` crea e invia direttamente un `CustomEvent` sul `window` della pagina.
 
@@ -516,7 +518,7 @@ I nomi dei flag vanno verificati sulla revisione scelta: cambiano tra versioni, 
 | Piattaforma | Caricato dal sistema | Come |
 | --- | --- | --- |
 | Linux | glibc, driver GPU (`libEGL`, `libGL`, `libvulkan`) | Build contro una glibc di base vecchia (per esempio 2.28) con zig, così il binario parte anche su distro datate. musl statico è escluso: non può caricare i driver GPU con `dlopen` |
-| Windows | Solo DLL di sistema (kernel32, user32, d3d11, dxgi, crypt32, ws2\_32) | CRT statica (`/MT`) |
+| Windows | Solo DLL di sistema (kernel32, user32, d3d11, dxgi, crypt32, ws2\_32) | CRT statica (`/MT`), unica variante distribuita: un host MSVC deve compilare anche lui con `/MT`, perché il linker rifiuta di mescolare runtime diversi (`/FAILIFMISMATCH`) |
 | macOS | Solo framework di sistema (Metal, AppKit, CoreFoundation, Security) | — |
 
 Perl, Python, Ruby, gperf e unifdef servono a generare codice durante la build di WebKit, ma non finiscono nel binario.
@@ -538,8 +540,9 @@ Questa sezione descrive il design tecnico, non è una consulenza legale. Prima d
 
 | Componente | Licenza |
 | --- | --- |
-| WebCore, JavaScriptCore | [LGPL](https://en.wikipedia.org/wiki/WebKit) |
-| WTF e resto di WebKit | BSD 2-Clause |
+| WebCore, JavaScriptCore | [LGPL](https://en.wikipedia.org/wiki/WebKit) (v2 "o successiva", circa 200 file in JSC) |
+| WTF | Misto: in gran parte BSD 2-Clause, ma circa 100 file sono LGPL v2 "o successiva", anche centrali (`DateMath`, `dtoa`, `FastMalloc.h`, `Forward.h`). Ai fini dell'obbligo di relink va trattata come LGPL |
+| bmalloc, resto di WebKit | BSD 2-Clause |
 | Skia, ANGLE | BSD 3-Clause |
 | HarfBuzz, nghttp2, libpsl, libxml2, brotli, woff2 | MIT |
 | FreeType | FTL (scelta al posto di GPLv2, richiede una nota nei crediti) |
@@ -554,7 +557,7 @@ Questa sezione descrive il design tecnico, non è una consulenza legale. Prima d
 | SDL3 (solo modalità finestra) | Licenza zlib |
 | Codice del motore | Da decidere: proposta BSD 2-Clause, coerente con WebKit |
 
-Il layer di embedding eredita la licenza del codice da cui eventualmente deriva: BSD se riprende parti di WebKitLegacy, LGPL se riprende parti del WebCore di Ultralight. Va tracciato file per file fin dall'inizio.
+Il layer di embedding eredita la licenza del codice da cui eventualmente deriva: BSD se riprende parti di WebKitLegacy, LGPL se riprende parti del WebCore di Ultralight. Va tracciato file per file fin dall'inizio (`docs/PROVENANCE.md`). In ogni caso si linka a WTF, JSC e WebCore, quindi l'obbligo di relink copre l'intero archivio del motore: il relink kit resta lo strumento giusto, con lo stesso design.
 
 ### Cosa fa il motore per la conformità
 
@@ -612,12 +615,15 @@ L'applicazione definisce una struct con metodi `pub`. A comptime il framework la
 
 ```zig
 pub const App = struct {
+    // Metodi che girano su un thread di lavoro e lato JS restituiscono una Promise.
+    pub const async_methods = .{"listFiles"};
+
     pub fn greet(self: *App, name: []const u8) ![]const u8 { ... }
     pub fn listFiles(self: *App, dir: []const u8) ![]FileEntry { ... }
 };
 ```
 
-Nel frontend: `const files: FileEntry[] = await App.listFiles("/tmp")`.
+Nel frontend: `const msg: string = App.greet("Daniele")` (sincrona, senza `await`) e `const files: FileEntry[] = await App.listFiles("/tmp")` (asincrona). Il generatore emette `greet(name: string): string` e `listFiles(dir: string): Promise<FileEntry[]>` in `bindings.d.ts`; un nome in `async_methods` che non corrisponde a un metodo `pub` è un errore di compilazione.
 
 | Tipo Zig | Tipo TypeScript |
 | --- | --- |
@@ -631,7 +637,7 @@ Nel frontend: `const files: FileEntry[] = await App.listFiles("/tmp")`.
 | `?T` | `T \| null` |
 | Error set | `Promise` rifiutata (chiamate asincrone) o eccezione JS (sincrone), con codice di errore tipizzato |
 
-Ogni chiamata riceve un arena allocator liberato a fine chiamata, così i metodi non gestiscono la memoria dei risultati. Le binding sono sincrone di default, perché motore e applicazione condividono il thread; i metodi marcati come asincroni girano su un thread di lavoro e lato JS diventano `Promise`.
+Ogni chiamata riceve un arena allocator, così i metodi non gestiscono la memoria dei risultati: per le chiamate sincrone si libera al ritorno del callback, per quelle asincrone quando la `Promise` è stata risolta o rifiutata. Le binding sono sincrone di default, perché motore e applicazione condividono il thread; i metodi elencati in `async_methods` girano su un thread di lavoro, il risultato viene serializzato e lato JS diventano `Promise`.
 
 ### Parità con Wails
 
@@ -751,7 +757,10 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 - [ ] Font: FreeType ovunque o font manager nativo su Windows e macOS?
 - [ ] Accessibilità: ponti AT-SPI, UI Automation e NSAccessibility.
 
-* [x] Allocatore: deciso, malloc di sistema. Resta da valutare un allocatore con hardening.
+* [x] Allocatore: deciso, mimalloc su tutte le piattaforme; modalità secure disponibile (`ZEROG_MIMALLOC_SECURE`), spenta di default.
+* [x] CRT su Windows: deciso, solo `/MT`.
+* [x] Binding: decise, sincrone di default, asincrone supportate se dichiarate (`async_methods`).
+* [x] Licenze: WTF va trattata come LGPL; l'obbligo di relink copre l'intero archivio, il design del relink kit resta invariato.
 * [ ] Segnale di default per il GC di JSC su Linux, e test con i runtime host più comuni.
 * [ ] Integrazione con il crash reporter dell'host: quali supportare ufficialmente?
 

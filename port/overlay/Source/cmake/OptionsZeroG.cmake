@@ -41,6 +41,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ZEROG_ZIG)
 endif ()
 
 add_definitions(-DBUILDING_ZEROG__)
+
+option(ZEROG_MIMALLOC_SECURE "mimalloc hardened mode: guard pages, randomized allocation, double-free and free-list corruption detection" OFF)
 # No export decorations anywhere (patch 0003 does the same for WTF/bmalloc): the
 # JSC C API is internal to the engine; only zg_* is public (port/api/exports.txt).
 add_definitions(-DJS_NO_EXPORT)
@@ -51,15 +53,13 @@ set(PROJECT_VERSION_MICRO 0)
 set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_MICRO})
 
 WEBKIT_OPTION_BEGIN()
-# Allocator (ZeroG.md, "Allocatore di memoria"): no libpas/Gigacage reservations.
-# Upstream rejects system malloc on Windows, which uses the vendored mimalloc.
-if (WIN32)
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SYSTEM_MALLOC PRIVATE OFF)
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_MIMALLOC PRIVATE ON)
-else ()
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SYSTEM_MALLOC PRIVATE ON)
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_MIMALLOC PRIVATE OFF)
-endif ()
+# Allocator (ZeroG.md, "Allocatore di memoria"): the vendored mimalloc on every OS,
+# so allocation behaves the same everywhere; no libpas/Gigacage. It never replaces
+# the host's malloc (MI_OVERRIDE is off upstream) and its symbols are private to
+# the bundle. ZEROG_MIMALLOC_SECURE turns on mimalloc's hardened mode
+# (Source/bmalloc/mimalloc/PlatformZeroG.cmake).
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SYSTEM_MALLOC PRIVATE OFF)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_MIMALLOC PRIVATE ON)
 # Only the dev profile gets the inspector (ZeroG.md, "Funzioni da spegnere").
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE OFF)
 WEBKIT_OPTION_DEFINE(USE_SYSTEM_UNIFDEF "Whether to use a system-provided unifdef" PRIVATE OFF)

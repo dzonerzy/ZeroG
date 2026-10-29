@@ -204,5 +204,20 @@ the bundle needs nothing but glibc and compiler-rt builtins. Bundle 89.0 ->
 105.5 MB; stripped link test 49.48 -> 49.70 MB (unused libc++ sections are
 dropped by the final link).
 
+## mimalloc on every platform
+
+Decision: one allocator everywhere, the mimalloc vendored in WebKit
+(`USE_MIMALLOC`, `OptionsZeroG.cmake`). It never overrides the host's malloc and
+its symbols are private to the bundle; the host-conflicts test now exercises a
+host with its own `mi_malloc` on Linux too. `ZEROG_MIMALLOC_SECURE=ON` builds
+mimalloc's hardened mode (`MI_SECURE`) through
+`port/overlay/Source/bmalloc/mimalloc/PlatformZeroG.cmake`; off by default.
+zig needs `-Wno-date-time` for mimalloc (its verbose banner uses `__DATE__`).
+
+| Linux | system malloc | mimalloc |
+| --- | --- | --- |
+| Clean build | 166 s | 162 s |
+| Link test, stripped | 49.70 MB | 50.92 MB |
+
 ## Gaps to the single-binary goal
 

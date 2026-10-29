@@ -13,6 +13,7 @@ under `patches/` is listed here when it is created.
 | `patches/0002-add-zerog-port-and-platform-macro.patch` | Original, modifies `WebKitCommon.cmake`, `PlatformLegacy.h`, `BPlatform.h` (BSD) | BSD-2-Clause |
 | `port/overlay/Source/cmake/OptionsZeroG.cmake` | Derived from upstream `OptionsJSCOnly.cmake` (BSD) | BSD-2-Clause |
 | `port/overlay/Source/{WTF/wtf,bmalloc,JavaScriptCore}/PlatformZeroG.cmake` | Original (includes upstream `PlatformJSCOnly.cmake`) | BSD-2-Clause |
+| `port/overlay/Source/bmalloc/mimalloc/PlatformZeroG.cmake` | Original | BSD-2-Clause |
 | `tests/link/jsc_c_api.c` | Original | BSD-2-Clause |
 | `tests/link/icu_converters.c` | Original | BSD-2-Clause |
 | `tools/icu_data.py`, `deps/icu-data.json` | Original | BSD-2-Clause |
