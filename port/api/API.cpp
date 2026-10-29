@@ -688,6 +688,24 @@ zg_result zg_context_add_file(zg_context* context, const char* scheme, const cha
     return ZG_ERROR_INTERNAL;
 }
 
+zg_result zg_context_set_fallback(zg_context* context, const char* scheme, const char* path)
+{
+    clearError();
+    if (!context || !scheme)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no context or scheme"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    auto filePath = stringFromUTF8(path);
+    if (path && (MemoryFS::normalizePath(filePath).isNull() || filePath.endsWith('/')))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("invalid fallback path: "_s, filePath));
+    zg_result result;
+    auto* files = fileSystem(*context, stringFromUTF8(scheme), result);
+    if (!files)
+        return result;
+    files->setFallback(filePath);
+    return ZG_OK;
+}
+
 // A request to the application's scheme handler. Owned by the application until
 // it answers; the task is only touched on the runtime thread.
 struct zg_scheme_request {

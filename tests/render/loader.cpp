@@ -579,6 +579,14 @@ int main()
         passed &= check(view->evaluateScript("String(window.innerLoaded)"_s) == "app://localhost/inner.html"_s, "the iframe loaded and ran: %s", view->evaluateScript("String(window.innerLoaded)"_s).utf8().data());
         passed &= check(view->evaluateScript("frames[0].document.title"_s) == "inner"_s, "its document: %s", view->evaluateScript("frames[0].document.title"_s).utf8().data());
 
+        // A single-page application's client-side routes.
+        fs->setFallback("/index.html"_s);
+        passed &= check(load(*view, client, "app://localhost/settings/profile"_s), "a client-side route loads");
+        passed &= check(view->evaluateScript("document.title + ' ' + location.pathname"_s) == "Loader test /settings/profile"_s,
+            "with the fallback page at its own URL: %s", view->evaluateScript("document.title + ' ' + location.pathname"_s).utf8().data());
+        auto missingScript = await(*view, "fetch('/missing/app.js').then(r => r.status)"_s);
+        passed &= check(missingScript == "404"_s, "a missing file with an extension is still a 404: %s", missingScript.utf8().data());
+
         // Directories.
         passed &= check(load(*view, client, "app://localhost/sub"_s), "directory without its slash loads");
         passed &= check(view->evaluateScript("location.href"_s) == "app://localhost/sub/"_s && view->evaluateScript("document.title"_s) == "sub"_s,

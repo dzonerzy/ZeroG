@@ -461,6 +461,16 @@ int main(int argc, char **argv)
         CHECK(zg_view_load_url(view, "packed://localhost/") == ZG_OK && waitForLoad(view, loads), "packed://localhost/ loads its index.html");
         CHECK(!strcmp(evaluate(view, "packed"), "\"rgb(1, 2, 3) H\xc3\xa9llo from an archive\""), "its stylesheet (compressed) and script ran: %s", evaluate(view, "packed"));
 
+        /* A client-side route falls back to the app's page. */
+        CHECK(zg_context_set_fallback(context, "packed", "/index.html") == ZG_OK, "set a fallback page");
+        CHECK(zg_context_set_fallback(context, "packed", "../x") == ZG_ERROR_INVALID_ARGUMENT, "an invalid fallback is refused: %s", zg_last_error());
+        loads = loadsFinished;
+        CHECK(zg_view_load_url(view, "packed://localhost/deep/route") == ZG_OK && waitForLoad(view, loads)
+            && !strcmp(evaluate(view, "document.title + ' ' + location.pathname"), "\"Packed by assets.py /deep/route\""),
+            "a client-side route gets it: %s", evaluate(view, "document.title + ' ' + location.pathname"));
+        zg_view_load_url(view, "packed://localhost/");
+        waitForLoad(view, loadsFinished);
+
         /* data: is not the app's content: the navigation is blocked. */
         loads = loadsFinished;
         zg_view_load_url(view, "data:text/html,<title>data</title>");

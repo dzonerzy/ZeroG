@@ -41,6 +41,12 @@ public:
     };
     std::expected<size_t, MountError> mountArchive(const String& prefix, std::span<const uint8_t>);
 
+    // Single-page applications route with the URL's path: a request for a path
+    // with no file and no extension in its last segment ("/settings/profile")
+    // gets this file instead ("/index.html"), with status 200 and its own URL.
+    // A missing "/app.js" is still a 404. Null turns it off.
+    void setFallback(const String& path);
+
     bool contains(const String& path) const;
     // Bytes the file system holds itself: copied files and decompressed entries.
     size_t ownedBytes() const;
@@ -64,6 +70,7 @@ private:
 
     mutable Lock m_lock;
     HashMap<String, Ref<File>> m_files WTF_GUARDED_BY_LOCK(m_lock);
+    String m_fallback WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace ZeroG

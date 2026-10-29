@@ -255,6 +255,13 @@ ZG_API zg_result zg_context_add_file(zg_context *ctx, const char *scheme, const 
                                      const void *data, size_t len, const char *mime_type,
                                      zg_release_fn release, void *user);
 
+/* For single-page applications that route with the URL's path: a request for a
+   path with no file whose last segment has no extension ("/settings/profile",
+   "/users/") gets the file at `path` ("/index.html") with status 200, under the
+   requested URL. Missing files with an extension ("/app.js") stay 404. NULL
+   turns it off. */
+ZG_API zg_result zg_context_set_fallback(zg_context *ctx, const char *scheme, const char *path);
+
 typedef struct zg_scheme_request zg_scheme_request;
 
 /* Valid until the request is answered. */

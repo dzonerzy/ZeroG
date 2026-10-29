@@ -411,8 +411,16 @@ MemoryFS::Lookup MemoryFS::lookup(const URL& url) const
     auto path = normalizePath(percentDecodedPath(url));
     if (path.isNull())
         return { };
-    if (path.endsWith('/'))
-        return { find(makeString(path, "index.html"_s)), path, { } };
+    String fallback;
+    {
+        Locker locker { m_lock };
+        fallback = m_fallback;
+    }
+    if (path.endsWith('/')) {
+        if (auto index = find(makeString(path, "index.html"_s)))
+            return { WTF::move(index), path, { } };
+        return { fallback.isNull() ? nullptr : find(fallback), path, { } };
+    }
     if (auto file = find(path))
         return { WTF::move(file), path, { } };
     // A directory named without its slash: redirect, so its relative URLs resolve
@@ -422,7 +430,16 @@ MemoryFS::Lookup MemoryFS::lookup(const URL& url) const
         redirect.setPath(makeString(url.path(), '/'));
         return { nullptr, path, WTF::move(redirect) };
     }
+    // A client-side route of a single-page application.
+    if (!fallback.isNull() && !path.substring(path.reverseFind('/') + 1).contains('.'))
+        return { find(fallback), path, { } };
     return { };
+}
+
+void MemoryFS::setFallback(const String& path)
+{
+    Locker locker { m_lock };
+    m_fallback = path.isNull() ? String { } : normalizePath(path).isolatedCopy();
 }
 
 void MemoryFS::start(SchemeTask& task)
