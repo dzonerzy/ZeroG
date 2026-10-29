@@ -408,7 +408,7 @@ Lato JS: `const msg = App.greet("Daniele")`, senza `await`. Il framework Zig gen
 
 - **Console**: ogni `console.log`, `warn` ed `error` arriva a un callback dell'host con livello, messaggio, file e riga. Il framework lo stampa nel terminale in dev mode.
 - **Errori JS non gestiti**: callback dedicato con messaggio e stack trace, anche per le `Promise` rifiutate senza handler.
-- **Web Inspector**: nel profilo dev il motore avvia l'inspector remoto di WebKit su una porta locale, e il frontend dell'inspector (incluso nel binario solo nel profilo dev) si apre in una seconda finestra. Nei profili minimal e standard non c'è, per dimensione e superficie d'attacco.
+- **Web Inspector**: nei profili dev e debug il motore avvia l'inspector remoto di WebKit su una porta locale, e il frontend dell'inspector (incluso nel binario solo in questi profili) si apre in una seconda finestra. Nei profili minimal e standard non c'è, per dimensione e superficie d'attacco.
 - **Log interni del motore**: livelli configurabili, instradati allo stesso callback, così l'host decide dove scriverli.
 
 ## Build system e linking statico
@@ -436,7 +436,8 @@ WebCore ha bisogno di un backend di riproduzione per `<video>`, `<audio>` e Web 
 
 - **minimal**: niente media, niente WebGL, dati ICU ridotti. L'obiettivo è il binario più piccolo possibile per UI di applicazione.
 - **standard**: aggiunge WebGL e, quando esiste, il backend media.
-- **dev**: simboli completi, assert attive, Web Inspector abilitato. Per lavorare sul motore stesso.
+- **dev**: motore in release con il Web Inspector abilitato. È il profilo di `zerog dev`, per sviluppare l'applicazione.
+- **debug**: simboli completi e assert attive (build Debug di WebKit). Per lavorare sul motore stesso; più lento e molto più grande.
 
 ### Tempi e cache
 
@@ -507,7 +508,7 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | Gamepad | `ENABLE_GAMEPAD` | No | No |
 | Sintesi vocale | `ENABLE_SPEECH_SYNTHESIS` | No | No |
 | Service worker | `ENABLE_SERVICE_WORKER` | No | Da valutare |
-| Web Inspector remoto | `ENABLE_REMOTE_INSPECTOR` | No | Solo nel profilo dev |
+| Web Inspector remoto | `ENABLE_REMOTE_INSPECTOR` | No | Solo nei profili dev e debug |
 | AVIF e JPEG XL | `USE_AVIF`, `USE_JPEGXL` | No | Sì |
 | WOFF2 | `USE_WOFF2` | Sì | Sì |
 
@@ -582,7 +583,7 @@ Con un solo processo **non c'è sandbox per il contenuto web**: un bug di memori
 | Binding host | Chiamate native da origini non previste | Binding installate solo per le origini `app://` dichiarate, controllo dell'origine per ogni chiamata |
 | Schema `app://` | Path traversal, MIME sniffing | Archivio in sola lettura, nessun accesso al filesystem, MIME espliciti |
 | Navigazione | Pagina dell'app portata su un sito esterno | Navigazione fuori da `app://` bloccata di default; i link esterni si aprono nel browser di sistema |
-| Contenuto esterno in iframe | Codice non fidato nello stesso processo dell'app | Disattivato di default; se abilitato, senza binding e con il JIT spento per tutto il runtime |
+| Contenuto esterno (navigazione e iframe) | Codice non fidato nello stesso processo dell'app | Disattivato di default. Si abilita solo con un flag esplicito dello sviluppatore (`allow_external_content` in `zg_context_config`), che se ne assume la responsabilità: il motore non aggiunge una sandbox e la sicurezza dipende da quella di WebKit upstream e dalla rapidità degli aggiornamenti. Le binding non vengono comunque installate per origini non fidate; il JIT segue la sua opzione e non viene spento automaticamente |
 
 ### Riduzione della superficie
 
@@ -590,7 +591,7 @@ Il profilo di build è anche uno strumento di sicurezza: ogni funzione esclusa (
 
 ### JIT
 
-Il JIT è una scelta di processo, non di view: le opzioni di JSC sono globali e tutte le view condividono la stessa VM JavaScript. L'opzione `jit` di `zg_runtime_config` vale quindi per tutta l'applicazione, e chi carica contenuto non fidato dovrebbe disattivarla, a costo delle prestazioni JS.
+Il JIT è una scelta di processo, non di view: le opzioni di JSC sono globali e tutte le view condividono la stessa VM JavaScript. L'opzione `jit` di `zg_runtime_config` vale quindi per tutta l'applicazione ed è indipendente da `allow_external_content`. La documentazione raccomanda di disattivarla a chi carica contenuto non fidato (le parti ottimizzanti del JIT sono la fonte più frequente di bug sfruttabili in JSC, ed è ciò che spegne anche il Lockdown Mode di Apple), a costo delle prestazioni JS, ma la scelta resta allo sviluppatore.
 
 ### Politica di aggiornamento
 

@@ -41,11 +41,14 @@ TRIPLET = "x64-windows-zerog" if IS_WINDOWS else "x64-linux-zerog"
 PROFILES = {
     "minimal": {"CMAKE_BUILD_TYPE": "Release"},
     "standard": {"CMAKE_BUILD_TYPE": "Release"},
-    "dev": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "DEVELOPER_MODE": "ON"},
+    # Release engine for app development; the Web Inspector is added with WebCore.
+    "dev": {"CMAKE_BUILD_TYPE": "Release"},
+    # Engine work: assertions (NDEBUG unset) and full symbols.
+    "debug": {"CMAKE_BUILD_TYPE": "Debug", "DEVELOPER_MODE": "ON"},
 }
 
 # ICU data profile linked by each build profile (deps/icu-data.json).
-ICU_DATA = {"minimal": "minimal", "standard": "full", "dev": "full"}
+ICU_DATA = {"minimal": "minimal", "standard": "full", "dev": "full", "debug": "full"}
 
 
 def run(cmd, env=None, cwd=None):
