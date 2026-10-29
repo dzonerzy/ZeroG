@@ -20,6 +20,7 @@
 #include <WebCore/ActivityState.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/CookieJar.h>
+#include <WebCore/UserContentProvider.h>
 #include <WebCore/DocumentView.h>
 #include <WebCore/EmptyClients.h>
 #include <WebCore/FloatRect.h>
@@ -63,6 +64,7 @@ static Ref<Page> createPage(View& view)
     };
     configuration.cookieJar = createCookieJar(view.session());
     configuration.socketProvider = createSocketProvider();
+    configuration.userContentProvider = view.session().userContentProvider();
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     return Page::create(WTF::move(configuration));

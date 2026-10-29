@@ -51,6 +51,7 @@
 #include <WebCore/Page.h>
 #include <WebCore/ResourceLoader.h>
 #include <WebCore/SubresourceLoader.h>
+#include <WebCore/UserContentProvider.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
 

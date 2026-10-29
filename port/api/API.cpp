@@ -808,9 +808,17 @@ zg_result zg_context_register_scheme(zg_context* context, const char* scheme, zg
     return registrationFailure(context->session->registerScheme(name, adoptRef(*new SchemeHandlerAPI(handler, user))), name);
 }
 
-zg_result zg_context_register_font(zg_context*, const void*, size_t)
+zg_result zg_context_register_font(zg_context* context, const void* data, size_t length)
 {
-    return fail(ZG_ERROR_UNSUPPORTED, "registered fonts come with the font layer"_s);
+    clearError();
+    if (!context || !data || !length)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no context or font data"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    auto family = context->session->registerFont(std::span { static_cast<const uint8_t*>(data), length });
+    if (!family)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, family.error());
+    return ZG_OK;
 }
 
 // ---- Surfaces ----

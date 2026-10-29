@@ -7,6 +7,7 @@ set(ZeroGEmbedding_SOURCES
     ChromeClientZeroG.cpp
     EditorClientZeroG.cpp
     Embedding.cpp
+    Fonts.cpp
     FrameLoaderClientZeroG.cpp
     KeyboardSDL.cpp
     Loader.cpp
@@ -116,6 +117,8 @@ set(ZeroGLoader_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIR
 WEBKIT_EXECUTABLE_DECLARE(ZeroGLoader)
 WEBKIT_EXECUTABLE(ZeroGLoader)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGLoader)
+# Test fonts from the WebKit checkout's Skia (Ahem: public domain; Roboto: Apache 2.0).
+target_compile_definitions(ZeroGLoader PRIVATE ZEROG_TEST_FONTS="${CMAKE_SOURCE_DIR}/Source/ThirdParty/skia")
 
 # Window mode: a native window presented at vsync.
 set(ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window.cpp)

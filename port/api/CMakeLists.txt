@@ -57,6 +57,8 @@ set(ZeroGAPITest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
 set(ZeroGAPITest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGAPITest)
 WEBKIT_EXECUTABLE(ZeroGAPITest)
+# Ahem (public domain), from the WebKit checkout's Skia.
+target_compile_definitions(ZeroGAPITest PRIVATE ZEROG_TEST_FONT="${CMAKE_SOURCE_DIR}/Source/ThirdParty/skia/resources/fonts/ahem.ttf")
 if (NOT WIN32)
     target_link_libraries(ZeroGAPITest PRIVATE Threads::Threads)
 endif ()

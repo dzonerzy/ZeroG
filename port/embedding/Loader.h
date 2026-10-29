@@ -11,8 +11,10 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SharedBuffer.h>
+#include <expected>
 #include <memory>
 #include <pal/SessionID.h>
+#include <span>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
@@ -27,6 +29,7 @@ class CookieJarDB;
 class LoaderStrategy;
 class LocalFrame;
 class ResourceLoader;
+class UserContentProvider;
 }
 
 namespace ZeroG {
@@ -121,6 +124,13 @@ public:
     SchemeHandler* schemeHandler(StringView scheme) const;
     bool hasScheme(StringView scheme) const { return schemeHandler(scheme); }
 
+    // Fonts the application registers (Fonts.cpp): every page of the session
+    // sees their families, ahead of system fonts of the same name, as @font-face
+    // rules of a user style sheet. Returns the family name.
+    std::expected<String, String> registerFont(std::span<const uint8_t>);
+    // The pages' user content: the registered fonts' style sheet.
+    WebCore::UserContentProvider& userContentProvider();
+
     // Cookies, as WebKit's curl network session keeps them.
     WebCore::CookieJarDB& cookieDatabase();
     // The Cookie header for a request (HttpOnly cookies included), and the
@@ -133,6 +143,7 @@ private:
     const PAL::SessionID m_sessionID;
     HashMap<String, Ref<SchemeHandler>> m_schemeHandlers;
     std::unique_ptr<WebCore::CookieJarDB> m_cookieDatabase;
+    RefPtr<WebCore::UserContentProvider> m_userContentProvider;
 };
 
 // The cookie jar of a page in a session: document.cookie and the DOM's cookie APIs.

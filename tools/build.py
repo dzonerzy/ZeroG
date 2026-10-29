@@ -322,7 +322,7 @@ def cmd_bundle(args):
     bundle_libs_path(out).write_text("".join(f"{s}\n" for s in system))
 
 
-def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runtime=True):
+def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runtime=True, defines=()):
     """Compile and link a C test program the way an application would. On Windows
     `linker` is "lld" (our toolchain, and zig's) or "link" (MSVC's link.exe, what
     MSVC-built hosts use)."""
@@ -333,7 +333,7 @@ def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runt
         fuse = ["-fuse-ld=lld"] if linker == "lld" else []
         objects = out / "linktest" / name
         objects.mkdir(parents=True, exist_ok=True)
-        run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", *fuse, *[f"/I{i}" for i in includes],
+        run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", *[f"/D{d}" for d in defines], *fuse, *[f"/I{i}" for i in includes],
              *sources, f"/Fe{exe}", f"/Fo{objects}\\", "/link", *libraries, *system],
             env=build_env())
     else:
@@ -347,7 +347,7 @@ def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runt
         objs = []
         for src in sources:
             obj = out / f"{name}-{Path(src).stem}.o"
-            run([cc, "-O2", "-DJS_NO_EXPORT", *[f"-I{i}" for i in includes], "-c", src, "-o", obj])
+            run([cc, "-O2", "-DJS_NO_EXPORT", *[f"-D{d}" for d in defines], *[f"-I{i}" for i in includes], "-c", src, "-o", obj])
             objs.append(obj)
         # cxx_runtime=False links with the C driver: the bundle must bring its own C++ runtime.
         run([cxx if cxx_runtime else cc, *objs, *libraries, "-o", exe, *runtime])
@@ -396,8 +396,10 @@ def cmd_linktest(args):
         system = [l for l in bundle_libs_path(out).read_text().splitlines() if l]
         assets = out / "zerog-api-test-assets.c"
         run([sys.executable, ROOT / "tools" / "assets.py", ROOT / "tests" / "api" / "assets", "-o", assets, "--c-symbol", "test_assets"])
+        font = (WEBKIT / "Source" / "ThirdParty" / "skia" / "resources" / "fonts" / "ahem.ttf").as_posix()
         api = link_c(args, out, "zerog-api-bundle", [ROOT / "tests" / "api" / "api_test.c", assets], [ROOT / "include"],
-                     [bundle_path(out), *system], cxx_runtime=bool(IS_WINDOWS or not os.environ.get("ZEROG_ZIG_TARGET")))
+                     [bundle_path(out), *system], cxx_runtime=bool(IS_WINDOWS or not os.environ.get("ZEROG_ZIG_TARGET")),
+                     defines=[f'ZEROG_TEST_FONT="{font}"'])
         check_no_exports(api)
         # The window part needs a display (a desktop, or Xvfb on Linux).
         run([api, *([] if IS_WINDOWS or os.environ.get("DISPLAY") else ["--no-window"])])

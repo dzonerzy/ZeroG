@@ -646,6 +646,61 @@ int main()
         }
     }
 
+    // Registered fonts: one session's pages see them, ahead of system fonts.
+    {
+        auto readFile = [](const char* path) {
+            Vector<uint8_t> data;
+            if (auto* file = std::fopen(path, "rb")) {
+                uint8_t buffer[65536];
+                while (auto read = std::fread(buffer, 1, sizeof buffer, file))
+                    data.append(std::span { buffer, read });
+                std::fclose(file);
+            }
+            return data;
+        };
+        auto ahem = readFile(ZEROG_TEST_FONTS "/resources/fonts/ahem.ttf");
+        auto roboto = readFile(ZEROG_TEST_FONTS "/modules/canvaskit/tests/assets/Roboto-Regular.woff2");
+
+        auto fontSession = ZeroG::Session::create();
+        auto fontFiles = ZeroG::MemoryFS::create();
+        fontFiles->addFile("/fonts.html"_s, bytes("<!DOCTYPE html><span id='a' style='font: 20px Ahem'>XXX</span><br><span id='r' style='font: 20px Roboto'>X</span>"));
+        fontSession->registerScheme("app"_s, fontFiles.copyRef());
+        auto registered = fontSession->registerFont(ahem.span());
+        passed &= check(registered && *registered == "Ahem"_s, "register a TrueType font: %s", (registered ? *registered : registered.error()).utf8().data());
+        auto garbage = fontSession->registerFont(bytes("not a font"));
+        passed &= check(!garbage, "data that is not a font is refused: %s", (garbage ? String { } : garbage.error()).utf8().data());
+
+        ZeroG::View::Configuration configuration;
+        configuration.session = fontSession.copyRef();
+        auto view = ZeroG::View::create(WTF::move(configuration));
+        Client client;
+        view->setClient(&client);
+        passed &= check(load(*view, client, "app://localhost/fonts.html"_s), "a page of the session loads");
+        // Ahem's glyphs are 1em squares: three of them at 20px are 60px wide.
+        // Web fonts load when used; wait for it, then lay out.
+        auto width = await(*view, "document.fonts.load('20px Ahem').then(() => Math.round(document.getElementById('a').getBoundingClientRect().width))"_s);
+        passed &= check(width == "60"_s, "the page uses the registered font: %s px", width.utf8().data());
+
+        // Registered while the page is open: the page sees it too. WOFF2 is read as sfnt.
+        auto robotoFamily = fontSession->registerFont(roboto.span());
+        passed &= check(robotoFamily && *robotoFamily == "Roboto"_s, "register a WOFF2 font: %s", (robotoFamily ? *robotoFamily : robotoFamily.error()).utf8().data());
+        auto loaded = await(*view, "document.fonts.load('20px Roboto').then(faces => faces.length + ' ' + document.fonts.check('20px Roboto'))"_s);
+        passed &= check(loaded == "1 true"_s, "an open page gets a font registered later: %s", loaded.utf8().data());
+        // Another session's pages do not see them.
+        auto otherFiles = ZeroG::MemoryFS::create();
+        otherFiles->addFile("/fonts.html"_s, bytes("<!DOCTYPE html><span id='a' style='font: 20px Ahem, monospace'>XXX</span>"));
+        auto otherSession = ZeroG::Session::create();
+        otherSession->registerScheme("app"_s, otherFiles.copyRef());
+        ZeroG::View::Configuration otherConfiguration;
+        otherConfiguration.session = otherSession.copyRef();
+        auto otherView = ZeroG::View::create(WTF::move(otherConfiguration));
+        Client otherClient;
+        otherView->setClient(&otherClient);
+        load(*otherView, otherClient, "app://localhost/fonts.html"_s);
+        auto otherWidth = await(*otherView, "document.fonts.load('20px Ahem').then(() => Math.round(document.getElementById('a').getBoundingClientRect().width))"_s);
+        passed &= check(otherWidth != "60"_s, "another session's page does not: %s px", otherWidth.utf8().data());
+    }
+
     passed &= check(!released, "an external file stays while the file system lives");
 
     {

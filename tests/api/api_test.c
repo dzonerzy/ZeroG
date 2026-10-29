@@ -439,6 +439,22 @@ int main(int argc, char **argv)
         CHECK(!strcmp(awaitJS(view, "fetch('native://x/later').then(r => r.text())"), "\"later\""), "and answers from another thread: %s", evaluate(view, "__result"));
         CHECK(!strncmp(awaitJS(view, "fetch('native://x/fail').then(r => r.text())"), "\"error:", 7), "or fails a request: %s", evaluate(view, "__result"));
 
+        /* A registered font: Ahem's glyphs are 1em squares. */
+        {
+            static unsigned char font[65536];
+            size_t fontLength = 0;
+            FILE *file = fopen(ZEROG_TEST_FONT, "rb");
+            if (file) {
+                fontLength = fread(font, 1, sizeof font, file);
+                fclose(file);
+            }
+            CHECK(zg_context_register_font(context, font, fontLength) == ZG_OK, "register a font: %s", fontLength ? zg_last_error() : "test font not found");
+            CHECK(zg_context_register_font(context, "junk", 4) == ZG_ERROR_INVALID_ARGUMENT, "data that is not a font is refused: %s", zg_last_error());
+            CHECK(!strcmp(awaitJS(view, "(() => { const s = document.createElement('span'); s.style.font = '20px Ahem'; s.textContent = 'XX';"
+                " document.body.appendChild(s); return document.fonts.load('20px Ahem').then(() => Math.round(s.getBoundingClientRect().width)); })()"), "\"40\""),
+                "an open page uses it: %s px", evaluate(view, "__result"));
+        }
+
         /* A frontend packed by tools/assets.py, under a scheme of its own. */
         CHECK(zg_context_mount_assets(context, "packed", test_assets, test_assets_len) == ZG_OK, "mount the tools/assets.py archive");
         loads = loadsFinished;

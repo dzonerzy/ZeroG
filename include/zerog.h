@@ -282,7 +282,10 @@ typedef void (*zg_scheme_fn)(zg_scheme_request *req, void *user);
 ZG_API zg_result zg_context_register_scheme(zg_context *ctx, const char *scheme,
                                             zg_scheme_fn handler, void *user);
 
-/* Font data is copied. Families registered here win over system fonts. */
+/* A TrueType, OpenType, WOFF or WOFF2 font for the context's pages, under the
+   family name, weight, style and width inside it, as an @font-face rule every
+   page has: a registered family wins over a system font of the same name. Other
+   contexts do not see it. The data is copied. Pages already open get it too. */
 ZG_API zg_result zg_context_register_font(zg_context *ctx, const void *data, size_t len);
 
 /* ------------------------------------------------------------------------ */
