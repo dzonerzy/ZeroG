@@ -23,6 +23,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import toolchain  # noqa: E402  (tools/toolchain.py)
+
 ROOT = Path(__file__).resolve().parent.parent
 WEBKIT = ROOT / "third_party" / "webkit"
 # Overridable so the Linux Docker builder can keep both on a writable volume.
@@ -77,6 +80,9 @@ def build_env():
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
             user_path = winreg.QueryValueEx(key, "Path")[0]
         env["PATH"] = env["PATH"] + ";" + os.path.expandvars(user_path)
+        # The pinned LLVM (toolchain.json) goes first: vcvars puts Visual Studio's
+        # bundled clang-cl on PATH, which would otherwise win.
+        env["PATH"] = f"{toolchain.llvm_bin()};{env['PATH']}"
     return env
 
 
@@ -135,7 +141,11 @@ def configure_options(args):
     if args.port == "ZeroG":
         opts["ZEROG_ICU_DATA"] = ICU_DATA[args.profile]
     if IS_WINDOWS:
-        opts.update({"CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl"})
+        llvm = toolchain.llvm_bin()
+        opts.update({"CMAKE_C_COMPILER": (llvm / "clang-cl.exe").as_posix(),
+                     "CMAKE_CXX_COMPILER": (llvm / "clang-cl.exe").as_posix(),
+                     "CMAKE_LINKER": (llvm / "lld-link.exe").as_posix(),
+                     "CMAKE_AR": (llvm / "llvm-lib.exe").as_posix()})
     else:
         # The Docker builder sets CC/CXX/AR/RANLIB to zig wrappers (glibc baseline,
         # static libc++); outside it, plain clang.
@@ -270,6 +280,7 @@ def main():
     parser.add_argument("-j", "--jobs", type=int)
     parser.add_argument("--build-dir", help="default: build/<port>-<profile>")
     args = parser.parse_args()
+    toolchain.check()
     {"deps": cmd_deps, "configure": cmd_configure, "build": cmd_build,
      "bundle": cmd_bundle, "linktest": cmd_linktest, "all": cmd_all}[args.command](args)
 

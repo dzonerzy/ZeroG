@@ -11,9 +11,15 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         git ca-certificates curl zip unzip tar xz-utils file binutils \
     && rm -rf /var/lib/apt/lists/*
 
-# zig 0.16.0, the version the ZeroG framework targets (ZeroG.md, "Framework Zig").
-ARG ZIG_VERSION=0.16.0
-ARG ZIG_SHA256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+# Versions come from toolchain.json via `python tools/toolchain.py docker-build`;
+# there are no defaults, so the image cannot drift from the manifest.
+ARG ZIG_VERSION
+ARG ZIG_SHA256
+ARG ZEROG_ZIG_TARGET
+ARG VCPKG_COMMIT
+RUN test -n "$ZIG_VERSION" -a -n "$ZIG_SHA256" -a -n "$ZEROG_ZIG_TARGET" -a -n "$VCPKG_COMMIT" \
+    || { echo "build with: python tools/toolchain.py docker-build"; exit 1; }
+
 RUN curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz \
     && echo "${ZIG_SHA256}  /tmp/zig.tar.xz" | sha256sum -c - \
     && mkdir /opt/zig && tar xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1 \
@@ -23,12 +29,10 @@ RUN curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/${ZIG_VERSION}/zi
 # Compiler wrappers: CMake, vcpkg and autotools see ordinary cc/c++/ar/ranlib.
 COPY zcc zc++ zar zranlib /usr/local/bin/
 RUN chmod +x /usr/local/bin/zcc /usr/local/bin/zc++ /usr/local/bin/zar /usr/local/bin/zranlib
-ENV ZEROG_ZIG_TARGET=x86_64-linux-gnu.2.28 \
+ENV ZEROG_ZIG_TARGET=${ZEROG_ZIG_TARGET} \
     CC=zcc CXX=zc++ AR=zar RANLIB=zranlib \
     ZIG_GLOBAL_CACHE_DIR=/build/zig-cache
 
-# Same vcpkg commit as deps/vcpkg.json's builtin-baseline.
-ARG VCPKG_COMMIT=0e5eb43501dab17aa055dd54bd7a8c018f330fe2
 RUN git clone --filter=blob:none https://github.com/microsoft/vcpkg.git /opt/vcpkg \
     && git -C /opt/vcpkg checkout -q ${VCPKG_COMMIT} \
     && ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics

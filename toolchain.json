@@ -1,0 +1,25 @@
+{
+  "_comment": "Pinned toolchain. tools/toolchain.py fetches and checks it; tools/build.py refuses to build with anything else. One LLVM version everywhere: zig 0.16.0 bundles clang 21.1.0, so Windows uses the same LLVM release. The WebKit commit is pinned separately in WEBKIT_REVISION.",
+  "llvm": {
+    "version": "21.1.0",
+    "windows-x86_64": {
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.0/clang+llvm-21.1.0-x86_64-pc-windows-msvc.tar.xz",
+      "sha256": "751aab63f074f041883a5317ad100dbe1e60794693f896df83958824cbc4962a"
+    }
+  },
+  "zig": {
+    "version": "0.16.0",
+    "clang_version": "21.1.0",
+    "linux-x86_64": {
+      "url": "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
+      "sha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+    }
+  },
+  "vcpkg": {
+    "commit": "0e5eb43501dab17aa055dd54bd7a8c018f330fe2"
+  },
+  "linux": {
+    "glibc_baseline": "2.28",
+    "zig_target": "x86_64-linux-gnu.2.28"
+  }
+}

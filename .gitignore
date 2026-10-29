@@ -16,3 +16,4 @@
 /.idea/
 /third_party/vcpkg/
 __pycache__/
+/third_party/toolchains/

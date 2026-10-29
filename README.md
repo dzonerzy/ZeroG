@@ -48,11 +48,25 @@ python tools/build.py linktest    # C program linked against that archive
 `--profile minimal|standard|dev` selects the build profile and its ICU data;
 `--port JSCOnly` builds the upstream reference port.
 
+### Toolchain
+
+[toolchain.json](toolchain.json) pins one LLVM release everywhere (21.1.0, the
+clang inside zig 0.16.0), zig, the glibc baseline and the vcpkg commit.
+`tools/build.py` runs `tools/toolchain.py check` before every step and refuses
+to build with anything else.
+
+| Platform | Compiler | C++ runtime | Linked by |
+| --- | --- | --- | --- |
+| Windows x64 | clang-cl 21.1.0 (pinned, in `third_party/toolchains`) | MSVC STL, static CRT | lld-link, or zig for apps |
+| Linux x86_64 | zig 0.16.0 (clang 21.1.0), target glibc 2.28 | libc++ (static, from zig) | zig |
+
 Windows requirements:
 
-- Visual Studio 2022 (C++ workload, Windows SDK), LLVM/clang-cl >= 19, Ninja,
+- `python tools/toolchain.py fetch` once: downloads and verifies the pinned
+  LLVM into `third_party/toolchains/`. System and Visual Studio clang are not used.
+- Visual Studio 2022 Build Tools (Windows SDK, MSVC STL and CRT), Ninja,
   Python 3, Perl (Git for Windows' perl works), Ruby, gperf;
-  vcpkg cloned and bootstrapped in `third_party/vcpkg`.
+  vcpkg cloned at the pinned commit and bootstrapped in `third_party/vcpkg`.
 - No Developer Mode or admin rights: upstream symlinks JavaScriptCore's private
   headers, which Windows only allows with that privilege. Patch 0001 writes
   forwarding headers instead (copies and hardlinks break `#pragma once`, since
@@ -60,10 +74,10 @@ Windows requirements:
 - Long paths enabled (`LongPathsEnabled` registry key; `tools/webkit.py` sets
   `core.longpaths` and `core.autocrlf=false` on the checkout).
 
-Linux builds run in the pinned Docker image:
+Linux builds run in the Docker builder, built from the manifest:
 
 ```sh
-docker build -t zerog-linux-builder -f tools/docker/linux-builder.Dockerfile tools/docker
+python tools/toolchain.py docker-build
 docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builder \
     python3 tools/build.py all --build-dir /build/zerog-minimal
 ```

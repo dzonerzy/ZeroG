@@ -128,6 +128,28 @@ The stripped binaries were run unchanged (link test, converter test, `jsc`):
 | Rocky Linux 8 | 2.28 | all checks pass |
 | Fedora (latest) | 2.43 | all checks pass |
 
+## One pinned LLVM (toolchain.json)
+
+The Windows build had silently used Visual Studio's bundled clang-cl 19.1.5
+(vcvars puts it first on PATH), while Linux used zig's clang 21.1.0. Now
+`toolchain.json` pins LLVM 21.1.0 for both: Windows uses the official release
+in `third_party/toolchains/` (fetched and checksum-verified by
+`tools/toolchain.py`), also for vcpkg dependencies through a chainloaded
+toolchain; the Linux image takes zig, the glibc target and the vcpkg commit from
+the manifest. `tools/build.py` refuses to run on a mismatch.
+
+| Windows | clang-cl 19.1.5 (VS) | clang-cl 21.1.0 (pinned) |
+| --- | --- | --- |
+| Clean build | ~160 s | 131 s |
+| `jsc.exe` | 49.1 MB | 49.6 MB |
+| Link test (`minimal`) | 46.1 MB | 46.6 MB |
+| ICU compiled by | MSVC cl.exe | clang-cl 21.1.0 |
+
+zig can also link the clang-cl-built engine archive for Windows
+(`zig cc -target x86_64-windows-msvc`); the result passes the link test and
+imports only system DLLs. zig cannot compile C++ for the MSVC ABI (its libc++
+does not build against MSVC headers), so clang-cl stays the Windows compiler.
+
 ## Gaps to the single-binary goal
 
 - Windows: symbols exported from the final executable (`dllexport`).
