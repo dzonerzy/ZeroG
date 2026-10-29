@@ -1,0 +1,26 @@
+diff --git a/Source/WTF/wtf/win/ThreadingWin.cpp b/Source/WTF/wtf/win/ThreadingWin.cpp
+index 42a08f4548..f3b3ec3943 100644
+--- a/Source/WTF/wtf/win/ThreadingWin.cpp
++++ b/Source/WTF/wtf/win/ThreadingWin.cpp
+@@ -93,6 +93,7 @@
+ #include <windows.h>
+ #include <wtf/HashMap.h>
+ #include <wtf/Lock.h>
++#include <wtf/MainThread.h>
+ #include <wtf/MathExtras.h>
+ #include <wtf/NeverDestroyed.h>
+ #include <wtf/ThreadingPrimitives.h>
+@@ -307,6 +308,13 @@ struct Thread::ThreadHolder {
+         if (processIsShuttingDown())
+             return;
+ 
++        // The main thread's data lives until the process exits, as on POSIX where
++        // thread-specific destructors never run for the main thread. When WTF is
++        // linked statically, exit() destroys this thread_local before
++        // RtlDllShutdownInProgress() reports the shutdown.
++        if (isMainThread())
++            return;
++
+         if (thread) {
+             thread->m_clientData = nullptr;
+             thread->specificStorage().destroySlots();

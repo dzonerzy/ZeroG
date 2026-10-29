@@ -16,6 +16,7 @@ overlay replace an existing upstream file, so the two never get mixed up.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -76,10 +77,29 @@ def cmd_fetch(args):
     print(f"webkit checked out at {rev}")
 
 
+def modified_files():
+    """Files of the checkout that differ from HEAD: patched, overlaid or hand-edited."""
+    changed = git("diff", "--name-only", "HEAD", capture=True).splitlines()
+    untracked = git("ls-files", "--others", "--exclude-standard", capture=True).splitlines()
+    return [WEBKIT / p for p in changed + untracked if p]
+
+
+def snapshot(paths):
+    return {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in paths if p.is_file()}
+
+
+def restore_mtimes(before):
+    """Give unchanged files their old mtime back, so the build only redoes what changed."""
+    for path, (content, mtime) in before.items():
+        if path.is_file() and path.read_bytes() == content:
+            os.utime(path, ns=(mtime, mtime))
+
+
 def cmd_prepare(args):
     rev = pinned_revision()
     if head_revision() is None:
         sys.exit("no webkit checkout: run `tools/webkit.py fetch` first")
+    before = snapshot(modified_files())
     # Back to a pristine tree at the pinned commit. Only third_party/webkit is touched.
     git("-c", "advice.detachedHead=false", "checkout", "-q", "--force", rev)
     git("clean", "-q", "-fdx", "--exclude=/WebKitBuild/")
@@ -96,6 +116,7 @@ def cmd_prepare(args):
             sys.exit(f"overlay file {rel} replaces an upstream file: make it a patch instead")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+    restore_mtimes(before)
     print(f"prepared {rev[:12]}: {len(series())} patches, {len(overlay_files())} overlay files")
 
 

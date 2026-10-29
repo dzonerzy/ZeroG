@@ -42,4 +42,10 @@ ENV ZEROG_VCPKG_ROOT=/opt/vcpkg \
     VCPKG_KEEP_ENV_VARS=ZEROG_ZIG_TARGET;ZIG_GLOBAL_CACHE_DIR \
     ZEROG_SYSROOT=/build/sysroot
 
+# Fonts for the render tests only: the engine reads whatever the host has under
+# /usr/share/fonts and does not depend on these.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src

@@ -1,0 +1,111 @@
+diff --git a/Source/WebCore/editing/libwpe/EditorLibWPE.cpp b/Source/WebCore/editing/libwpe/EditorLibWPE.cpp
+index d0a3d5c048..c223e559f5 100644
+--- a/Source/WebCore/editing/libwpe/EditorLibWPE.cpp
++++ b/Source/WebCore/editing/libwpe/EditorLibWPE.cpp
+@@ -26,7 +26,7 @@
+ #include "config.h"
+ #include "Editor.h"
+ 
+-#if USE(LIBWPE)
++#if USE(LIBWPE) || PLATFORM(ZEROG)
+ 
+ #include "DocumentFragment.h"
+ #include "FrameDestructionObserverInlines.h"
+@@ -102,4 +102,4 @@ void Editor::platformPasteFont()
+ 
+ } // namespace WebCore
+ 
+-#endif // USE(LIBWPE)
++#endif // USE(LIBWPE) || PLATFORM(ZEROG)
+diff --git a/Source/WebCore/platform/MainThreadSharedTimer.cpp b/Source/WebCore/platform/MainThreadSharedTimer.cpp
+index 89ea63bd1d..0fcd5b25c8 100644
+--- a/Source/WebCore/platform/MainThreadSharedTimer.cpp
++++ b/Source/WebCore/platform/MainThreadSharedTimer.cpp
+@@ -46,7 +46,7 @@ MainThreadSharedTimer& MainThreadSharedTimer::singleton()
+     return instance;
+ }
+ 
+-#if USE(CF) || OS(WINDOWS)
++#if USE(CF) || PLATFORM(WIN)
+ MainThreadSharedTimer::MainThreadSharedTimer() = default;
+ #else
+ MainThreadSharedTimer::MainThreadSharedTimer()
+diff --git a/Source/WebCore/platform/MainThreadSharedTimer.h b/Source/WebCore/platform/MainThreadSharedTimer.h
+index 5b130fb51a..c556f0abb2 100644
+--- a/Source/WebCore/platform/MainThreadSharedTimer.h
++++ b/Source/WebCore/platform/MainThreadSharedTimer.h
+@@ -30,7 +30,7 @@
+ #include <wtf/Forward.h>
+ #include <wtf/TZoneMalloc.h>
+ 
+-#if !USE(CF) && !OS(WINDOWS)
++#if !USE(CF) && !PLATFORM(WIN)
+ #include <wtf/CanMakeWeakPtr.h>
+ #include <wtf/RunLoop.h>
+ #endif
+@@ -38,7 +38,7 @@
+ namespace WebCore {
+ 
+ class MainThreadSharedTimer final : public SharedTimer
+-#if !USE(CF) && !OS(WINDOWS)
++#if !USE(CF) && !PLATFORM(WIN)
+     , public CanMakeWeakPtr<MainThreadSharedTimer>
+ #endif
+ {
+@@ -68,7 +68,7 @@ private:
+     MainThreadSharedTimer();
+ 
+     Function<void()> m_firedFunction;
+-#if !USE(CF) && !OS(WINDOWS)
++#if !USE(CF) && !PLATFORM(WIN)
+     RunLoop::Timer m_timer;
+ #endif
+ };
+diff --git a/Source/WebCore/platform/PlatformKeyboardEvent.cpp b/Source/WebCore/platform/PlatformKeyboardEvent.cpp
+index 8666d1cfe5..959c437a12 100644
+--- a/Source/WebCore/platform/PlatformKeyboardEvent.cpp
++++ b/Source/WebCore/platform/PlatformKeyboardEvent.cpp
+@@ -60,7 +60,7 @@ void PlatformKeyboardEvent::setCurrentModifierState(OptionSet<Modifier> modifier
+     s_currentModifiers = modifiers;
+ }
+ 
+-#if PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
++#if PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM) || PLATFORM(ZEROG)
+ OptionSet<PlatformEvent::Modifier> PlatformKeyboardEvent::currentStateOfModifierKeys()
+ {
+     if (s_currentModifiers)
+diff --git a/Source/WebCore/platform/Pasteboard.h b/Source/WebCore/platform/Pasteboard.h
+index 1388964249..abe1892035 100644
+--- a/Source/WebCore/platform/Pasteboard.h
++++ b/Source/WebCore/platform/Pasteboard.h
+@@ -109,7 +109,7 @@ struct PasteboardWebContent {
+     bool canSmartCopyOrDelete;
+     String text;
+     String markup;
+-#elif USE(LIBWPE)
++#elif USE(LIBWPE) || PLATFORM(ZEROG)
+     String text;
+     String markup;
+ #endif
+diff --git a/Source/WebCore/platform/PlatformKeyboardEvent.h b/Source/WebCore/platform/PlatformKeyboardEvent.h
+index a2bda05d5e..fc29440639 100644
+--- a/Source/WebCore/platform/PlatformKeyboardEvent.h
++++ b/Source/WebCore/platform/PlatformKeyboardEvent.h
+@@ -95,7 +95,7 @@ namespace WebCore {
+         void setWindowsVirtualKeyCode(int code) { m_windowsVirtualKeyCode = code; }
+         int windowsVirtualKeyCodeWithoutKeyPressOverride() const { return m_windowsVirtualKeyCode; }
+ 
+-#if USE(APPKIT) || PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
++#if USE(APPKIT) || PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM) || PLATFORM(ZEROG)
+         bool handledByInputMethod() const { return m_handledByInputMethod; }
+ #endif
+ #if PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
+@@ -150,7 +150,7 @@ namespace WebCore {
+         int m_windowsVirtualKeyCode { 0 };
+ 
+         bool m_isSyntheticEvent { false };
+-#if USE(APPKIT) || PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)
++#if USE(APPKIT) || PLATFORM(IOS_FAMILY) || PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM) || PLATFORM(ZEROG)
+         bool m_handledByInputMethod { false };
+ #endif
+ #if PLATFORM(GTK) || USE(LIBWPE) || ENABLE(WPE_PLATFORM)

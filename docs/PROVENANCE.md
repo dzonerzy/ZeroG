@@ -34,6 +34,12 @@ under `patches/` is listed here when it is created.
 | `patches/0011-hardware-acceleration-setting-for-zerog.patch` | Original, one condition in `UnifiedWebPreferences.yaml` (BSD) | BSD-2-Clause |
 | `port/overlay/Source/WebCore/PlatformZeroG.cmake`, `port/overlay/Source/WebCore/PAL/pal/PlatformZeroG.cmake`, `port/overlay/Source/ThirdParty/ANGLE/PlatformZeroG.cmake` | Original (PAL and source lists modeled on the PlayStation port) | BSD-2-Clause |
 | `port/overlay/Source/WebCore/platform/graphics/zerog/FontManagerZeroG.*`, `port/overlay/Source/WebCore/platform/zerog/UserAgentZeroG.cpp`, `port/overlay/Source/WebCore/platform/network/zerog/CurlSSLHandleZeroG.cpp`, `port/overlay/Source/WebCore/accessibility/zerog/AXObjectCacheZeroG.cpp` | Original | BSD-2-Clause |
+| `port/overlay/Source/PlatformZeroG.cmake`, `port/embedding/CMakeLists.txt`, `port/embedding/config.h`, `port/embedding/Embedding.*`, `port/embedding/PlatformStrategiesZeroG.h`, `tests/render/first_render.cpp` | Original (page setup follows `Source/WebCore/testing/TestPage.cpp`) | BSD-2-Clause |
+| `port/overlay/Source/WebCore/platform/graphics/zerog/GraphicsLayerZeroG.cpp`, `port/overlay/Source/WebCore/platform/zerog/PasteboardZeroG.cpp`, `port/overlay/Source/WebCore/platform/zerog/PlatformKeyboardEventZeroG.cpp` | Original (keyboard disambiguation follows the GTK and WPE ports) | BSD-2-Clause |
+| `port/gl/*` | Original; the generated entry points are derived from the Khronos EGL/GLES headers (Apache-2.0 / MIT) | BSD-2-Clause |
+| `patches/0012-webcore-generic-timer-keyboard-and-editor-for-zerog.patch` | Original, guard changes in WebCore files | Same as the modified files |
+| `patches/0013-wtf-keep-main-thread-data-at-exit-on-windows.patch` | Original, modifies `ThreadingWin.cpp` (BSD) | BSD-2-Clause; upstream candidate |
+| `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from
 `Source/WebKitLegacy`, BSD), **Ultralight WebCore** (derived from

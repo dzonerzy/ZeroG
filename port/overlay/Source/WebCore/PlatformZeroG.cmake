@@ -31,9 +31,14 @@ list(APPEND WebCore_SOURCES
     accessibility/zerog/AXObjectCacheZeroG.cpp
 
     platform/graphics/zerog/FontManagerZeroG.cpp
+    platform/graphics/zerog/GraphicsLayerZeroG.cpp
+    platform/zerog/PasteboardZeroG.cpp
+    platform/zerog/PlatformKeyboardEventZeroG.cpp
     platform/zerog/UserAgentZeroG.cpp
 
     # Upstream, generic
+    editing/libwpe/EditorLibWPE.cpp # only uses the generic Pasteboard API
+
     platform/ScrollAnimationKinetic.cpp
     platform/ScrollAnimationSmooth.cpp
 
@@ -42,6 +47,8 @@ list(APPEND WebCore_SOURCES
 
     platform/graphics/PlatformDisplay.cpp
 
+    platform/graphics/egl/BitmapTexture.cpp
+    platform/graphics/egl/BitmapTexturePool.cpp
     platform/graphics/egl/GLContext.cpp
     platform/graphics/egl/GLContextWrapper.cpp
     platform/graphics/egl/GLDisplay.cpp

@@ -8,7 +8,8 @@ presented (native window, game texture, overlay).
 The full design is in [ZeroG.md](ZeroG.md) (Italian). Verification of the
 design against the pinned WebKit revision lives in [docs/verification](docs/verification).
 
-> Status: phase 0 — repository and build infrastructure. Nothing usable yet.
+> Status: phase 1 — WebCore renders HTML, CSS, JavaScript and text to a PNG on
+> Windows and Linux (`tests/render/first_render.cpp`). No public API yet.
 
 ## Layout
 
@@ -18,6 +19,8 @@ design against the pinned WebKit revision lives in [docs/verification](docs/veri
 | `port/overlay/` | New files added to the WebKit tree (`Options<Port>.cmake`, `Platform<Port>.cmake`, …), mirroring its layout |
 | `port/platform/` | Platform layer: GPU contexts for Skia, fonts, clipboard, cursor, IME, timers |
 | `port/embedding/` | Embedding layer: `Page`, `LocalFrame`, WebCore clients, resource loader |
+| `port/gl/` | Linux EGL/GLES loader: entry points generated from the Khronos headers, driver loaded with `dlopen` |
+| `tests/` | Link tests against the bundle, render tests |
 | `port/api/` | C API implementation |
 | `patches/` | Minimal patch series on upstream files, applied in `series` order |
 | `tools/` | Build and maintenance scripts |
@@ -35,14 +38,22 @@ python tools/webkit.py prepare   # reset, apply patches/series, copy port/overla
 python tools/webkit.py status
 ```
 
-## Building (ZeroG port, stage 1: static WTF + JavaScriptCore)
+## Building
 
 ```sh
-python tools/build.py deps        # static ICU 79.1 + filtered ICU data (vcpkg, deps/icu-data.json)
+python tools/build.py deps        # static dependencies into third_party/sysroot (vcpkg, deps/vcpkg.json)
 python tools/build.py configure   # PORT=ZeroG into build/zerog-minimal
-python tools/build.py build
+python tools/build.py build       # -t TARGET builds one target, -k keeps going after failures
 python tools/build.py bundle      # engine + ICU in one archive; only port/api/exports.txt is public
 python tools/build.py linktest    # C programs against the bundle, incl. a host with its own ICU
+```
+
+The phase 1 render test lays out and paints a page on the CPU, writes a PNG and
+checks its pixels:
+
+```sh
+python tools/build.py build -t ZeroGFirstRender
+build/zerog-minimal/bin/ZeroGFirstRender first_render.png
 ```
 
 `--profile minimal|standard|dev` selects the build profile and its ICU data;
@@ -81,6 +92,10 @@ python tools/toolchain.py docker-build
 docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builder \
     python3 tools/build.py all --build-dir /build/zerog-minimal
 ```
+
+`tools/webkit.py prepare` gives files whose content did not change their old
+modification time back, so re-running it after editing a patch or an overlay
+file only rebuilds what that change touches.
 
 ## License
 

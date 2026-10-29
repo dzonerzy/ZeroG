@@ -150,6 +150,7 @@ def configure_options(args):
     if args.port == "ZeroG":
         opts["ZEROG_ICU_DATA"] = ICU_DATA[args.profile]
         opts["ZEROG_PROFILE"] = args.profile
+        opts["ZEROG_SOURCE_DIR"] = ROOT.as_posix()  # port/overlay/Source/PlatformZeroG.cmake
         # vcpkg's toolchain makes find_package see the sysroot the way vcpkg installed
         # it (its wrappers know names such as zs.lib for static zlib). Manifest mode
         # is off: the sysroot is built by `deps`, and WebKit has its own vcpkg.json.
@@ -192,7 +193,10 @@ def cmd_configure(args):
 def cmd_build(args):
     out = build_dir(args)
     start = time.monotonic()
-    cmd = ["cmake", "--build", out, "--"]
+    cmd = ["cmake", "--build", out]
+    for target in args.target or []:
+        cmd += ["--target", target]
+    cmd.append("--")
     if args.jobs:
         cmd.append(f"-j{args.jobs}")
     if args.keep_going:
@@ -364,6 +368,7 @@ def main():
     parser.add_argument("-D", "--define", action="append", help="extra CMake definition KEY=VALUE")
     parser.add_argument("-j", "--jobs", type=int)
     parser.add_argument("-k", "--keep-going", action="store_true", help="keep building after failures")
+    parser.add_argument("-t", "--target", action="append", help="build only these CMake targets")
     parser.add_argument("--build-dir", help="default: build/<port>-<profile>")
     args = parser.parse_args()
     toolchain.check()

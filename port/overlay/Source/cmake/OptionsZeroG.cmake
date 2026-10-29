@@ -194,6 +194,14 @@ if (USE_WOFF2)
     find_package(Brotli REQUIRED COMPONENTS dec)
 endif ()
 
+# Upstream's find modules expect shared libraries, which carry their own
+# dependencies. The static archives in the sysroot do not.
+find_library(ZEROG_SHARPYUV_LIBRARY NAMES sharpyuv libsharpyuv REQUIRED)
+set_property(TARGET WebP::libwebp APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${ZEROG_SHARPYUV_LIBRARY})
+if (USE_WOFF2)
+    set_property(TARGET WOFF2::dec APPEND PROPERTY INTERFACE_LINK_LIBRARIES WOFF2::common Brotli::dec)
+endif ()
+
 SET_AND_EXPOSE_TO_BUILD(USE_CURL ON)
 SET_AND_EXPOSE_TO_BUILD(USE_HARFBUZZ ON)
 # Form controls and scrollbars drawn by WebCore itself (as on Win, GTK, WPE): the
@@ -218,10 +226,14 @@ if (WIN32)
     add_definitions(-DKHRONOS_STATIC -DANGLE_EXPORT=)
 else ()
     find_path(EGL_INCLUDE_DIRS NAMES EGL/egl.h REQUIRED)
-    set(EGL_LIBRARIES "")
+    # No EGL/GLES library at link time: ZeroGGL resolves the driver with dlopen.
+    include("${ZEROG_SOURCE_DIR}/port/gl/GLLoader.cmake")
+    set(EGL_LIBRARIES ZeroGGL)
     if (NOT TARGET OpenGL::GLES)
         add_library(OpenGL::GLES INTERFACE IMPORTED)
-        set_target_properties(OpenGL::GLES PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${EGL_INCLUDE_DIRS}")
+        set_target_properties(OpenGL::GLES PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${EGL_INCLUDE_DIRS}"
+            INTERFACE_LINK_LIBRARIES ZeroGGL)
     endif ()
 endif ()
 SET_AND_EXPOSE_TO_BUILD(USE_EGL ON)

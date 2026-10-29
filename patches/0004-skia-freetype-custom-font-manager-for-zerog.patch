@@ -1,5 +1,5 @@
 diff --git a/Source/ThirdParty/skia/CMakeLists.txt b/Source/ThirdParty/skia/CMakeLists.txt
-index c89dcdfafc..eb2bd8a4d0 100644
+index c89dcdfafc..ba85148 100644
 --- a/Source/ThirdParty/skia/CMakeLists.txt
 +++ b/Source/ThirdParty/skia/CMakeLists.txt
 @@ -1,7 +1,10 @@
@@ -14,7 +14,7 @@ index c89dcdfafc..eb2bd8a4d0 100644
      find_package(Freetype 2.9.0 REQUIRED)
      find_package(Fontconfig 2.13.0 REQUIRED)
  endif ()
-@@ -812,7 +815,31 @@ add_library(Skia STATIC
+@@ -812,7 +815,32 @@ add_library(Skia STATIC
      modules/skcms/src/skcms_TransformSkx.cc
  )
  
@@ -28,6 +28,7 @@ index c89dcdfafc..eb2bd8a4d0 100644
 +        src/ports/SkFontMgr_custom_embedded.cpp
 +        src/ports/SkFontMgr_custom_empty.cpp
 +        src/ports/SkTypeface_proxy.cpp
++        src/utils/SkOSPath.cpp
 +    )
 +    if (WIN32)
 +        target_sources(Skia PRIVATE
@@ -47,7 +48,7 @@ index c89dcdfafc..eb2bd8a4d0 100644
      target_sources(Skia PRIVATE
          src/ports/SkFontHost_win.cpp
          src/ports/SkFontMgr_win_dw.cpp
-@@ -1085,7 +1112,7 @@ target_compile_definitions(Skia PUBLIC
+@@ -1085,7 +1113,7 @@ target_compile_definitions(Skia PUBLIC
      SK_ASSUME_WEBGL=0
  )
  
