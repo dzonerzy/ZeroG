@@ -5,7 +5,8 @@
 // Every frame read must be whole (no tearing), and the last one must match a CPU
 // render of the page.
 //
-// Usage: texture_d3d11 [buffer count, default 3] [cpu|noread]
+// Usage: texture_d3d11 [buffer count, default 3] [cpu|noread|enginedevice]
+//   enginedevice  the engine creates the render thread's device
 //   cpu     the same with a CPU surface (diagnostics)
 //   noread  no reads during rendering, only the last frame
 // The first torn frame is written to torn.rgba (RGBA8, 400x200).
@@ -153,7 +154,15 @@ int main(int argc, char** argv)
     ZeroG::initializeProcess();
     ok &= check(ZeroG::initializeGPU(), "GPU: %s", ZeroG::gpuRenderer().utf8().data());
     bool cpu = argc > 2 && !std::strcmp(argv[2], "cpu");
-    auto surface = cpu ? ZeroG::createCPUSurface(bufferCount) : ZeroG::createD3D11Surface(device.Get(), bufferCount);
+    bool engineDevice = argc > 2 && !std::strcmp(argv[2], "enginedevice");
+    auto surface = cpu ? ZeroG::createCPUSurface(bufferCount) : ZeroG::createD3D11Surface(engineDevice ? nullptr : device.Get(), bufferCount);
+    if (engineDevice && surface) {
+        // The render thread uses the device the engine created for it.
+        device = static_cast<ID3D11Device*>(surface->device());
+        context = nullptr;
+        device->GetImmediateContext(&context);
+        std::printf("     render thread on the engine-created device\n");
+    }
     if (!check(!!surface, "D3D11 surface on the host's device"))
         return 1;
     auto view = ZeroG::View::create({ { width, height }, 1, false, true, WTF::move(surface) });

@@ -51,9 +51,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # For the render tests only, the engine depends on neither: fonts (it reads
 # whatever the host has under /usr/share/fonts), Mesa's EGL with llvmpipe, a
 # software GPU driver for the GPU tests (port/gl loads the system driver), and
-# Xvfb, a headless X server for the window test.
+# headless display servers for the window test: Xvfb (X11) and Weston's headless
+# backend (Wayland).
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        fonts-dejavu-core libegl1 libegl-mesa0 libgles2 mesa-libgallium xvfb xauth \
+        fonts-dejavu-core libegl1 libegl-mesa0 libgles2 mesa-libgallium xvfb xauth weston \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

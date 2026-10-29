@@ -1,3 +1,16 @@
+diff --git a/Source/WebCore/platform/graphics/PlatformDisplay.h b/Source/WebCore/platform/graphics/PlatformDisplay.h
+index 044e2af82c..3541b00ebb 100644
+--- a/Source/WebCore/platform/graphics/PlatformDisplay.h
++++ b/Source/WebCore/platform/graphics/PlatformDisplay.h
+@@ -82,7 +82,7 @@ public:
+ #if OS(ANDROID)
+         Android,
+ #endif
+-#if PLATFORM(GTK) || OS(ANDROID)
++#if PLATFORM(GTK) || OS(ANDROID) || PLATFORM(ZEROG)
+         Default,
+ #endif
+     };
 diff --git a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp b/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
 index 22bcc672ff..e5d87ed79f 100644
 --- a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp

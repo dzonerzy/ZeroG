@@ -65,6 +65,9 @@ public:
     virtual ~Surface();
 
     SurfaceKind kind() const { return m_kind; }
+    // The device frames are given for: the application's, or the one the engine
+    // created for it (ID3D11Device*). Null for other kinds.
+    virtual void* device() const { return nullptr; }
     WebCore::IntSize size() const { return m_size; }
 
     // Engine thread. Buffers are recreated at the new size; buffers the
@@ -150,8 +153,9 @@ std::unique_ptr<Surface> createCPUSurface(unsigned bufferCount);
 // an EGLSync to wait on. Null without a GPU (initializeGPU).
 std::unique_ptr<Surface> createGPUSurface(unsigned bufferCount);
 #if OS(WINDOWS)
-// `hostDevice` is the application's ID3D11Device. Null if ANGLE's D3D11 device or
-// the shared textures are not available.
+// `hostDevice` is the application's ID3D11Device; null makes the engine create one
+// on ANGLE's adapter, which device() returns. Null if ANGLE's D3D11 device or the
+// shared textures are not available.
 std::unique_ptr<Surface> createD3D11Surface(void* hostDevice, unsigned bufferCount);
 #else
 // `hostDisplay` is the application's EGLDisplay, which must be the display the

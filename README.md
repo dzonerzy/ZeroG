@@ -103,8 +103,18 @@ docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builde
     python3 tools/build.py all --build-dir /build/zerog-minimal
 ```
 
-The tests run in the same image, on Mesa's llvmpipe. On a Windows host with
-Docker Desktop (WSL 2) they can use the real GPU through Mesa's `d3d12` driver:
+The tests run in the same image, on Mesa's llvmpipe, covering every EGL display
+path (surfaceless, EGL device as on NVIDIA's headless driver, default) and both
+window systems (Xvfb for X11, Weston's headless backend for Wayland):
+
+```sh
+docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builder \
+    sh /src/tests/render/run_linux.sh
+```
+
+`ZEROG_EGL_PLATFORM=surfaceless|device|default` forces the headless EGL display
+the engine picks. On a Windows host with Docker Desktop (WSL 2) the tests can use
+the real GPU through Mesa's `d3d12` driver:
 
 ```sh
 docker run --rm --gpus all -v /usr/lib/wsl:/usr/lib/wsl:ro \

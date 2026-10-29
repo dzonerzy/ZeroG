@@ -170,8 +170,15 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
     if (auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window)); mode && mode->refresh_rate > 0)
         m_refreshInterval = 1_s / mode->refresh_rate;
     if (m_presentContext->makeContextCurrent()) {
-        // Present at the display's refresh rate.
-        eglSwapInterval(eglGetCurrentDisplay(), 1);
+        // Present at the display's refresh rate. On Wayland a blocking swap waits
+        // for the compositor's frame callback, which hidden or minimized windows
+        // never get: there the frame clock alone paces presentation.
+        int interval = 1;
+#if !OS(WINDOWS)
+        if (isWayland())
+            interval = 0;
+#endif
+        eglSwapInterval(eglGetCurrentDisplay(), interval);
         glGenFramebuffers(1, &m_readFramebuffer);
     }
 }

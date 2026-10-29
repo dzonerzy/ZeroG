@@ -20,9 +20,13 @@ public:
     ~PlatformDisplayZeroG();
 
 private:
-    explicit PlatformDisplayZeroG(Ref<GLDisplay>&&);
+    PlatformDisplayZeroG(Ref<GLDisplay>&&, Type);
 
-    Type type() const final { return PlatformDisplay::Type::Surfaceless; }
+    // Surfaceless for the engine's own headless display; Default on a window
+    // system's display (X11, Wayland), whose configs are for windows, not pbuffers.
+    Type type() const final { return m_type; }
+
+    Type m_type;
 };
 
 } // namespace WebCore

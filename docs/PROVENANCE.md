@@ -41,7 +41,7 @@ under `patches/` is listed here when it is created.
 | `port/gl/*` | Original; the generated entry points are derived from the Khronos EGL/GLES headers (Apache-2.0 / MIT) | BSD-2-Clause |
 | `patches/0012-webcore-generic-timer-keyboard-and-editor-for-zerog.patch` | Original, guard changes in WebCore files | Same as the modified files |
 | `patches/0013-wtf-keep-main-thread-data-at-exit-on-windows.patch` | Original, modifies `ThreadingWin.cpp` (BSD) | BSD-2-Clause; upstream candidate |
-| `port/embedding/View.*`, `port/embedding/Surface*`, `port/embedding/Window.*`, `tests/render/frame_loop.cpp`, `tests/render/texture_*.cpp`, `tests/render/window.cpp` | Original | BSD-2-Clause |
+| `port/embedding/View.*`, `port/embedding/Surface*`, `port/embedding/Window.*`, `tests/render/frame_loop.cpp`, `tests/render/texture_*.cpp`, `tests/render/window.cpp`, `tests/render/run_linux.sh` | Original | BSD-2-Clause |
 | `port/embedding/ChromeClientZeroG.*` | Upstream, derived from `EmptyChromeClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple header kept) |
 | `patches/0015-webcore-embedder-frame-time.patch` | Original, modifies `Page.{h,cpp}` and `LocalDOMWindow.{h,cpp}` | Same as the modified files; upstream candidate |
 | `patches/0016-wtf-generic-run-loop-next-wake-up-time.patch` | Original, modifies `RunLoop.h` and `RunLoopGeneric.cpp` (BSD) | BSD-2-Clause; upstream candidate |

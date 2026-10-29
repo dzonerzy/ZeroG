@@ -50,11 +50,7 @@ public:
     static std::unique_ptr<D3D11Surface> create(ID3D11Device* hostDevice, unsigned bufferCount)
     {
         auto* display = PlatformDisplay::sharedDisplayIfExists();
-        if (!hostDevice || !display || !display->skiaGLContext())
-            return nullptr;
-
-        ComPtr<ID3D11Device1> host;
-        if (FAILED(hostDevice->QueryInterface(IID_PPV_ARGS(&host))))
+        if (!display || !display->skiaGLContext())
             return nullptr;
 
         // ANGLE's own device, through EGL_EXT_device_query.
@@ -65,6 +61,23 @@ public:
             return nullptr;
         ComPtr<ID3D11Device> engine = reinterpret_cast<ID3D11Device*>(d3dDevice);
 
+        // Without a device from the application the engine creates one for it on
+        // ANGLE's adapter. ANGLE's device itself is never handed out: its single
+        // immediate context belongs to the engine thread.
+        ComPtr<ID3D11Device> created;
+        if (!hostDevice) {
+            ComPtr<IDXGIDevice> dxgiDevice;
+            ComPtr<IDXGIAdapter> adapter;
+            if (FAILED(engine.As(&dxgiDevice)) || FAILED(dxgiDevice->GetAdapter(&adapter))
+                || FAILED(D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &created, nullptr, nullptr)))
+                return nullptr;
+            hostDevice = created.Get();
+        }
+
+        ComPtr<ID3D11Device1> host;
+        if (FAILED(hostDevice->QueryInterface(IID_PPV_ARGS(&host))))
+            return nullptr;
+
         return std::unique_ptr<D3D11Surface>(new D3D11Surface(WTF::move(host), WTF::move(engine), display->eglDisplay(), bufferCount));
     }
 
@@ -72,6 +85,8 @@ public:
     {
         destroyAllBuffers();
     }
+
+    void* device() const final { return m_host.Get(); }
 
 private:
     D3D11Surface(ComPtr<ID3D11Device1>&& host, ComPtr<ID3D11Device>&& engine, EGLDisplay display, unsigned bufferCount)
