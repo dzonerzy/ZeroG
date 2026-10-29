@@ -77,12 +77,16 @@ same baseline, so the data is identical.
 | ICU data | Size | Items |
 | --- | --- | --- |
 | stock `icudt79l.dat` | 33.6 MB | 4321 |
-| `full` (all languages, only WebCore's converters) | 28.5 MB | 4154 |
-| `minimal` (17 languages) | 12.6 MB | 1516 |
+| `full` (all languages, only WebCore's converters) | 29.6 MB | 4161 |
+| `minimal` (17 languages) | 13.7 MB | 1523 |
 | English only (measured, not a profile) | 8.5 MB | 830 |
 
 Removed: locale bundles of other languages in every tree (res_index rewritten,
 so `Intl` does not advertise them) and converters WebCore never asks ICU for.
+Kept converters (29): TextCodecICU's encodings, and the ones `EncodingTables.cpp`
+runs at runtime to build the CJK decoders' tables (EUC-JP, Big-5, windows-949,
+gb18030), followed by a `RELEASE_ASSERT`. The first version of the filter missed
+those and EUC-TW; the design verification caught it (docs/verification).
 Kept: time zones, normalization, break rules and segmentation dictionaries.
 `icupkg` dependency checks restore cross-language parents (rbnf/yue for zh_Hant_HK).
 

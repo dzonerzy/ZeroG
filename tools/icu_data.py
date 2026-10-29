@@ -58,15 +58,37 @@ def extract_package(tarball, work):
 
 
 def webcore_encodings():
-    source = ROOT / "third_party/webkit/Source/WebCore/PAL/pal/text/TextCodecICU.cpp"
-    names = re.findall(r'DECLARE_ENCODING_NAME\("([^"]+)"_s', source.read_text())
-    if not names:
-        sys.exit(f"no encodings found in {source}: has TextCodecICU.cpp changed?")
-    return {n.lower() for n in names}
+    """Every converter WebCore asks ICU for at runtime:
+    - TextCodecICU's encodings (DECLARE_ENCODING_NAME and _NO_ALIASES);
+    - converters opened by name anywhere in WebCore and WTF, e.g. EncodingTables.cpp,
+      which builds the CJK decoders' tables in release builds by running EUC-JP,
+      Big-5, windows-949 and gb18030 over every code point and then RELEASE_ASSERTs
+      the count: without that data the first CJK page crashes."""
+    webkit = ROOT / "third_party/webkit/Source"
+    codec = webkit / "WebCore/PAL/pal/text/TextCodecICU.cpp"
+    names = set(re.findall(r'DECLARE_ENCODING_NAME(?:_NO_ALIASES)?\("([^"]+)"_s', codec.read_text()))
+    if len(names) < 15:
+        sys.exit(f"only {len(names)} encodings found in {codec}: has TextCodecICU.cpp changed?")
+    opened = set()
+    for root in (webkit / "WebCore", webkit / "WTF/wtf"):
+        for path in root.rglob("*.cpp"):
+            text = path.read_text(errors="replace")
+            if "ucnv_open(" in text:
+                opened |= set(re.findall(r'ucnv_open\("([^"]+)"', text))
+    if not opened:
+        sys.exit("no ucnv_open(\"...\") calls found in WebCore: has EncodingTables.cpp changed?")
+    return {n.lower() for n in names | opened}
+
+
+def converter_key(name):
+    """ICU matches converter names ignoring case and punctuation (ucnv_compareNames):
+    "Big-5" opens the converter aliased "Big5"."""
+    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
 def converter_files(uconv, encodings):
     """Converter names (= .cnv items) whose alias list contains a WebCore encoding."""
+    wanted = {converter_key(e): e for e in encodings}
     keep, matched, current = set(), set(), None
     for line in run(uconv, "-l", "--canon").splitlines():
         if not line.strip():
@@ -74,9 +96,9 @@ def converter_files(uconv, encodings):
         name = line.split("{")[0].strip()
         if not line[0].isspace():
             current = name
-        if name.lower() in encodings:
+        if converter_key(name) in wanted:
             keep.add(current)
-            matched.add(name.lower())
+            matched.add(wanted[converter_key(name)])
     config = json.loads((ROOT / "deps/icu-data.json").read_text())
     allowed = {k for k in config.get("converters_missing_upstream", {}) if not k.startswith("_")}
     unexpected = encodings - matched - allowed
