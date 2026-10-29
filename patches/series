@@ -2,3 +2,4 @@
 # One file per line, relative to this directory. Keep every patch minimal:
 # the size of this series is the port's health metric (see ZeroG.md, "Strategia upstream").
 0001-cmake-forwarding-headers-instead-of-symlinks-on-windows.patch
+0002-add-zerog-port-and-platform-macro.patch

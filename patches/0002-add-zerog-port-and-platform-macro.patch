@@ -1,0 +1,39 @@
+diff --git a/Source/WTF/wtf/PlatformLegacy.h b/Source/WTF/wtf/PlatformLegacy.h
+index 14f416e7aa..3cab552338 100644
+--- a/Source/WTF/wtf/PlatformLegacy.h
++++ b/Source/WTF/wtf/PlatformLegacy.h
+@@ -54,6 +54,9 @@
+ #define WTF_PLATFORM_WPE 1
+ #elif defined(BUILDING_JSCONLY__)
+ /* JSCOnly does not provide PLATFORM() macro */
++#elif defined(BUILDING_ZEROG__)
++/* PLATFORM(ZEROG) - one port for Linux, Windows and macOS; OS differences use OS() */
++#define WTF_PLATFORM_ZEROG 1
+ #elif OS(MACOS)
+ #define WTF_PLATFORM_MAC 1
+ #elif OS(IOS_FAMILY)
+diff --git a/Source/bmalloc/bmalloc/BPlatform.h b/Source/bmalloc/bmalloc/BPlatform.h
+index b561227848..44123d5cf1 100644
+--- a/Source/bmalloc/bmalloc/BPlatform.h
++++ b/Source/bmalloc/bmalloc/BPlatform.h
+@@ -124,6 +124,8 @@
+ #define BPLATFORM_WPE 1
+ #elif defined(BUILDING_JSCONLY__)
+ /* JSCOnly does not provide BPLATFORM() macro */
++#elif defined(BUILDING_ZEROG__)
++#define BPLATFORM_ZEROG 1
+ #elif BOS(WINDOWS)
+ #define BPLATFORM_WIN 1
+ #endif
+diff --git a/Source/cmake/WebKitCommon.cmake b/Source/cmake/WebKitCommon.cmake
+index d25ffd7106..a76545290c 100644
+--- a/Source/cmake/WebKitCommon.cmake
++++ b/Source/cmake/WebKitCommon.cmake
+@@ -81,6 +81,7 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
+         PlayStation
+         WPE
+         Win
++        ZeroG
+     )
+     set(PORT "NOPORT" CACHE STRING "choose which WebKit port to build (one of ${ALL_PORTS})")
+ 

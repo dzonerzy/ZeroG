@@ -8,8 +8,8 @@
     linktest    link tests/link/jsc_c_api.c against that archive alone and run it
     all         deps + configure + build + bundle + linktest
 
-Phase 0 builds the upstream JSCOnly port with static WTF and JavaScriptCore
-(`--port JSCOnly`); the ZeroG port becomes the default once its overlay lands.
+The default port is ZeroG (port/overlay, applied by `tools/webkit.py prepare`);
+`--port JSCOnly` builds the upstream reference port with the same layout.
 On Windows the Visual Studio x64 environment is loaded automatically and the
 compiler is clang-cl (upstream dropped MSVC support).
 """
@@ -103,15 +103,15 @@ def configure_options(args):
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         **PROFILES[args.profile],
     }
-    # ZeroG.md, "Allocatore di memoria": no libpas/Gigacage reservations. Upstream
-    # refuses system malloc on Windows (BPlatform.h: aligned blocks cannot be
-    # released with ::free) and offers its vendored mimalloc instead.
-    if IS_WINDOWS:
-        opts.update({"USE_SYSTEM_MALLOC": "OFF", "USE_MIMALLOC": "ON"})
-    else:
-        opts.update({"USE_SYSTEM_MALLOC": "ON", "USE_MIMALLOC": "OFF"})
     if args.port == "JSCOnly":
+        # Reference build of the upstream port. The ZeroG port sets these itself
+        # (port/overlay/Source/cmake/OptionsZeroG.cmake). Upstream refuses system
+        # malloc on Windows (BPlatform.h), hence mimalloc there.
         opts["ENABLE_STATIC_JSC"] = "ON"
+        opts["USE_SYSTEM_MALLOC"] = "OFF" if IS_WINDOWS else "ON"
+        opts["USE_MIMALLOC"] = "ON" if IS_WINDOWS else "OFF"
+    # Thin archives only work inside the build tree (OptionsCommon.cmake).
+    opts["USE_THIN_ARCHIVES"] = "OFF"
     if IS_WINDOWS:
         opts.update({"CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl"})
     else:
@@ -191,14 +191,17 @@ def cmd_linktest(args):
     if IS_WINDOWS:
         icu = SYSROOT / TRIPLET / "lib"
         system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib"]
-        run(["clang-cl", "/nologo", "/MD", "/O2", "/DJS_NO_EXPORT", f"/I{headers}", src,
+        crt = "/MT" if args.port == "ZeroG" else "/MD"
+        run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", f"/I{headers}", src,
              f"/Fe{exe}", f"/Fo{out / 'zerog-linktest.obj'}", "/link", bundle_path(out),
              icu / "icuin.lib", icu / "icuuc.lib", icu / "icudt.lib", *system], env=build_env())
     else:
         obj = out / "zerog-linktest.o"
         run(["clang", "-O2", "-DJS_NO_EXPORT", f"-I{headers}", "-c", src, "-o", obj])
+        # Everything static except glibc (ZeroG.md, "Cosa resta dinamico a runtime").
         run(["clang++", obj, bundle_path(out), "-o", exe,
-             "-licui18n", "-licuuc", "-licudata", "-latomic", "-lpthread", "-ldl"])
+             "-Wl,-Bstatic", "-licui18n", "-licuuc", "-licudata", "-latomic", "-Wl,-Bdynamic",
+             "-static-libstdc++", "-static-libgcc", "-lpthread", "-ldl"])
     run([exe])
 
 
@@ -213,7 +216,7 @@ def cmd_all(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["deps", "configure", "build", "bundle", "linktest", "all"])
-    parser.add_argument("--port", default="JSCOnly")
+    parser.add_argument("--port", default="ZeroG")
     parser.add_argument("--profile", default="minimal", choices=sorted(PROFILES))
     parser.add_argument("-D", "--define", action="append", help="extra CMake definition KEY=VALUE")
     parser.add_argument("-j", "--jobs", type=int)

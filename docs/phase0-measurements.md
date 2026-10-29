@@ -51,8 +51,23 @@ JIT tiers is ~30 MB of code; the minimal profile turns WebAssembly off.
   exports them (the link test produces an `.exp`). Symbol localization
   (ZeroG.md, "Simboli nel link statico") must handle this.
 
+## ZeroG port, stage 1 (WTF + JSC, `PORT=ZeroG`)
+
+Patch 0002 registers the port and defines `PLATFORM(ZEROG)`; `OptionsZeroG.cmake`
+sets static libraries, RunLoopGeneric, the allocator per OS, no thin archives and
+(Windows) the static CRT. The link test is now a single executable on both OSes:
+
+| | Windows x64 | Linux x86_64 |
+| --- | --- | --- |
+| Clean build | ~160 s | 170 s |
+| Link test binary | 67.0 MB | 71.1 MB stripped |
+| Runtime deps | KERNEL32, ADVAPI32, SHELL32, WINMM (system only) | libc, libm, ld-linux (glibc only) |
+| Static | ICU (/MT build), CRT, C++ runtime | ICU, libstdc++, libgcc, libatomic |
+
+ICU data (~32-34 MB) is about half of either binary: the ICU data filter is next.
+
 ## Gaps to the single-binary goal
 
-- Windows: static CRT needs a patch (`CMAKE_MSVC_RUNTIME_LIBRARY` is forced to `MultiThreadedDLL`).
-- Linux: static ICU (with data filter) and a static C++ runtime.
+- ICU data filter (both platforms).
+- Linux: build against an older glibc baseline (ZeroG.md suggests 2.28).
 - Windows: symbols exported from the final executable (`dllexport`).
