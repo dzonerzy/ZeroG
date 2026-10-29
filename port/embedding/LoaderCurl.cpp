@@ -46,8 +46,6 @@ namespace ZeroG {
 
 using namespace WebCore;
 
-namespace {
-
 // BoringSSL does not read the system's trust store by itself. On Windows WebCore
 // asks curl for the native store; elsewhere the engine points curl at the
 // distribution's CA bundle.
@@ -72,6 +70,8 @@ void initializeCertificates()
     });
 #endif
 }
+
+namespace {
 
 // The Cookie header of the session, unless the request carries one or must not.
 ResourceRequest withCookies(Session& session, const ResourceRequest& original)

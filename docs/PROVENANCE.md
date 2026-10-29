@@ -52,6 +52,8 @@ under `patches/` is listed here when it is created.
 | `port/embedding/MemoryFS.*`, `tools/assets.py`, `tests/render/loader.cpp` | Original | BSD-2-Clause |
 | `patches/0015-webcore-embedder-frame-time.patch` | Original, modifies `Page.{h,cpp}` and `LocalDOMWindow.{h,cpp}` | Same as the modified files; upstream candidate |
 | `patches/0016-wtf-generic-run-loop-next-wake-up-time.patch` | Original, modifies `RunLoop.h` and `RunLoopGeneric.cpp` (BSD) | BSD-2-Clause; upstream candidate |
+| `patches/0017-webcore-threadable-loader-redirected-after-restart.patch` | Original, modifies `DocumentThreadableLoader.{h,cpp}` | Same as the modified files; upstream candidate |
+| `port/embedding/WebSocketChannelZeroG.*` | Upstream, derived from `Source/WebKit/WebProcess/Network/WebSocketChannel.cpp` (Apple) and `Source/WebKit/NetworkProcess/curl/WebSocketTaskCurl.cpp` (Sony) | BSD-2-Clause (Apple and Sony headers kept) |
 | `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from

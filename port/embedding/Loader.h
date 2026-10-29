@@ -141,7 +141,9 @@ Ref<WebCore::CookieJar> createCookieJar(Session&);
 // The session of the view a frame belongs to.
 Session& sessionForFrame(WebCore::LocalFrame*);
 
-// http and https over curl (LoaderCurl.cpp).
+// http and https over curl (LoaderCurl.cpp). Certificates are set up once,
+// before the first TLS connection (WebSockets included).
+void initializeCertificates();
 Ref<LoadTask> createNetworkTask(WebCore::ResourceLoader&);
 bool loadNetworkResourceSynchronously(Session&, const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);
 

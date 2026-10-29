@@ -11,9 +11,9 @@ design against the pinned WebKit revision lives in [docs/verification](docs/veri
 > Status: phase 2 — the `zg_*` C API (`include/zerog.h`) runs on Windows and
 > Linux: runtime and event loop, views in CPU, texture and window mode, input,
 > callbacks, direct JavaScript bindings, and the resource loader: the app's files
-> served from memory under `app://`, custom schemes, `data:`, and http/https over
-> curl with cookies. Registered fonts, downloads, WebSocket and authentication
-> are not there yet.
+> served from memory under `app://`, custom schemes, `data:`, http/https over
+> curl with cookies, and WebSockets (`ws://`, `wss://`). Registered fonts,
+> downloads, Blob URLs and HTTP authentication are not there yet.
 
 ## Layout
 
@@ -69,7 +69,7 @@ build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 | `ZeroGInput` | mouse (clicks, click count, `:hover`), focus, typing and editing commands (Backspace, arrows, Ctrl+A/Z/Shift+Z), key event properties, smooth wheel scrolling |
 | `ZeroGWindow` | window mode (SDL3 window, GPU presentation at vsync): rAF at the display's rate, presented image matches a CPU render, cursor and typing from window events, resizing reaches the page. On Linux: `xvfb-run -a ZeroGWindow` |
 | `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render |
-| `ZeroGLoader` | the resource loader: an `app://` page from memory (stylesheet, module scripts, fetch, range requests, compressed archive entries, percent-encoded paths, directory redirects, synchronous XHR, iframes), write-once files, `data:`, http over curl against a server in the test (CORS, redirects, cookies, a main-frame navigation). `ZEROG_ONLINE_TESTS=1` adds https to example.com |
+| `ZeroGLoader` | the resource loader: an `app://` page from memory (stylesheet, module scripts, fetch, range requests, compressed archive entries, percent-encoded paths, directory redirects, synchronous XHR, iframes), write-once files, `data:`, http over curl against a server in the test (CORS, redirects and `Response.redirected`, cookies, synchronous XHR, a main-frame navigation), WebSockets against the same server (subprotocol, handshake cookies, text, binary, a 100 KB message, the close handshake, refused and unreachable servers). `ZEROG_ONLINE_TESTS=1` adds https to example.com and `wss://` to a public echo server |
 | `ZeroGAPITest [--no-window]` | the C API from a C99 program: runtime, bindings (synchronous, JSON, BigInt, exceptions, a Promise settled from another thread), evaluate, emit, callbacks, input and IME, frames, files and archives (one packed by `tools/assets.py`), a scheme handler answering from another thread, trust by scheme, a window whose loop a binding ends. `linktest` also links it against the bundle |
 
 An application ships its frontend inside its binary: `tools/assets.py` packs a

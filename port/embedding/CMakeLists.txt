@@ -16,6 +16,7 @@ set(ZeroGEmbedding_SOURCES
     Surface.cpp
     SurfaceGL.cpp
     View.cpp
+    WebSocketChannelZeroG.cpp
     Window.cpp
 )
 

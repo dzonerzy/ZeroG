@@ -4,6 +4,7 @@
 #include "ChromeClientZeroG.h"
 #include "EditorClientZeroG.h"
 #include "FrameLoaderClientZeroG.h"
+#include "WebSocketChannelZeroG.h"
 #include <WebCore/FrameLoadRequest.h>
 #include <WebCore/FrameTree.h>
 #include <WebCore/FrameLoader.h>
@@ -61,6 +62,7 @@ static Ref<Page> createPage(View& view)
         return createFrameLoaderClient(frameLoader, view);
     };
     configuration.cookieJar = createCookieJar(view.session());
+    configuration.socketProvider = createSocketProvider();
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     return Page::create(WTF::move(configuration));

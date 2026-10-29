@@ -21,8 +21,13 @@
 #include "MemoryFS.h"
 #include "View.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <mutex>
+#include <vector>
+#include <wtf/SHA1.h>
+#include <wtf/text/Base64.h>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -122,6 +127,20 @@ constexpr Socket INVALID_SOCKET = -1;
 void closeSocket(Socket socket) { close(socket); }
 #endif
 
+// A loopback port nothing listens on (bound, then released).
+int unusedPort()
+{
+    Socket probe = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in address { };
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    bind(probe, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+    socklen_t length = sizeof(address);
+    getsockname(probe, reinterpret_cast<sockaddr*>(&address), &length);
+    closeSocket(probe);
+    return ntohs(address.sin_port);
+}
+
 class HTTPServer {
 public:
     HTTPServer()
@@ -155,6 +174,14 @@ public:
         connect(waker, reinterpret_cast<sockaddr*>(&address), sizeof(address));
         closeSocket(waker);
         m_thread.join();
+        {
+            // WebSockets still open end with the server.
+            std::lock_guard lock { m_lock };
+            for (auto socket : m_open)
+                shutdown(socket, 2);
+        }
+        for (auto& connection : m_connections)
+            connection.join();
         closeSocket(m_listener);
     }
 
@@ -173,6 +200,20 @@ private:
             }
             if (client == INVALID_SOCKET)
                 continue;
+            std::lock_guard lock { m_lock };
+            m_open.push_back(client);
+            m_connections.emplace_back([this, client] {
+                serve(client);
+                std::lock_guard lock { m_lock };
+                m_open.erase(std::find(m_open.begin(), m_open.end(), client));
+                closeSocket(client);
+            });
+        }
+    }
+
+    void serve(Socket client)
+    {
+        {
             std::string request;
             char buffer[4096];
             while (request.find("\r\n\r\n") == std::string::npos) {
@@ -180,6 +221,11 @@ private:
                 if (received <= 0)
                     break;
                 request.append(buffer, received);
+            }
+            if (request.find("\r\nUpgrade: websocket\r\n") != std::string::npos) {
+                ++m_requests;
+                webSocket(client, request);
+                return;
             }
             // The body, if any.
             auto headerEnd = request.find("\r\n\r\n");
@@ -198,7 +244,116 @@ private:
             auto path = request.substr(pathStart, request.find(' ', pathStart) - pathStart);
             auto response = respond(path, request);
             send(client, response.data(), static_cast<int>(response.size()), 0);
-            closeSocket(client);
+        }
+    }
+
+    static std::string header(const std::string& request, const std::string& name)
+    {
+        auto start = request.find("\r\n" + name + ": ");
+        if (start == std::string::npos)
+            return { };
+        start += name.size() + 4;
+        return request.substr(start, request.find("\r\n", start) - start);
+    }
+
+    static void sendFrame(Socket client, uint8_t opCode, const std::string& payload)
+    {
+        std::string frame;
+        frame += static_cast<char>(0x80 | opCode);
+        if (payload.size() < 126)
+            frame += static_cast<char>(payload.size());
+        else if (payload.size() < 65536) {
+            frame += static_cast<char>(126);
+            frame += static_cast<char>(payload.size() >> 8);
+            frame += static_cast<char>(payload.size());
+        } else {
+            frame += static_cast<char>(127);
+            for (int i = 7; i >= 0; --i)
+                frame += static_cast<char>(static_cast<uint64_t>(payload.size()) >> (8 * i));
+        }
+        frame += payload;
+        send(client, frame.data(), static_cast<int>(frame.size()), 0);
+    }
+
+    // An echo server: a welcome message with the handshake's cookies, then each
+    // text message back as "echo: ...", binary as is, pings answered, and the
+    // close handshake returned.
+    void webSocket(Socket client, const std::string& request)
+    {
+        auto pathStart = request.find(' ') + 1;
+        auto path = request.substr(pathStart, request.find(' ', pathStart) - pathStart);
+        if (path == "/ws-reject") {
+            auto rejected = response("403 Forbidden", "text/plain", "no");
+            send(client, rejected.data(), static_cast<int>(rejected.size()), 0);
+            return;
+        }
+        auto key = header(request, "Sec-WebSocket-Key");
+        SHA1 sha1;
+        auto accepted = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        sha1.addBytes(std::span { reinterpret_cast<const uint8_t*>(accepted.data()), accepted.size() });
+        SHA1::Digest digest;
+        sha1.computeHash(digest);
+        auto accept = base64EncodeToString(digest).utf8();
+        std::string handshake = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
+            + std::string(byteCast<char>(accept.data()), accept.length()) + "\r\n";
+        if (header(request, "Sec-WebSocket-Protocol").find("chat") != std::string::npos)
+            handshake += "Sec-WebSocket-Protocol: chat\r\n";
+        handshake += "Set-Cookie: fromsocket=4; Path=/\r\n\r\n";
+        send(client, handshake.data(), static_cast<int>(handshake.size()), 0);
+        sendFrame(client, 1, "welcome, cookies: " + header(request, "Cookie"));
+
+        std::string data;
+        char buffer[65536];
+        while (true) {
+            // A frame from the client: always masked.
+            while (true) {
+                if (data.size() >= 2) {
+                    uint64_t length = static_cast<uint8_t>(data[1]) & 0x7f;
+                    size_t offset = 2;
+                    if (length == 126 && data.size() >= 4) {
+                        length = static_cast<uint8_t>(data[2]) << 8 | static_cast<uint8_t>(data[3]);
+                        offset = 4;
+                    } else if (length == 127 && data.size() >= 10) {
+                        length = 0;
+                        for (int i = 0; i < 8; ++i)
+                            length = length << 8 | static_cast<uint8_t>(data[2 + i]);
+                        offset = 10;
+                    }
+                    if ((length < 126 || offset > 2) && data.size() >= offset + 4 + length)
+                        break;
+                }
+                auto received = recv(client, buffer, sizeof(buffer), 0);
+                if (received <= 0)
+                    return;
+                data.append(buffer, received);
+            }
+            uint8_t opCode = data[0] & 0x0f;
+            uint64_t length = static_cast<uint8_t>(data[1]) & 0x7f;
+            size_t offset = 2;
+            if (length == 126) {
+                length = static_cast<uint8_t>(data[2]) << 8 | static_cast<uint8_t>(data[3]);
+                offset = 4;
+            } else if (length == 127) {
+                length = 0;
+                for (int i = 0; i < 8; ++i)
+                    length = length << 8 | static_cast<uint8_t>(data[2 + i]);
+                offset = 10;
+            }
+            std::string payload = data.substr(offset + 4, length);
+            for (size_t i = 0; i < payload.size(); ++i)
+                payload[i] ^= data[offset + (i % 4)];
+            data.erase(0, offset + 4 + length);
+
+            if (opCode == 1)
+                sendFrame(client, 1, "echo: " + payload);
+            else if (opCode == 2)
+                sendFrame(client, 2, payload);
+            else if (opCode == 9)
+                sendFrame(client, 10, payload);
+            else if (opCode == 8) {
+                sendFrame(client, 8, payload);
+                return;
+            }
         }
     }
 
@@ -241,6 +396,9 @@ private:
     Socket m_listener { INVALID_SOCKET };
     int m_port { 0 };
     std::thread m_thread;
+    std::mutex m_lock;
+    std::vector<Socket> m_open;
+    std::vector<std::thread> m_connections;
     std::atomic<bool> m_stopping { false };
     std::atomic<int> m_requests { 0 };
 };
@@ -439,6 +597,26 @@ int main()
         auto sent = await(*view, "fetch('/echo-cookie').then(r => r.text())"_s);
         passed &= check(sent.contains("visible=1"_s) && sent.contains("hidden=2"_s) && sent.contains("script=3"_s), "cookies sent with requests: '%s'", sent.utf8().data());
 
+        // WebSockets.
+        auto ws = makeString("ws://127.0.0.1:"_s, server.port());
+        auto echo = await(*view, makeString("new Promise(resolve => { const log = []; const ws = new WebSocket('"_s, ws, "/echo', ['chat']);"
+            "ws.binaryType = 'arraybuffer';"
+            "ws.onopen = () => { log.push('open ' + ws.protocol); ws.send('hello'); ws.send(new Uint8Array([1, 2, 3])); ws.send('x'.repeat(100000)); };"
+            "ws.onmessage = e => { log.push(typeof e.data === 'string' ? (e.data.length > 1000 ? 'long ' + e.data.length : e.data) : 'binary ' + [...new Uint8Array(e.data)].join(','));"
+            "  if (log.length === 5) ws.close(1000, 'bye'); };"
+            "ws.onerror = () => log.push('error');"
+            "ws.onclose = e => { log.push(`close ${e.code} ${e.reason} ${e.wasClean}`); resolve(log.join('|')); }; })"_s));
+        passed &= check(echo.startsWith("open chat|welcome, cookies: "_s) && echo.contains("hidden=2"_s)
+            && echo.endsWith("|echo: hello|binary 1,2,3|long 100006|close 1000 bye true"_s), "WebSocket echo: %s", echo.utf8().data());
+        auto socketCookie = view->evaluateScript("document.cookie"_s);
+        passed &= check(socketCookie.contains("fromsocket=4"_s), "the handshake's Set-Cookie is stored: %s", socketCookie.utf8().data());
+        auto rejected = await(*view, makeString("new Promise(resolve => { const log = []; const ws = new WebSocket('"_s, ws, "/ws-reject');"
+            "ws.onerror = () => log.push('error'); ws.onclose = e => { log.push(`close ${e.code} ${e.wasClean}`); resolve(log.join('|')); }; })"_s));
+        passed &= check(rejected == "error|close 1006 false"_s, "a refused handshake fails: %s", rejected.utf8().data());
+        auto unreachable = await(*view, makeString("new Promise(resolve => { const log = []; const ws = new WebSocket('ws://127.0.0.1:"_s, unusedPort(), "/');"
+            "ws.onerror = () => log.push('error'); ws.onclose = e => { log.push(`close ${e.code}`); resolve(log.join('|')); }; })"_s));
+        passed &= check(unreachable == "error|close 1006"_s, "an unreachable server fails: %s", unreachable.utf8().data());
+
         // Synchronous XMLHttpRequest over http: on its own curl handle.
         constexpr auto syncXHR = "(method, url, body) => { const x = new XMLHttpRequest(); x.open(method, url, false); x.send(body); "
             "return `${x.status} ${new URL(x.responseURL).pathname} ${x.responseText}`; }"_s;
@@ -461,6 +639,10 @@ int main()
         if (auto* online = std::getenv("ZEROG_ONLINE_TESTS"); online && *online == '1') {
             passed &= check(load(*view, client, "https://example.com/"_s), "https://example.com/ loads (certificate verified)");
             passed &= check(view->evaluateScript("document.title"_s).contains("Example"_s), "its title: %s", view->evaluateScript("document.title"_s).utf8().data());
+            auto secure = await(*view, "new Promise(resolve => { const ws = new WebSocket('wss://ws.postman-echo.com/raw');"
+                "ws.onopen = () => ws.send('over tls'); ws.onmessage = e => { resolve(e.data); ws.close(); };"
+                "ws.onerror = () => resolve('error'); })"_s);
+            passed &= check(secure == "over tls"_s, "wss:// echo (certificate verified): %s", secure.utf8().data());
         }
     }
 
