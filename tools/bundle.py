@@ -60,15 +60,50 @@ def is_public(name, patterns):
     return any(fnmatch.fnmatchcase(name, p) for p in patterns)
 
 
+def archive_members(path):
+    """(name, data) of every member of a GNU/COFF `ar` archive, in order. Names may
+    repeat inside one archive (two foo.cpp in different directories), which `ar x`
+    would extract over each other; on Windows so would names differing in case."""
+    data = Path(path).read_bytes()
+    if not data.startswith(b"!<arch>\n"):
+        sys.exit(f"{path}: not an ar archive (thin archives are not supported)")
+    offset, long_names = 8, b""
+    while offset + 60 <= len(data):
+        header = data[offset:offset + 60]
+        name = header[:16].decode("latin-1").rstrip()
+        size = int(header[48:58].decode("latin-1").strip())
+        body = data[offset + 60:offset + 60 + size]
+        offset += 60 + size + (size & 1)
+        if name in ("/", "/SYM64/", "__.SYMDEF", "__.SYMDEF SORTED") or name.startswith("/<"):
+            continue  # symbol tables, ECSYMBOLS
+        if name == "//":
+            long_names = body
+            continue
+        if name.startswith("/") and name[1:].isdigit():
+            # GNU ends long names with "/\n", MSVC's lib.exe and llvm-lib with NUL.
+            start = int(name[1:])
+            ends = [e for e in (long_names.find(b"\n", start), long_names.find(b"\0", start)) if e >= 0]
+            name = long_names[start:min(ends) if ends else None].decode("latin-1").rstrip("/")
+        elif name.startswith("#1/"):  # BSD: the name precedes the data
+            length = int(name[3:])
+            name, body = body[:length].rstrip(b"\0").decode("latin-1"), body[length:]
+        yield name.rstrip("/"), body
+
+
 def extract_archives(archives, work, ar):
-    """Members of each archive, extracted into its own directory (names may repeat
-    across archives)."""
+    """Members of each archive, each in its own file: index-prefixed, so repeated
+    names inside or across archives do not overwrite each other."""
     objects = []
     for index, archive in enumerate(archives):
         dest = work / "members" / f"{index}-{Path(archive).stem}"
         dest.mkdir(parents=True)
-        run([ar, "x", Path(archive).resolve()], cwd=dest)
-        objects += sorted(p for p in dest.iterdir() if p.suffix in (".o", ".obj", ".ao"))
+        for member, (name, body) in enumerate(archive_members(archive)):
+            base = Path(name.replace("\\", "/")).name
+            if Path(base).suffix not in (".o", ".obj", ".ao"):
+                continue
+            target = dest / f"{member:05d}-{base}"
+            target.write_bytes(body)
+            objects.append(target)
     return objects
 
 
@@ -137,8 +172,9 @@ def rewrite_directives(text, renamed, patterns):
         name = re.match(r"(?i)[-/]export:\"?([^,\"]+)", token)
         if name and not is_public(name.group(1), patterns):
             continue
-        out.append(re.sub(r"(?<=[:=,])([^\s:=,\"]+)",
-                          lambda m: "zg_" + m.group(1) if m.group(1) in renamed else m.group(1), token))
+        # Names may be quoted: /INCLUDE:"?name@@...".
+        out.append(re.sub(r"(?<=[:=,])(\"?)([^\s:=,\"]+)",
+                          lambda m: m.group(1) + ("zg_" + m.group(2) if m.group(2) in renamed else m.group(2)), token))
     return " ".join(out) + " "
 
 
@@ -192,7 +228,9 @@ def bundle_coff(objects, patterns, out, work):
     renamed = {s for s in defined
                if not s.startswith(WINDOWS_KEEP_PREFIXES) and s not in keep and not is_public(s, patterns)}
     mapping = work / "redefine-syms.txt"
-    mapping.write_text("".join(f"{s} zg_{s}\n" for s in sorted(renamed)))
+    # A dllimport reference to a function the bundle defines (__imp_<name>, which
+    # the linker resolves to the local definition) follows its rename.
+    mapping.write_text("".join(f"{s} zg_{s}\n__imp_{s} __imp_zg_{s}\n" for s in sorted(renamed)))
     with ThreadPoolExecutor(max_workers=os.cpu_count() or 8) as pool:
         rewrote = sum(pool.map(lambda args: rename_coff_object(objcopy, *args, mapping, renamed, patterns, work),
                                zip(objects, outputs, texts)))

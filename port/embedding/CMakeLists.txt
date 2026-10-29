@@ -7,6 +7,7 @@ set(ZeroGEmbedding_SOURCES
     ChromeClientZeroG.cpp
     EditorClientZeroG.cpp
     Embedding.cpp
+    FrameLoaderClientZeroG.cpp
     KeyboardSDL.cpp
     PlatformStrategiesZeroG.cpp
     Surface.cpp

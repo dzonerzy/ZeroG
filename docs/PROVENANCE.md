@@ -45,6 +45,8 @@ under `patches/` is listed here when it is created.
 | `port/embedding/KeyboardSDL.*`, `tests/render/input.cpp` | Original | BSD-2-Clause |
 | `port/embedding/EditorClientZeroG.*` | Upstream, derived from `EmptyEditorClient` (`Source/WebCore/loader/EmptyClients.cpp`) and the key bindings of `Source/WebKit/WebProcess/WebPage/win/WebPageWin.cpp` | BSD-2-Clause (Apple and Sony headers kept) |
 | `port/embedding/ChromeClientZeroG.*` | Upstream, derived from `EmptyChromeClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple header kept) |
+| `port/embedding/FrameLoaderClientZeroG.*` | Upstream, derived from `EmptyFrameLoaderClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple, Eric Seidel, Nokia and Samsung headers kept) |
+| `port/api/*`, `tests/api/*` | Original | BSD-2-Clause |
 | `patches/0015-webcore-embedder-frame-time.patch` | Original, modifies `Page.{h,cpp}` and `LocalDOMWindow.{h,cpp}` | Same as the modified files; upstream candidate |
 | `patches/0016-wtf-generic-run-loop-next-wake-up-time.patch` | Original, modifies `RunLoop.h` and `RunLoopGeneric.cpp` (BSD) | BSD-2-Clause; upstream candidate |
 | `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |

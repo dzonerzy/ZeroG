@@ -38,7 +38,7 @@ bool initializeVideo()
         if (!SDL_Init(SDL_INIT_VIDEO))
             return false;
         s_wakeUpEvent = SDL_RegisterEvents(1);
-        RunLoop::setWakeUpCallback([] {
+        addWakeUpObserver([] {
             if (s_wakeUpPending.exchange(true))
                 return;
             SDL_Event event { };
@@ -227,6 +227,11 @@ void Window::setTitle(const String& title)
 {
     auto utf8 = title.utf8();
     SDL_SetWindowTitle(m_window, byteCast<char>(utf8.data()));
+}
+
+void Window::setFullscreen(bool fullscreen)
+{
+    SDL_SetWindowFullscreen(m_window, fullscreen);
 }
 
 void Window::setSize(const IntSize& size)

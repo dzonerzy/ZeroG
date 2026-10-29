@@ -234,6 +234,44 @@ def bundle_path(out):
     return out / "lib" / ("zerog-engine.lib" if IS_WINDOWS else "libzerog-engine.a")
 
 
+def bundle_libs_path(out):
+    """System libraries an application links with the bundle, one per line."""
+    return out / "lib" / "zerog-engine.libs.txt"
+
+
+# The C API test program links exactly what an application of the full engine
+# needs: its link line in build.ninja lists every engine object (JavaScriptCore's
+# OBJECT libraries included), every static archive and the system libraries.
+API_LINK_TARGET = "ZeroGAPITest"
+
+
+def link_inputs(out, name):
+    """(objects, static archives, system libraries) of an executable's link."""
+    exe = f"bin\\{name}.exe" if IS_WINDOWS else f"bin/{name}"
+    lines = (out / "build.ninja").read_text().splitlines()
+    start = next((i for i, l in enumerate(lines) if l.startswith(f"build {exe}:")), None)
+    if start is None:
+        sys.exit(f"{exe} not in build.ninja: build the {name} target first")
+    link_libraries = ""
+    for line in lines[start + 1:]:
+        if not line.startswith("  "):
+            break
+        if line.strip().startswith("LINK_LIBRARIES ="):
+            link_libraries = line.split("=", 1)[1]
+    objects, archives, system = [], [], []
+    for token in link_libraries.replace("$ ", "\0").split():
+        token = token.replace("\0", " ")
+        path = Path(token) if Path(token).is_absolute() else out / token
+        if token.endswith((".obj", ".o")):
+            objects.append(path.resolve())
+        elif token.endswith((".lib", ".a")) and path.exists():
+            if path.resolve() not in archives:
+                archives.append(path.resolve())
+        elif token not in system:
+            system.append(token)
+    return objects, archives, system
+
+
 def icu_archives(icu_data):
     """Static ICU libraries for an ICU data profile, or ICU's stock data (None)."""
     lib = SYSROOT / TRIPLET / "lib"
@@ -269,12 +307,19 @@ def cmd_bundle(args):
     bundle with a plain C driver, and their own C++ runtime, if any, stays separate."""
     out = build_dir(args)
     rsp = out / "zerog-engine.rsp"
-    rsp.write_text("".join(f'"{o.as_posix()}"\n' for o in engine_objects(out)))
+    if args.port == "ZeroG":
+        # The whole engine: WebCore, the embedding layer, the C API and every
+        # dependency, as the C API test links them.
+        objects, archives, system = link_inputs(out, API_LINK_TARGET)
+    else:
+        objects, archives, system = engine_objects(out), icu_archives(ICU_DATA[args.profile]), []
+    rsp.write_text("".join(f'"{o.as_posix()}"\n' for o in objects))
     runtime = zig_cxx_runtime(out) if not IS_WINDOWS and os.environ.get("ZEROG_ZIG_TARGET") else []
     run([sys.executable, ROOT / "tools" / "bundle.py", "--objects", rsp,
-         "--archives", *icu_archives(ICU_DATA[args.profile]), *runtime,
+         "--archives", *archives, *runtime,
          "--exports", ROOT / "port" / "api" / "exports.txt",
          "--out", bundle_path(out), "--work", out / "bundle"], env=build_env())
+    bundle_libs_path(out).write_text("".join(f"{s}\n" for s in system))
 
 
 def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runtime=True):
@@ -343,7 +388,17 @@ def cmd_linktest(args):
                       [headers, include], [bundle_path(out), *icu_archives(None)], linker="link")
         run([host])
 
-    # 3. The filtered ICU data opens every converter WebCore routes to ICU.
+    # 3. The C API test, a C program that sees only include/zerog.h, linked with the
+    #    bundle and the system libraries it lists: the full engine, nothing else.
+    if args.port == "ZeroG":
+        system = [l for l in bundle_libs_path(out).read_text().splitlines() if l]
+        api = link_c(args, out, "zerog-api-bundle", [ROOT / "tests" / "api" / "api_test.c"], [ROOT / "include"],
+                     [bundle_path(out), *system], cxx_runtime=bool(IS_WINDOWS or not os.environ.get("ZEROG_ZIG_TARGET")))
+        check_no_exports(api)
+        # The window part needs a display (a desktop, or Xvfb on Linux).
+        run([api, *([] if IS_WINDOWS or os.environ.get("DISPLAY") else ["--no-window"])])
+
+    # 4. The filtered ICU data opens every converter WebCore routes to ICU.
     conv = link_c(args, out, "zerog-icu-converters", [tests / "icu_converters.c"], [include],
                   icu_archives(icu_data))
     sys.path.insert(0, str(ROOT / "tools"))

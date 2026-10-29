@@ -8,15 +8,16 @@ presented (native window, game texture, overlay).
 The full design is in [ZeroG.md](ZeroG.md) (Italian). Verification of the
 design against the pinned WebKit revision lives in [docs/verification](docs/verification).
 
-> Status: phase 1 — WebCore renders HTML, CSS, JavaScript and text to a PNG on
-> Windows and Linux, on the CPU or the GPU (`tests/render/first_render.cpp`).
-> No public API yet.
+> Status: phase 2 — the first `zg_*` C API (`include/zerog.h`) runs on Windows
+> and Linux: runtime and event loop, views in CPU, texture and window mode,
+> input, callbacks and direct JavaScript bindings. Pages come from HTML strings;
+> URL loading, app assets and custom schemes come with the resource loader.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
-| `include/zerog.h` | Public C API (`zg_*`), draft until phase 2 |
+| `include/zerog.h` | Public C API (`zg_*`) |
 | `port/overlay/` | New files added to the WebKit tree (`Options<Port>.cmake`, `Platform<Port>.cmake`, …), mirroring its layout |
 | `port/platform/` | Platform layer: GPU contexts for Skia, fonts, clipboard, cursor, IME, timers |
 | `port/embedding/` | Embedding layer: `Page`, `LocalFrame`, WebCore clients, resource loader |
@@ -66,6 +67,7 @@ build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 | `ZeroGInput` | mouse (clicks, click count, `:hover`), focus, typing and editing commands (Backspace, arrows, Ctrl+A/Z/Shift+Z), key event properties, smooth wheel scrolling |
 | `ZeroGWindow` | window mode (SDL3 window, GPU presentation at vsync): rAF at the display's rate, presented image matches a CPU render, cursor and typing from window events, resizing reaches the page. On Linux: `xvfb-run -a ZeroGWindow` |
 | `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render |
+| `ZeroGAPITest [--no-window]` | the C API from a C99 program: runtime, bindings (synchronous, JSON, BigInt, exceptions, a Promise settled from another thread), evaluate, emit, callbacks, input and IME, frames, a window whose loop a binding ends. `linktest` also links it against the bundle |
 
 `--profile minimal|standard|dev` selects the build profile and its ICU data;
 `--port JSCOnly` builds the upstream reference port.

@@ -6,6 +6,8 @@
 
 #include <WebCore/IntSize.h>
 #include <wtf/Forward.h>
+#include <wtf/Function.h>
+#include <wtf/URL.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
 
@@ -16,9 +18,17 @@ class Page;
 
 namespace ZeroG {
 
+struct ProcessOptions {
+    bool jit { true };
+};
+
 // Initializes WTF, JSC and WebCore for this process. Call once, on the thread that
-// becomes the main thread; later calls do nothing.
-void initializeProcess();
+// becomes the main thread; later calls do nothing (and ignore their options).
+void initializeProcess(const ProcessOptions& = { });
+
+// Called, on any thread, whenever engine work is posted to the main thread
+// (network replies, tasks from workers): loops waiting for events wake up.
+void addWakeUpObserver(Function<void()>&&);
 
 // Runs the engine's pending work on the main thread without waiting: expired
 // timers (animations, setTimeout) and tasks posted from other threads. Texture
@@ -33,8 +43,9 @@ struct PageOptions {
 
 Ref<WebCore::Page> createPage(const PageOptions&);
 
-// Replaces the main frame's document with `html` and lays it out.
-void loadHTML(WebCore::Page&, const String& html);
+// Replaces the main frame's document with `html` and lays it out. `baseURL` is the
+// document's URL (its origin and the base of relative URLs); empty is about:blank.
+void loadHTML(WebCore::Page&, const String& html, const URL& baseURL = { });
 
 // Runs `script` in the main frame's normal world and returns the result as a
 // string, or a null string when scripts are disabled or the script throws.

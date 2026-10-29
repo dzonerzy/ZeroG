@@ -33,23 +33,49 @@
 #include <mutex>
 #include <pal/SessionID.h>
 #include <wtf/MainThread.h>
+#include <JavaScriptCore/Options.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace ZeroG {
 
 using namespace WebCore;
 
-void initializeProcess()
+static Lock s_wakeUpLock;
+static Vector<Function<void()>>& wakeUpObservers() WTF_REQUIRES_LOCK(s_wakeUpLock)
+{
+    static NeverDestroyed<Vector<Function<void()>>> observers;
+    return observers;
+}
+
+void initializeProcess(const ProcessOptions& options)
 {
     static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    std::call_once(onceFlag, [&] {
+        JSC::Options::initialize([&] {
+            if (!options.jit)
+                JSC::Options::useJIT() = false;
+        });
         JSC::initialize();
         WTF::initializeMainThread();
         installPlatformStrategies();
         populateJITOperations();
         ProcessWarming::prewarmGlobally();
+        RunLoop::setWakeUpCallback([] {
+            Locker locker { s_wakeUpLock };
+            for (auto& observer : wakeUpObservers())
+                observer();
+        });
     });
+}
+
+void addWakeUpObserver(Function<void()>&& observer)
+{
+    Locker locker { s_wakeUpLock };
+    wakeUpObservers().append(WTF::move(observer));
 }
 
 void runPendingWork()
@@ -80,7 +106,7 @@ Ref<Page> createPage(const PageOptions& options)
     return page;
 }
 
-void loadHTML(Page& page, const String& html)
+void loadHTML(Page& page, const String& html, const URL& baseURL)
 {
     RefPtr frame = page.localMainFrame();
     RELEASE_ASSERT(frame);
@@ -89,7 +115,7 @@ void loadHTML(Page& page, const String& html)
 
     auto& writer = activeDocumentLoader->writer();
     writer.setMIMEType("text/html"_s);
-    writer.begin();
+    writer.begin(baseURL);
     writer.insertDataSynchronously(html);
     writer.end();
 

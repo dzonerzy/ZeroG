@@ -13,14 +13,44 @@
 #include <WebCore/Region.h>
 #include <memory>
 #include <wtf/MonotonicTime.h>
+#include <optional>
+#include <wtf/Function.h>
 #include <wtf/Ref.h>
+#include <wtf/URL.h>
 #include <wtf/text/WTFString.h>
 
+namespace JSC {
+enum class MessageLevel : uint8_t;
+enum class MessageSource : uint8_t;
+}
+
 namespace WebCore {
+class LocalFrame;
 class Page;
 }
 
 namespace ZeroG {
+
+// What a view reports to its embedder (the C API maps it onto zg_view_callbacks).
+// Every call happens on the engine thread.
+class ViewClient {
+public:
+    virtual ~ViewClient() = default;
+    virtual void consoleMessage(JSC::MessageSource, JSC::MessageLevel, const String& /* message */, unsigned /* line */, unsigned /* column */, const String& /* sourceURL */) { }
+    virtual void cursorChanged(WebCore::PlatformCursorType) { }
+    virtual void tooltipChanged(const String&) { }
+    virtual void titleChanged(const String&) { }
+    virtual void loadFinished(const URL&, bool /* failed */) { }
+    // A navigation of the main frame or an iframe; false blocks it.
+    virtual bool allowNavigation(const URL&, bool /* isMainFrame */) { return true; }
+    // Links and window.open targeting a new window.
+    virtual void openExternal(const URL&) { }
+    // A frame's window object was (re)created: bindings are installed here.
+    virtual void windowObjectCleared(WebCore::LocalFrame&) { }
+    virtual void alert(const String&) { }
+    virtual bool confirm(const String&) { return false; }
+    virtual std::optional<String> prompt(const String& /* message */, const String& /* defaultValue */) { return std::nullopt; }
+};
 
 class View {
     WTF_MAKE_NONCOPYABLE(View);
@@ -40,7 +70,7 @@ public:
     WebCore::IntSize size() const { return m_size; }
     float scale() const { return m_scale; }
 
-    void loadHTML(const String&);
+    void loadHTML(const String&, const URL& baseURL = { });
     String evaluateScript(const String&);
 
     void resize(const WebCore::IntSize&);
@@ -80,6 +110,10 @@ public:
 
     void setFocused(bool);
 
+    // Not owned; null restores the default (silent) client.
+    void setClient(ViewClient*);
+    ViewClient& client() { return m_client ? *m_client : s_defaultClient; }
+
     // The cursor the page wants over its current mouse position.
     WebCore::PlatformCursorType cursor() const { return m_cursor; }
     void setCursorChangedCallback(Function<void(WebCore::PlatformCursorType)>&& callback) { m_cursorChanged = WTF::move(callback); }
@@ -108,6 +142,8 @@ private:
     bool m_needsRenderingUpdate { true };
     WebCore::Region m_damage; // logical pixels
     uint64_t m_lastPaintedArea { 0 };
+    ViewClient* m_client { nullptr };
+    static ViewClient s_defaultClient;
     WebCore::PlatformCursorType m_cursor { WebCore::PlatformCursorType::Pointer };
     Function<void(WebCore::PlatformCursorType)> m_cursorChanged;
 };

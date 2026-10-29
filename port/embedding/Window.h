@@ -51,6 +51,7 @@ public:
 
     void setTitle(const String&);
     void setSize(const WebCore::IntSize&); // logical pixels
+    void setFullscreen(bool);
     Seconds refreshInterval() const { return m_refreshInterval; }
     void* nativeHandle() const; // HWND, X11 Window, wl_surface*
 

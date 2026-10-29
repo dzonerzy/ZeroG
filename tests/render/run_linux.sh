@@ -31,6 +31,8 @@ run "frame loop" "$bin/ZeroGFrameLoop"
 run "texture mode" "$bin/ZeroGTexture"
 run "input" "$bin/ZeroGInput"
 run "window on X11" xvfb-run -a "$bin/ZeroGWindow"
+run "C API" xvfb-run -a "$bin/ZeroGAPITest"
+run "C API without a display" "$bin/ZeroGAPITest" --no-window
 
 export XDG_RUNTIME_DIR=/tmp/zerog-xdg
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"

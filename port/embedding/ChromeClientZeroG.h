@@ -68,7 +68,7 @@ private:
     bool isPopup() const final { return false; }
     void setResizable(bool) final { }
 
-    void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String&, unsigned, unsigned, const String&) final { }
+    void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String&, unsigned, unsigned, const String&) final;
 
     bool canRunBeforeUnloadConfirmPanel() final { return false; }
     bool runBeforeUnloadConfirmPanel(String&&, WebCore::LocalFrame&) final { return true; }
@@ -76,9 +76,9 @@ private:
     void rootFrameAdded(const WebCore::LocalFrame&) final { }
     void rootFrameRemoved(const WebCore::LocalFrame&) final { }
 
-    void runJavaScriptAlert(WebCore::LocalFrame&, const String&) final { }
-    bool runJavaScriptConfirm(WebCore::LocalFrame&, const String&) final { return false; }
-    bool runJavaScriptPrompt(WebCore::LocalFrame&, const String&, const String&, String&) final { return false; }
+    void runJavaScriptAlert(WebCore::LocalFrame&, const String&) final;
+    bool runJavaScriptConfirm(WebCore::LocalFrame&, const String&) final;
+    bool runJavaScriptPrompt(WebCore::LocalFrame&, const String&, const String&, String&) final;
 
     RefPtr<WebCore::PopupMenu> createPopupMenu(WebCore::PopupMenuClient&) const final;
     RefPtr<WebCore::SearchPopupMenu> createSearchPopupMenu(WebCore::PopupMenuClient&) const final;
@@ -108,7 +108,7 @@ private:
     void contentsSizeChanged(WebCore::LocalFrame&, const WebCore::IntSize&) const final { }
     void intrinsicContentsSizeChanged(const WebCore::IntSize&) const final { }
 
-    void mouseDidMoveOverElement(const WebCore::HitTestResult&, OptionSet<WebCore::PlatformEventModifier>, const String&, WebCore::TextDirection) final { }
+    void mouseDidMoveOverElement(const WebCore::HitTestResult&, OptionSet<WebCore::PlatformEventModifier>, const String&, WebCore::TextDirection) final;
     void print(WebCore::LocalFrame&, const WebCore::StringWithDirection&) final { }
     void exceededDatabaseQuota(WebCore::LocalFrame&, const String&, WebCore::DatabaseDetails) final { }
 
@@ -150,6 +150,7 @@ private:
     RefPtr<WebCore::Icon> createIconForFiles(const Vector<String>&) final { return nullptr; }
 
     View* m_view;
+    String m_toolTip;
 };
 
 } // namespace ZeroG

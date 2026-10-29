@@ -30,7 +30,10 @@
 #include "ChromeClientZeroG.h"
 
 #include "View.h"
+#include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/Cursor.h>
+#include <WebCore/HitTestResult.h>
+#include <WebCore/LocalFrame.h>
 #include <WebCore/PopupMenu.h>
 #include <WebCore/SearchPopupMenu.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -117,6 +120,42 @@ RefPtr<PopupMenu> ChromeClientZeroG::createPopupMenu(PopupMenuClient&) const
 RefPtr<SearchPopupMenu> ChromeClientZeroG::createSearchPopupMenu(PopupMenuClient&) const
 {
     return adoptRef(*new SearchPopupMenuZeroG);
+}
+
+void ChromeClientZeroG::addMessageToConsole(JSC::MessageSource source, JSC::MessageLevel level, const String& message, unsigned line, unsigned column, const String& sourceURL)
+{
+    if (m_view)
+        m_view->client().consoleMessage(source, level, message, line, column, sourceURL);
+}
+
+void ChromeClientZeroG::runJavaScriptAlert(LocalFrame&, const String& message)
+{
+    if (m_view)
+        m_view->client().alert(message);
+}
+
+bool ChromeClientZeroG::runJavaScriptConfirm(LocalFrame&, const String& message)
+{
+    return m_view && m_view->client().confirm(message);
+}
+
+bool ChromeClientZeroG::runJavaScriptPrompt(LocalFrame&, const String& message, const String& defaultValue, String& result)
+{
+    if (!m_view)
+        return false;
+    auto reply = m_view->client().prompt(message, defaultValue);
+    if (!reply)
+        return false;
+    result = WTF::move(*reply);
+    return true;
+}
+
+void ChromeClientZeroG::mouseDidMoveOverElement(const HitTestResult&, OptionSet<PlatformEventModifier>, const String& toolTip, TextDirection)
+{
+    if (!m_view || toolTip == m_toolTip)
+        return;
+    m_toolTip = toolTip;
+    m_view->client().tooltipChanged(toolTip);
 }
 
 void ChromeClientZeroG::setCursor(const Cursor& cursor)

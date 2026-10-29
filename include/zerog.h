@@ -168,6 +168,10 @@ ZG_API zg_native_handle zg_runtime_wakeup_handle(zg_runtime *rt);
    Lets an idle host wait on the wakeup handle with a precise timeout. */
 ZG_API int64_t zg_runtime_next_timeout(zg_runtime *rt);
 
+/* The engine's monotonic clock, in milliseconds: the clock of zg_view_render's
+   frame times and of performance.now() (from another origin). Any thread. */
+ZG_API double zg_runtime_now_ms(void);
+
 typedef struct zg_memory_stats {
     size_t size;
     size_t js_heap_bytes;
@@ -262,7 +266,14 @@ typedef enum zg_surface_kind {
 typedef struct zg_surface_config {
     size_t size;
     zg_surface_kind kind;
-    void *device;          /* host GPU device for the kind, NULL = engine creates one */
+    /* Host GPU device for the kind:
+       ZG_SURFACE_D3D11: an ID3D11Device* on ANGLE's adapter, or NULL for one the
+         engine creates (zg_surface_device). Frames carry the texture opened on it,
+         already acquired through its keyed mutex.
+       ZG_SURFACE_GL: the application's EGLDisplay (required); frames carry an
+         EGLImage for glEGLImageTargetTexture2DOES and an EGLSync to eglWaitSync on.
+         Release frames with the context that used them current. */
+    void *device;
     unsigned buffer_count; /* 2 or 3, 0 = 2 */
 } zg_surface_config;
 
@@ -278,12 +289,16 @@ typedef struct zg_frame {
     zg_native_handle shared_handle;
     /* region changed since the previous acquired frame, physical pixels */
     int dirty_x, dirty_y, dirty_w, dirty_h;
+    /* rows run top to bottom (row 0 is the top of the view) in every kind */
+    void *internal;            /* engine-owned: identifies the frame in release */
 } zg_frame;
 
 /* Any thread: take the newest ready frame, or ZG_ERROR_NOT_FOUND if none.
    The frame stays valid until zg_surface_release. */
 ZG_API zg_result zg_surface_acquire(zg_surface *surface, zg_frame *out);
 ZG_API void zg_surface_release(zg_surface *surface, const zg_frame *frame);
+/* The device frames are given for (ZG_SURFACE_D3D11: ID3D11Device*), NULL otherwise. */
+ZG_API void *zg_surface_device(zg_surface *surface);
 
 /* ------------------------------------------------------------------------ */
 /* Views                                                                     */
@@ -338,10 +353,13 @@ typedef enum zg_mouse_event_type {
     ZG_MOUSE_MOVE, ZG_MOUSE_DOWN, ZG_MOUSE_UP
 } zg_mouse_event_type;
 
-/* Coordinates in logical view pixels. */
+/* Coordinates in logical view pixels. For ZG_MOUSE_MOVE, `button` is the button
+   held down (drags), ZG_MOUSE_NONE otherwise. */
 ZG_API void zg_view_mouse_event(zg_view *view, zg_mouse_event_type type,
                                 float x, float y, zg_mouse_button button,
                                 unsigned click_count, unsigned modifiers);
+/* Signs as DOM WheelEvent: positive delta_y scrolls down, positive delta_x right.
+   `precise` nonzero: deltas in logical pixels (touchpads); zero: in wheel notches. */
 ZG_API void zg_view_scroll_event(zg_view *view, float x, float y,
                                  float delta_x, float delta_y, int precise,
                                  unsigned modifiers);
@@ -351,7 +369,8 @@ typedef enum zg_key_event_type {
 } zg_key_event_type;
 
 /* `key` and `code` follow the DOM KeyboardEvent.key / .code strings;
-   `text` is the produced text for ZG_KEY_CHAR. */
+   `text` is the produced text for ZG_KEY_CHAR, sent after its ZG_KEY_DOWN (as
+   WM_KEYDOWN and WM_CHAR); `key` and `code` may be NULL for it. */
 ZG_API void zg_view_key_event(zg_view *view, zg_key_event_type type,
                               const char *key, const char *code,
                               const char *text, unsigned modifiers, int is_repeat);
@@ -462,6 +481,7 @@ ZG_API void zg_promise_reject(zg_promise *p, const char *message);
 /* ---- Values returned by zg_view_evaluate (caller-owned) ---- */
 
 ZG_API zg_value_type zg_value_type_of(const zg_value *v);
+/* JSON of the value; "null" for undefined and functions. Lives as long as `v`. */
 ZG_API const char   *zg_value_to_json(zg_value *v, size_t *len);
 ZG_API void          zg_value_release(zg_value *v);
 

@@ -97,6 +97,25 @@ View::Modifiers modifiersFromSDL(unsigned sdlModifiers)
     return modifiers;
 }
 
+int windowsKeyCodeForDOMCode(const String& code)
+{
+    if (code.length() == 4 && code.startsWith("Key"_s) && isASCIIUpper(code[3]))
+        return code[3];
+    if (code.length() == 6 && code.startsWith("Digit"_s) && isASCIIDigit(code[5]))
+        return code[5];
+    if (code.length() == 7 && code.startsWith("Numpad"_s) && isASCIIDigit(code[6]))
+        return VK_NUMPAD0 + (code[6] - '0');
+    for (int i = 0; i < 12; ++i) {
+        if (code == functionKeyName(i))
+            return VK_F1 + i;
+    }
+    for (auto& info : keys) {
+        if (code == info.code)
+            return info.windowsKeyCode;
+    }
+    return 0;
+}
+
 View::KeyEvent keyEventFromSDL(unsigned scancodeValue, unsigned sdlModifiers, bool repeat)
 {
     auto scancode = static_cast<SDL_Scancode>(scancodeValue);

@@ -3,6 +3,9 @@
 
 #include "ChromeClientZeroG.h"
 #include "EditorClientZeroG.h"
+#include "FrameLoaderClientZeroG.h"
+#include <WebCore/FrameLoader.h>
+#include <WebCore/LocalFrameLoaderClient.h>
 #include <WebCore/EventHandler.h>
 #include <WebCore/FocusController.h>
 #include <WebCore/HandleUserInputEventResult.h>
@@ -47,7 +50,11 @@ static Ref<Page> createPage(View& view)
     auto configuration = pageConfigurationWithEmptyClients(std::nullopt, PAL::SessionID::defaultSessionID());
     // The empty clients are made for SVG images, whose frames are fully sandboxed;
     // a ZeroG page is the application's own UI.
-    std::get<PageConfiguration::LocalMainFrameCreationParameters>(configuration.mainFrameCreationParameters).effectiveSandboxFlags = { };
+    auto& mainFrameParameters = std::get<PageConfiguration::LocalMainFrameCreationParameters>(configuration.mainFrameCreationParameters);
+    mainFrameParameters.effectiveSandboxFlags = { };
+    mainFrameParameters.clientCreator = [&view](auto&, auto& frameLoader) {
+        return createFrameLoaderClient(frameLoader, view);
+    };
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     return Page::create(WTF::move(configuration));
@@ -87,9 +94,18 @@ View::View(Configuration&& configuration)
     invalidateAll();
 }
 
+ViewClient View::s_defaultClient;
+
 View::~View()
 {
     static_cast<ChromeClientZeroG&>(m_page->chrome().client()).detachFromView();
+    if (RefPtr frame = m_page->localMainFrame())
+        detachFrameLoaderClient(frame->loader().client());
+}
+
+void View::setClient(ViewClient* client)
+{
+    m_client = client;
 }
 
 IntSize View::physicalSize() const
@@ -97,9 +113,9 @@ IntSize View::physicalSize() const
     return { static_cast<int>(std::ceil(m_size.width() * m_scale)), static_cast<int>(std::ceil(m_size.height() * m_scale)) };
 }
 
-void View::loadHTML(const String& html)
+void View::loadHTML(const String& html, const URL& baseURL)
 {
-    ZeroG::loadHTML(m_page, html);
+    ZeroG::loadHTML(m_page, html, baseURL);
     invalidateAll();
 }
 
@@ -302,6 +318,7 @@ void View::setCursor(PlatformCursorType cursor)
     m_cursor = cursor;
     if (m_cursorChanged)
         m_cursorChanged(cursor);
+    client().cursorChanged(cursor);
 }
 
 void View::setFocused(bool focused)
