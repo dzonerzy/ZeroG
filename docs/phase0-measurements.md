@@ -99,7 +99,35 @@ Found on the way: stock ICU 79.1 data has no ISO-8859-16 converter, so WebCore's
 `iso-8859-16` codec cannot work with any stock ICU build (recorded in
 `deps/icu-data.json`; the build fails if another encoding goes missing).
 
+## glibc 2.28 baseline (step 2)
+
+Linux builds now use zig 0.16.0 (`zig cc/c++ -target x86_64-linux-gnu.2.28`) for
+everything: WebKit, vcpkg dependencies and the final link. A newer system
+libstdc++ cannot be linked statically for an old baseline, since its archive
+references glibc symbols newer than 2.28; zig's libc++ and compiler-rt are built
+for the target. Two zig-specific settings:
+
+- `-g0` first in the wrappers: zig emits debug info by default (the engine
+  archive was 1031 MB with it, 86.6 MB without); an explicit `-g` still wins.
+- `-mevex512` (`OptionsZeroG.cmake`): zig passes `-evex512` with the baseline
+  features, which simdutf's `target("avx512...")` kernels cannot re-enable.
+
+| | zig, glibc 2.28 | previous clang + libstdc++ |
+| --- | --- | --- |
+| Clean build | 166 s | 170 s |
+| `libzerog-engine.a` | 86.6 MB | 95.9 MB |
+| Link test, stripped | 48.4 MB | 51.7 MB |
+| `jsc`, stripped | 47.2 MB | 46.5 MB |
+| Highest glibc symbol | GLIBC_2.28 | (built against 2.41) |
+
+The stripped binaries were run unchanged (link test, converter test, `jsc`):
+
+| Distribution | glibc | Result |
+| --- | --- | --- |
+| Debian 10 (buster) | 2.28 | all checks pass |
+| Rocky Linux 8 | 2.28 | all checks pass |
+| Fedora (latest) | 2.43 | all checks pass |
+
 ## Gaps to the single-binary goal
 
-- Linux: build against an older glibc baseline (ZeroG.md suggests 2.28).
 - Windows: symbols exported from the final executable (`dllexport`).

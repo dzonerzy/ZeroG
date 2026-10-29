@@ -137,7 +137,14 @@ def configure_options(args):
     if IS_WINDOWS:
         opts.update({"CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl"})
     else:
-        opts.update({"CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++"})
+        # The Docker builder sets CC/CXX/AR/RANLIB to zig wrappers (glibc baseline,
+        # static libc++); outside it, plain clang.
+        opts.update({"CMAKE_C_COMPILER": os.environ.get("CC", "clang"),
+                     "CMAKE_CXX_COMPILER": os.environ.get("CXX", "clang++")})
+        if os.environ.get("AR"):
+            opts.update({"CMAKE_AR": shutil.which(os.environ["AR"]),
+                         "CMAKE_RANLIB": shutil.which(os.environ.get("RANLIB", "ranlib"))})
+        opts["ZEROG_ZIG"] = "ON" if os.environ.get("ZEROG_ZIG_TARGET") else "OFF"
     for item in args.define or []:
         key, _, value = item.partition("=")
         opts[key] = value
@@ -200,7 +207,7 @@ def cmd_bundle(args):
     if IS_WINDOWS:
         run(["llvm-lib", "/nologo", f"/out:{archive}", f"@{rsp}"], env=build_env())
     else:
-        ar = shutil.which("llvm-ar") or shutil.which("llvm-ar-19") or "ar"
+        ar = os.environ.get("AR") or shutil.which("llvm-ar") or "ar"
         run([ar, "rcs", archive, f"@{rsp}"])  # a real archive: thin ones only work in-tree
     print(f"{archive.name}: {len(objects)} objects, {archive.stat().st_size / 1e6:.1f} MB")
 
@@ -227,14 +234,18 @@ def cmd_linktest(args):
     else:
         # Everything static except glibc (ZeroG.md, "Cosa resta dinamico a runtime").
         icu = [lib / "libicui18n.a", lib / "libicuuc.a", lib / f"libicudt-{icu_data}.a"]
-        static_runtime = ["-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-latomic",
-                          "-Wl,-Bdynamic", "-lpthread", "-ldl", "-lm"]
+        cc, cxx = os.environ.get("CC", "clang"), os.environ.get("CXX", "clang++")
+        if os.environ.get("ZEROG_ZIG_TARGET"):
+            runtime = ["-lpthread", "-ldl", "-lm"]  # zig links libc++ and compiler-rt statically
+        else:
+            runtime = ["-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-latomic",
+                       "-Wl,-Bdynamic", "-lpthread", "-ldl", "-lm"]
         obj = out / "zerog-linktest.o"
-        run(["clang", "-O2", "-DJS_NO_EXPORT", f"-I{headers}", "-c", src, "-o", obj])
-        run(["clang++", obj, bundle_path(out), *icu, "-o", exe, *static_runtime])
+        run([cc, "-O2", "-DJS_NO_EXPORT", f"-I{headers}", "-c", src, "-o", obj])
+        run([cxx, obj, bundle_path(out), *icu, "-o", exe, *runtime])
         conv_obj = out / "zerog-icu-converters.o"
-        run(["clang", "-O2", f"-I{include}", "-c", conv_src, "-o", conv_obj])
-        run(["clang++", conv_obj, *icu, "-o", conv_exe, *static_runtime])
+        run([cc, "-O2", f"-I{include}", "-c", conv_src, "-o", conv_obj])
+        run([cxx, conv_obj, *icu, "-o", conv_exe, *runtime])
     run([exe, icu_data])
     sys.path.insert(0, str(ROOT / "tools"))
     import icu_data as icu_data_tool

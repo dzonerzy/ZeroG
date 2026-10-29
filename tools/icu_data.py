@@ -200,10 +200,10 @@ def build(args):
         run(genccode, "-a", "gcc", "-e", entry, "-d", obj_dir, filtered)
         asm = next(obj_dir.glob("*.S"))
         obj = asm.with_suffix(".o")
-        run(shutil.which("clang") or "cc", "-c", asm, "-o", obj)
+        run(os.environ.get("CC") or shutil.which("clang") or "cc", "-c", asm, "-o", obj)
         library = out / f"libicudt-{args.profile}.a"
         library.unlink(missing_ok=True)
-        run(shutil.which("llvm-ar") or shutil.which("llvm-ar-19") or "ar", "rcs", library, obj)
+        run(os.environ.get("AR") or shutil.which("llvm-ar") or "ar", "rcs", library, obj)
 
     cnv = sorted(keep_cnv)
     report = {

@@ -1,0 +1,3 @@
+#!/bin/sh
+# zig ranlib for the Linux builder.
+exec zig ranlib "$@"

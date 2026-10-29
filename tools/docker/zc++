@@ -1,0 +1,5 @@
+#!/bin/sh
+# zig c++ for the Linux builder; ZEROG_ZIG_TARGET pins the glibc baseline.
+# zig emits debug info by default, unlike clang: -g0 comes first so an explicit
+# -g from the build (dev profile) still wins.
+exec zig c++ -target "$ZEROG_ZIG_TARGET" -g0 "$@"

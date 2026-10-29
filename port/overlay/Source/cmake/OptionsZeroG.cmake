@@ -15,7 +15,18 @@ else ()
     set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 endif ()
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Linux builds use zig's clang (tools/docker): glibc baseline from the zig target,
+# libc++ and compiler-rt always static. ZEROG_ZIG=OFF is a plain clang/libstdc++
+# build, which needs the runtime made static explicitly.
+option(ZEROG_ZIG "Linux toolchain is zig (glibc baseline, static libc++)" OFF)
+if (ZEROG_ZIG AND WTF_CPU_X86_64)
+    # zig hands clang the full baseline feature list, including -evex512, which
+    # target("avx512...") attributes do not re-enable: simdutf's runtime-dispatched
+    # AVX-512 kernels then fail to compile. -mevex512 only permits 512-bit vectors
+    # in functions that opt into AVX-512; baseline code generation is unchanged.
+    add_compile_options(-mevex512)
+endif ()
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ZEROG_ZIG)
     # Executables built in the port (jsc, tests) carry the C++ runtime: only glibc
     # stays dynamic (ZeroG.md, "Cosa resta dinamico a runtime").
     string(APPEND CMAKE_EXE_LINKER_FLAGS " -static-libstdc++ -static-libgcc")
