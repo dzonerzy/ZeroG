@@ -42,8 +42,16 @@ if (ZEROG_PROFILE STREQUAL "dev" OR ZEROG_PROFILE STREQUAL "debug")
     target_compile_definitions(ZeroGAPI PRIVATE ZEROG_DEV_PROFILE)
 endif ()
 
-# A C program using only include/zerog.h.
-set(ZeroGAPITest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/api_test.c)
+# A C program using only include/zerog.h, with a frontend packed by
+# tools/assets.py and compiled in, as an application does.
+file(GLOB_RECURSE _zerog_test_assets "${ZEROG_SOURCE_DIR}/tests/api/assets/*")
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/test_assets.c
+    COMMAND ${Python_EXECUTABLE} ${ZEROG_SOURCE_DIR}/tools/assets.py ${ZEROG_SOURCE_DIR}/tests/api/assets
+        -o ${CMAKE_CURRENT_BINARY_DIR}/test_assets.c --c-symbol test_assets
+    DEPENDS ${ZEROG_SOURCE_DIR}/tools/assets.py ${_zerog_test_assets}
+    VERBATIM)
+set(ZeroGAPITest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/api_test.c ${CMAKE_CURRENT_BINARY_DIR}/test_assets.c)
 set(ZeroGAPITest_LIBRARIES ZeroGAPI)
 set(ZeroGAPITest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
 set(ZeroGAPITest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)

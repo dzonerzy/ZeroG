@@ -29,6 +29,7 @@
 #include "config.h"
 #include "PlatformStrategiesZeroG.h"
 
+#include "Loader.h"
 #include <WebCore/BlobRegistry.h>
 #include <WebCore/LoaderStrategy.h>
 #include <WebCore/MediaStrategy.h>
@@ -47,41 +48,6 @@ namespace ZeroG {
 using namespace WebCore;
 
 namespace {
-
-class LoaderStrategyZeroG final : public LoaderStrategy {
-public:
-    void loadResource(LocalFrame&, CachedResource&, ResourceRequest&&, const ResourceLoaderOptions&, CompletionHandler<void(RefPtr<SubresourceLoader>&&)>&& completionHandler) final { completionHandler(nullptr); }
-    void loadResourceSynchronously(FrameLoader&, ResourceLoaderIdentifier, const ResourceRequest&, ClientCredentialPolicy, const FetchOptions&, const HTTPHeaderMap&, ResourceError&, ResourceResponse&, Vector<uint8_t>&) final { }
-    void pageLoadCompleted(Page&) final { }
-    void browsingContextRemoved(LocalFrame&) final { }
-    void remove(ResourceLoader*) final { }
-    void setDefersLoading(ResourceLoader&, bool) final { }
-    void crossOriginRedirectReceived(ResourceLoader*, const URL&) final { }
-    void servePendingRequests(ResourceLoadPriority) final { }
-    void suspendPendingRequests() final { }
-    void resumePendingRequests() final { }
-    void preconnectTo(FrameLoader&, ResourceRequest&&, StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&&) final { }
-    void setCaptureExtraNetworkLoadMetricsEnabled(bool) final { }
-    bool isOnLine() const final { return true; }
-    void addOnlineStateChangeListener(Function<void(bool)>&&) final { }
-    void isResourceLoadFinished(CachedResource&, CompletionHandler<void(bool)>&& completionHandler) final { completionHandler(true); }
-
-    ResourceError cancelledError(const ResourceRequest&) const final { return { }; }
-    ResourceError blockedError(const ResourceRequest&) const final { return { }; }
-    bool isBlockedError(const ResourceError&) const final { return false; }
-    ResourceError blockedByContentBlockerError(const ResourceRequest&) const final { return { }; }
-    ResourceError cannotShowURLError(const ResourceRequest&) const final { return { }; }
-    ResourceError interruptedForPolicyChangeError(const ResourceRequest&) const final { return { }; }
-#if ENABLE(CONTENT_FILTERING)
-    ResourceError blockedByContentFilterError(const ResourceRequest&) const final { return { }; }
-#endif
-    ResourceError cannotShowMIMETypeError(const ResourceResponse&) const final { return { }; }
-    ResourceError fileDoesNotExistError(const ResourceResponse&) const final { return { }; }
-    ResourceError httpsUpgradeRedirectLoopError(const ResourceRequest&) const final { return { }; }
-    ResourceError httpNavigationWithHTTPSOnlyError(const ResourceRequest&) const final { return { }; }
-    bool isHttpNavigationWithHTTPSOnlyError(const ResourceError&) const final { return false; }
-    ResourceError pluginWillHandleLoadError(const ResourceResponse&) const final { return { }; }
-};
 
 class PasteboardStrategyZeroG final : public PasteboardStrategy {
 public:
@@ -120,7 +86,7 @@ public:
 
 class PlatformStrategiesZeroG final : public PlatformStrategies {
 private:
-    LoaderStrategy* createLoaderStrategy() final { return new LoaderStrategyZeroG; }
+    LoaderStrategy* createLoaderStrategy() final { return ZeroG::createLoaderStrategy(); }
     PasteboardStrategy* createPasteboardStrategy() final { return new PasteboardStrategyZeroG; }
     MediaStrategy* createMediaStrategy() final { return new MediaStrategyZeroG; }
     BlobRegistry* createBlobRegistry() final { return new BlobRegistryZeroG; }

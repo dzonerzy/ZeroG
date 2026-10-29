@@ -4,6 +4,8 @@
 #include "ChromeClientZeroG.h"
 #include "EditorClientZeroG.h"
 #include "FrameLoaderClientZeroG.h"
+#include <WebCore/FrameLoadRequest.h>
+#include <WebCore/FrameTree.h>
 #include <WebCore/FrameLoader.h>
 #include <WebCore/LocalFrameLoaderClient.h>
 #include <WebCore/EventHandler.h>
@@ -16,6 +18,7 @@
 #include "Embedding.h"
 #include <WebCore/ActivityState.h>
 #include <WebCore/Chrome.h>
+#include <WebCore/CookieJar.h>
 #include <WebCore/DocumentView.h>
 #include <WebCore/EmptyClients.h>
 #include <WebCore/FloatRect.h>
@@ -28,6 +31,8 @@
 #include <WebCore/PageConfiguration.h>
 #include <WebCore/Settings.h>
 #include <pal/SessionID.h>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkCanvas.h>
@@ -47,7 +52,7 @@ std::unique_ptr<View> View::create(Configuration&& configuration)
 
 static Ref<Page> createPage(View& view)
 {
-    auto configuration = pageConfigurationWithEmptyClients(std::nullopt, PAL::SessionID::defaultSessionID());
+    auto configuration = pageConfigurationWithEmptyClients(std::nullopt, view.session().sessionID());
     // The empty clients are made for SVG images, whose frames are fully sandboxed;
     // a ZeroG page is the application's own UI.
     auto& mainFrameParameters = std::get<PageConfiguration::LocalMainFrameCreationParameters>(configuration.mainFrameCreationParameters);
@@ -55,19 +60,34 @@ static Ref<Page> createPage(View& view)
     mainFrameParameters.clientCreator = [&view](auto&, auto& frameLoader) {
         return createFrameLoaderClient(frameLoader, view);
     };
+    configuration.cookieJar = createCookieJar(view.session());
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     return Page::create(WTF::move(configuration));
 }
 
+// Pages shown by views, for the loader: a load knows its frame, hence its page.
+static HashMap<const Page*, View*>& viewsByPage()
+{
+    static NeverDestroyed<HashMap<const Page*, View*>> views;
+    return views;
+}
+
+View* View::fromPage(const Page& page)
+{
+    return viewsByPage().get(&page);
+}
+
 View::View(Configuration&& configuration)
-    : m_page(createPage(*this))
+    : m_session(configuration.session ? configuration.session.releaseNonNull() : Ref { Session::defaultSession() })
+    , m_page(createPage(*this))
     , m_surface(WTF::move(configuration.surface))
     , m_size(configuration.size)
     , m_scale(configuration.scale > 0 ? configuration.scale : 1)
     , m_transparent(configuration.transparent)
 {
     Ref page = m_page;
+    viewsByPage().set(page.ptr(), this);
     auto& settings = page->settings();
     settings.setScriptEnabled(configuration.scriptEnabled);
     // Compositing version 1 (ZeroG.md, "Compositing"): one surface, dirty regions.
@@ -98,9 +118,15 @@ ViewClient View::s_defaultClient;
 
 View::~View()
 {
-    static_cast<ChromeClientZeroG&>(m_page->chrome().client()).detachFromView();
+    viewsByPage().remove(m_page.ptr());
     if (RefPtr frame = m_page->localMainFrame())
-        detachFrameLoaderClient(frame->loader().client());
+        frame->loader().stopAllLoaders();
+    static_cast<ChromeClientZeroG&>(m_page->chrome().client()).detachFromView();
+    // Every frame's client (iframes included) points at this view.
+    for (RefPtr<WebCore::Frame> frame = m_page->localMainFrame(); frame; frame = frame->tree().traverseNext()) {
+        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame))
+            detachFrameLoaderClient(localFrame->loader().client());
+    }
 }
 
 void View::setClient(ViewClient* client)
@@ -117,6 +143,14 @@ void View::loadHTML(const String& html, const URL& baseURL)
 {
     ZeroG::loadHTML(m_page, html, baseURL);
     invalidateAll();
+}
+
+void View::loadURL(const URL& url)
+{
+    RefPtr frame = m_page->localMainFrame();
+    if (!frame)
+        return;
+    frame->loader().load(FrameLoadRequest { *frame, ResourceRequest { URL { url } } });
 }
 
 String View::evaluateScript(const String& script)

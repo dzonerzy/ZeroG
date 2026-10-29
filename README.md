@@ -8,10 +8,12 @@ presented (native window, game texture, overlay).
 The full design is in [ZeroG.md](ZeroG.md) (Italian). Verification of the
 design against the pinned WebKit revision lives in [docs/verification](docs/verification).
 
-> Status: phase 2 — the first `zg_*` C API (`include/zerog.h`) runs on Windows
-> and Linux: runtime and event loop, views in CPU, texture and window mode,
-> input, callbacks and direct JavaScript bindings. Pages come from HTML strings;
-> URL loading, app assets and custom schemes come with the resource loader.
+> Status: phase 2 — the `zg_*` C API (`include/zerog.h`) runs on Windows and
+> Linux: runtime and event loop, views in CPU, texture and window mode, input,
+> callbacks, direct JavaScript bindings, and the resource loader: the app's files
+> served from memory under `app://`, custom schemes, `data:`, and http/https over
+> curl with cookies. Registered fonts, downloads, WebSocket and authentication
+> are not there yet.
 
 ## Layout
 
@@ -67,7 +69,18 @@ build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 | `ZeroGInput` | mouse (clicks, click count, `:hover`), focus, typing and editing commands (Backspace, arrows, Ctrl+A/Z/Shift+Z), key event properties, smooth wheel scrolling |
 | `ZeroGWindow` | window mode (SDL3 window, GPU presentation at vsync): rAF at the display's rate, presented image matches a CPU render, cursor and typing from window events, resizing reaches the page. On Linux: `xvfb-run -a ZeroGWindow` |
 | `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render |
-| `ZeroGAPITest [--no-window]` | the C API from a C99 program: runtime, bindings (synchronous, JSON, BigInt, exceptions, a Promise settled from another thread), evaluate, emit, callbacks, input and IME, frames, a window whose loop a binding ends. `linktest` also links it against the bundle |
+| `ZeroGLoader` | the resource loader: an `app://` page from memory (stylesheet, module scripts, fetch, range requests, compressed archive entries, percent-encoded paths, directory redirects, synchronous XHR, iframes), write-once files, `data:`, http over curl against a server in the test (CORS, redirects, cookies, a main-frame navigation). `ZEROG_ONLINE_TESTS=1` adds https to example.com |
+| `ZeroGAPITest [--no-window]` | the C API from a C99 program: runtime, bindings (synchronous, JSON, BigInt, exceptions, a Promise settled from another thread), evaluate, emit, callbacks, input and IME, frames, files and archives (one packed by `tools/assets.py`), a scheme handler answering from another thread, trust by scheme, a window whose loop a binding ends. `linktest` also links it against the bundle |
+
+An application ships its frontend inside its binary: `tools/assets.py` packs a
+directory (the frontend's build output) into an archive, as C source to compile
+in or as a `.zga` file; `zg_context_mount_assets(ctx, "app", data, len)` serves
+it at `app://localhost/`. Files are compressed with zlib where it pays off and
+inflated by the engine on first use.
+
+```sh
+python tools/assets.py dist -o build/app_assets.c --c-symbol app_assets
+```
 
 `--profile minimal|standard|dev` selects the build profile and its ICU data;
 `--port JSCOnly` builds the upstream reference port.

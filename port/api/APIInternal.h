@@ -2,6 +2,7 @@
 
 // The handles of the C API (include/zerog.h) over the embedding layer.
 
+#include "MemoryFS.h"
 #include "View.h"
 #include "Window.h"
 #include "zerog.h"
@@ -9,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -47,6 +49,9 @@ struct zg_context {
     zg_trust_fn trust { nullptr };
     void* trustUser { nullptr };
     std::vector<zg_view*> views;
+    // Its schemes, cookies; and the file system of each scheme serving files.
+    RefPtr<ZeroG::Session> session;
+    HashMap<String, Ref<ZeroG::MemoryFS>> fileSystems;
 };
 
 struct zg_window {
@@ -73,8 +78,8 @@ bool checkThread();
 zg_runtime* runtime();
 
 // Trust (ZeroG.md, "Origini fidate"): the application's own content (HTML it
-// loads itself, its schemes), the dev server in dev profiles, then the context's
-// policy callback.
+// loads itself as about:blank, its schemes), the dev server in dev profiles, then
+// the context's policy callback.
 bool isTrusted(zg_context&, const URL&, zg_trust_request, bool isMainFrame);
 
 // Bindings (Bindings.cpp).

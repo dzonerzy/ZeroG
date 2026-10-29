@@ -138,6 +138,109 @@ static void onCursor(zg_view *view, zg_cursor cursor, void *user)
     lastCursor = cursor;
 }
 
+static int loadsFinished;
+static int lastLoadFailed;
+
+static void onLoadFinished(zg_view *view, const char *url, int failed, void *user)
+{
+    (void)view;
+    (void)url;
+    (void)user;
+    lastLoadFailed = failed;
+    ++loadsFinished;
+}
+
+/* ---- Schemes and files ---- */
+
+static zg_scheme_request *heldRequest;
+
+#ifdef _WIN32
+static DWORD WINAPI respondLater(LPVOID argument)
+{
+    (void)argument;
+    Sleep(50);
+#else
+static void *respondLater(void *argument)
+{
+    (void)argument;
+    usleep(50000);
+#endif
+    zg_scheme_request_add_header(heldRequest, "Access-Control-Allow-Origin", "*");
+    zg_scheme_request_respond(heldRequest, 200, "text/plain", "later", 5);
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+/* native://: answered now, later from another thread, or failed. */
+static void onNativeScheme(zg_scheme_request *request, void *user)
+{
+    size_t length;
+    const char *url = zg_scheme_request_url(request, &length);
+    const char *accept = zg_scheme_request_header(request, "ACCEPT", NULL);
+    char body[512];
+    (void)user;
+    if (strstr(url, "/later")) {
+        heldRequest = request;
+#ifdef _WIN32
+        CloseHandle(CreateThread(NULL, 0, respondLater, NULL, 0, NULL));
+#else
+        {
+            pthread_t thread;
+            pthread_create(&thread, NULL, respondLater, NULL);
+            pthread_detach(thread);
+        }
+#endif
+        return;
+    }
+    if (strstr(url, "/fail")) {
+        zg_scheme_request_fail(request, "refused by the test");
+        return;
+    }
+    snprintf(body, sizeof body, "{\"method\":\"%s\",\"accept\":\"%s\",\"url\":\"%.*s\"}",
+        zg_scheme_request_method(request), accept ? accept : "", (int)length, url);
+    zg_scheme_request_add_header(request, "Access-Control-Allow-Origin", "*");
+    zg_scheme_request_respond(request, 200, "application/json", body, strlen(body));
+}
+
+/* tests/api/assets, packed by tools/assets.py at build time. */
+extern const unsigned char test_assets[];
+extern const size_t test_assets_len;
+
+static int released;
+
+static void onRelease(void *user)
+{
+    (void)user;
+    ++released;
+}
+
+/* An archive in tools/assets.py's format with one stored file. */
+static size_t makeArchive(unsigned char *out, const char *path, const char *content)
+{
+    size_t pathLength = strlen(path), contentLength = strlen(content), pathOffset = 16 + 40, dataOffset = pathOffset + pathLength;
+    size_t i;
+    unsigned char *entry = out + 16;
+    memset(out, 0, dataOffset + contentLength);
+    memcpy(out, "ZGAR", 4);
+    out[4] = 1; /* version */
+    out[8] = 1; /* one file */
+    for (i = 0; i < 8; ++i) {
+        entry[i] = (unsigned char)(dataOffset >> (8 * i));
+        entry[8 + i] = (unsigned char)(contentLength >> (8 * i));
+        entry[16 + i] = (unsigned char)(contentLength >> (8 * i));
+    }
+    for (i = 0; i < 4; ++i) {
+        entry[24 + i] = (unsigned char)(pathOffset >> (8 * i));
+        entry[28 + i] = (unsigned char)(pathLength >> (8 * i));
+    }
+    memcpy(out + pathOffset, path, pathLength);
+    memcpy(out + dataOffset, content, contentLength);
+    return dataOffset + contentLength;
+}
+
 /* ---- Helpers ---- */
 
 static char *evaluate(zg_view *view, const char *script)
@@ -169,6 +272,31 @@ static void sleepMilliseconds(int milliseconds)
 #else
     usleep(milliseconds * 1000);
 #endif
+}
+
+/* Evaluates an async expression and waits (up to 10 s) for its value as a string. */
+static char *awaitJS(zg_view *view, const char *expression)
+{
+    static char script[1024];
+    int i;
+    snprintf(script, sizeof script, "window.__result = undefined; (async () => { try { window.__result = String(await (%s)); }"
+        " catch (e) { window.__result = 'error: ' + e; } })(); 0", expression);
+    evaluate(view, script);
+    for (i = 0; i < 2000 && strcmp(evaluate(view, "typeof window.__result"), "\"string\""); ++i) {
+        sleepMilliseconds(5);
+        frame(view);
+    }
+    return evaluate(view, "window.__result");
+}
+
+static int waitForLoad(zg_view *view, int previous)
+{
+    int i;
+    for (i = 0; i < 2000 && loadsFinished == previous; ++i) {
+        sleepMilliseconds(5);
+        frame(view);
+    }
+    return loadsFinished > previous && !lastLoadFailed;
 }
 
 static const char page[] =
@@ -221,7 +349,7 @@ int main(int argc, char **argv)
     zg_view_bind(view, "App.big", big, NULL);
     zg_view_bind(view, "App.later", later, NULL);
     CHECK(zg_view_bind(view, "", add, NULL) == ZG_ERROR_INVALID_ARGUMENT, "an empty binding path is refused");
-    CHECK(zg_view_load_url(view, "https://example.com/") == ZG_ERROR_UNSUPPORTED, "URL loading not yet: %s", zg_last_error());
+    CHECK(zg_view_load_url(view, "not a URL") == ZG_ERROR_INVALID_ARGUMENT, "an invalid URL is refused: %s", zg_last_error());
 
     CHECK(zg_view_load_html(view, page, sizeof page - 1, NULL) == ZG_OK, "load HTML");
     frame(view);
@@ -271,6 +399,64 @@ int main(int argc, char **argv)
     }
     CHECK(zg_surface_acquire(zg_view_surface(view), &frameData) == ZG_ERROR_NOT_FOUND, "no newer frame");
     CHECK(jsErrors == 0, "no JavaScript errors");
+
+    /* The application's files and schemes. */
+    {
+        static const char appPage[] = "<!DOCTYPE html><title>App page</title><script>window.fromApp = App.add(20, 22);</script>";
+        static const char staticText[] = "used in place";
+        static unsigned char archive[256];
+        size_t archiveLength = makeArchive(archive, "/pkg/hello.txt", "from the archive");
+        zg_memory_stats stats = { sizeof stats };
+        int loads;
+
+        CHECK(zg_context_add_file(context, "app", "/index.html", appPage, sizeof appPage - 1, NULL, NULL, NULL) == ZG_OK, "add a file (copied)");
+        CHECK(zg_context_add_file(context, "app", "/index.html", "x", 1, NULL, NULL, NULL) == ZG_ERROR_ALREADY_EXISTS, "files are write-once: %s", zg_last_error());
+        CHECK(zg_context_add_file(context, "app", "/../secret", "x", 1, NULL, NULL, NULL) == ZG_ERROR_INVALID_ARGUMENT, "'..' is refused: %s", zg_last_error());
+        CHECK(zg_context_add_file(context, "app", "/static.txt", staticText, sizeof staticText - 1, "text/plain", onRelease, NULL) == ZG_OK, "add a file (in place)");
+        CHECK(zg_context_mount_assets(context, "app", archive, archiveLength) == ZG_OK, "mount an archive");
+        CHECK(zg_context_mount_assets(context, "app", archive, archiveLength) == ZG_ERROR_ALREADY_EXISTS, "an archive cannot replace files: %s", zg_last_error());
+        CHECK(zg_context_mount_assets(context, "app", "junk", 4) == ZG_ERROR_INVALID_ARGUMENT, "a malformed archive is refused: %s", zg_last_error());
+        CHECK(zg_context_register_scheme(context, "app", onNativeScheme, NULL) == ZG_ERROR_ALREADY_EXISTS, "a file scheme has no handler: %s", zg_last_error());
+        CHECK(zg_context_register_scheme(context, "native", onNativeScheme, NULL) == ZG_OK, "register native://");
+        CHECK(zg_context_register_scheme(context, "https", onNativeScheme, NULL) == ZG_ERROR_INVALID_ARGUMENT, "built-in schemes are refused: %s", zg_last_error());
+        CHECK(zg_context_add_file(context, "native", "/x", "x", 1, NULL, NULL, NULL) == ZG_ERROR_ALREADY_EXISTS, "a handler scheme serves no files: %s", zg_last_error());
+
+        callbacks.load_finished = onLoadFinished;
+        zg_view_set_callbacks(view, &callbacks);
+        loads = loadsFinished;
+        CHECK(zg_view_load_url(view, "app://localhost/index.html") == ZG_OK && waitForLoad(view, loads), "app://localhost/index.html loads");
+        /* The title reaches the callback in a task of the page's event loop. */
+        for (i = 0; i < 200 && strcmp(lastTitle, "App page"); ++i) {
+            sleepMilliseconds(5);
+            frame(view);
+        }
+        CHECK(!strcmp(lastTitle, "App page"), "its title: '%s'", lastTitle);
+        CHECK(!strcmp(evaluate(view, "fromApp"), "42"), "the app's origin gets the bindings: %s", evaluate(view, "fromApp"));
+        CHECK(!strcmp(awaitJS(view, "fetch('/static.txt').then(r => r.text())"), "\"used in place\""), "a file used in place: %s", evaluate(view, "__result"));
+        CHECK(!strcmp(awaitJS(view, "fetch('/pkg/hello.txt').then(r => r.text())"), "\"from the archive\""), "a file from the archive: %s", evaluate(view, "__result"));
+        CHECK(!strcmp(awaitJS(view, "fetch('native://x/hello?q=1').then(r => r.json()).then(j => [j.method, j.accept, j.url].join(' '))"),
+            "\"GET */* native://x/hello?q=1\""), "a scheme handler answers: %s", evaluate(view, "__result"));
+        CHECK(!strcmp(awaitJS(view, "fetch('native://x/later').then(r => r.text())"), "\"later\""), "and answers from another thread: %s", evaluate(view, "__result"));
+        CHECK(!strncmp(awaitJS(view, "fetch('native://x/fail').then(r => r.text())"), "\"error:", 7), "or fails a request: %s", evaluate(view, "__result"));
+
+        /* A frontend packed by tools/assets.py, under a scheme of its own. */
+        CHECK(zg_context_mount_assets(context, "packed", test_assets, test_assets_len) == ZG_OK, "mount the tools/assets.py archive");
+        loads = loadsFinished;
+        CHECK(zg_view_load_url(view, "packed://localhost/") == ZG_OK && waitForLoad(view, loads), "packed://localhost/ loads its index.html");
+        CHECK(!strcmp(evaluate(view, "packed"), "\"rgb(1, 2, 3) H\xc3\xa9llo from an archive\""), "its stylesheet (compressed) and script ran: %s", evaluate(view, "packed"));
+
+        /* data: is not the app's content: the navigation is blocked. */
+        loads = loadsFinished;
+        zg_view_load_url(view, "data:text/html,<title>data</title>");
+        for (i = 0; i < 40; ++i) {
+            sleepMilliseconds(5);
+            frame(view);
+        }
+        CHECK(!strcmp(evaluate(view, "location.href"), "\"packed://localhost/\""), "a data: navigation is blocked: %s", evaluate(view, "location.href"));
+
+        zg_runtime_memory_stats(runtime, &stats);
+        CHECK(stats.asset_bytes >= sizeof appPage - 1, "memory stats count the copied files: %zu bytes", stats.asset_bytes);
+    }
     zg_view_destroy(view);
 
     if (withWindow) {
@@ -293,6 +479,15 @@ int main(int argc, char **argv)
             zg_window_destroy(window);
         }
     }
+
+    CHECK(!released, "a file used in place stays while its context lives");
+    zg_context_destroy(context);
+    /* Script objects of its pages (a fetch's Response) go with the next collection. */
+    for (i = 0; i < 100 && !released; ++i) {
+        zg_runtime_collect_garbage(runtime);
+        zg_runtime_update(runtime);
+    }
+    CHECK(released == 1, "its release callback runs once the context is gone (%d)", released);
 
     zg_runtime_destroy(runtime);
     printf(failures ? "FAILED\n" : "PASS\n");

@@ -178,6 +178,7 @@ typedef struct zg_memory_stats {
     size_t js_heap_capacity;
     size_t resource_cache_bytes;
     size_t surface_bytes;   /* graphics surfaces owned by the engine */
+    size_t asset_bytes;     /* files the engine holds: copied, or inflated from archives */
 } zg_memory_stats;
 
 ZG_API void zg_runtime_memory_stats(zg_runtime *rt, zg_memory_stats *out);
@@ -226,26 +227,58 @@ typedef struct zg_context_config {
 ZG_API zg_context *zg_context_create(zg_runtime *rt, const zg_context_config *config);
 ZG_API void zg_context_destroy(zg_context *ctx);
 
-/* Serve an archive generated at build time under scheme://. The archive is
-   read-only and stays owned by the caller (typically static data). */
+/* The application's files: an in-memory file system per scheme (typically
+   "app"), served at scheme://<any host>/<path> with a MIME type from the file
+   (else its extension), range requests, HEAD, and index.html for directories.
+   Files are write-once: a path, once added, never changes and is never removed.
+   A scheme serves either files or a zg_context_register_scheme handler, not both.
+   Every scheme of a context is secure (crypto.subtle and other secure-context
+   APIs work), CORS-enabled, and trusted (navigation and bindings). Pages should
+   use one host, e.g. app://localhost/, since the host is part of the origin. */
+
+/* Mount an archive generated at build time (tools/assets.py) at the root of
+   scheme://. The archive is not copied and must stay valid while the context
+   lives (typically static data). Fails as a whole with ZG_ERROR_ALREADY_EXISTS
+   if one of its paths exists, ZG_ERROR_INVALID_ARGUMENT if it is malformed. */
 ZG_API zg_result zg_context_mount_assets(zg_context *ctx, const char *scheme,
                                          const void *archive, size_t archive_len);
 
+typedef void (*zg_release_fn)(void *user);
+
+/* Add one file at `path` ("/index.html", UTF-8). Fails with
+   ZG_ERROR_ALREADY_EXISTS if the path exists. With `release` NULL the data is
+   copied; otherwise it is used in place, and `release(user)` is called, on any
+   thread, once the context and every load using the file are done with it (not
+   if the call fails). `mime_type` NULL derives the type from the extension
+   (text is UTF-8). */
+ZG_API zg_result zg_context_add_file(zg_context *ctx, const char *scheme, const char *path,
+                                     const void *data, size_t len, const char *mime_type,
+                                     zg_release_fn release, void *user);
+
 typedef struct zg_scheme_request zg_scheme_request;
 
+/* Valid until the request is answered. */
 ZG_API const char *zg_scheme_request_url(const zg_scheme_request *req, size_t *len);
 ZG_API const char *zg_scheme_request_method(const zg_scheme_request *req);
+/* NULL if the request has no such header (names are case-insensitive). */
 ZG_API const char *zg_scheme_request_header(const zg_scheme_request *req, const char *name, size_t *len);
 
-/* Respond once per request. `body` is copied. */
+/* A response header (CORS, caching, ...), before answering, on the thread that
+   answers. Content-Type and Content-Length come from zg_scheme_request_respond. */
+ZG_API void zg_scheme_request_add_header(zg_scheme_request *req, const char *name, const char *value);
+
+/* Answer exactly once, from any thread; the request is freed then. `body` is
+   copied. If the page stopped the load meanwhile the answer is dropped. */
 ZG_API void zg_scheme_request_respond(zg_scheme_request *req, int status,
                                       const char *mime_type,
                                       const void *body, size_t body_len);
 ZG_API void zg_scheme_request_fail(zg_scheme_request *req, const char *reason);
 
+/* Called on the runtime thread; may answer now or later. */
 typedef void (*zg_scheme_fn)(zg_scheme_request *req, void *user);
 
-/* Custom schemes are registered as secure and CORS-enabled. */
+/* Answers scheme:// with the application's callback. Built-in schemes (http,
+   https, file, data, about, blob, ws, ...) cannot be registered. */
 ZG_API zg_result zg_context_register_scheme(zg_context *ctx, const char *scheme,
                                             zg_scheme_fn handler, void *user);
 
@@ -315,6 +348,8 @@ ZG_API zg_view *zg_view_create(zg_context *ctx, const zg_view_config *config);
 ZG_API void zg_view_destroy(zg_view *view);
 ZG_API zg_surface *zg_view_surface(zg_view *view);
 
+/* Starts a navigation; load_finished reports its end. The URL must be absolute
+   and allowed by the context's trust rules (or allow_external_content). */
 ZG_API zg_result zg_view_load_url(zg_view *view, const char *url);
 ZG_API zg_result zg_view_load_html(zg_view *view, const char *html, size_t len, const char *base_url);
 ZG_API void zg_view_reload(zg_view *view);

@@ -331,8 +331,10 @@ def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runt
         crt = "/MT" if args.port == "ZeroG" else "/MD"
         system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib"]
         fuse = ["-fuse-ld=lld"] if linker == "lld" else []
+        objects = out / "linktest" / name
+        objects.mkdir(parents=True, exist_ok=True)
         run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", *fuse, *[f"/I{i}" for i in includes],
-             *sources, f"/Fe{exe}", f"/Fo{out / (name + '.obj')}", "/link", *libraries, *system],
+             *sources, f"/Fe{exe}", f"/Fo{objects}\\", "/link", *libraries, *system],
             env=build_env())
     else:
         cc, cxx = os.environ.get("CC", "clang"), os.environ.get("CXX", "clang++")
@@ -392,7 +394,9 @@ def cmd_linktest(args):
     #    bundle and the system libraries it lists: the full engine, nothing else.
     if args.port == "ZeroG":
         system = [l for l in bundle_libs_path(out).read_text().splitlines() if l]
-        api = link_c(args, out, "zerog-api-bundle", [ROOT / "tests" / "api" / "api_test.c"], [ROOT / "include"],
+        assets = out / "zerog-api-test-assets.c"
+        run([sys.executable, ROOT / "tools" / "assets.py", ROOT / "tests" / "api" / "assets", "-o", assets, "--c-symbol", "test_assets"])
+        api = link_c(args, out, "zerog-api-bundle", [ROOT / "tests" / "api" / "api_test.c", assets], [ROOT / "include"],
                      [bundle_path(out), *system], cxx_runtime=bool(IS_WINDOWS or not os.environ.get("ZEROG_ZIG_TARGET")))
         check_no_exports(api)
         # The window part needs a display (a desktop, or Xvfb on Linux).

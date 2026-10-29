@@ -39,10 +39,13 @@
 #include <WebCore/Color.h>
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/DocumentLoader.h>
+#include <WebCore/DocumentPage.h>
 #include <WebCore/DocumentView.h>
 #include <WebCore/FormState.h>
 #include <WebCore/FrameLoader.h>
 #include <WebCore/FrameNetworkingContext.h>
+#include <WebCore/FrameTree.h>
+#include <WebCore/FrameTreeSyncData.h>
 #include <WebCore/HTMLFrameOwnerElement.h>
 #include <WebCore/HistoryItem.h>
 #include <WebCore/HitTestResult.h>
@@ -274,7 +277,31 @@ private:
     void saveViewStateToItem(HistoryItem&) final { }
     bool canCachePage() const final { return false; }
 
-    RefPtr<LocalFrame> createFrame(const AtomString&, HTMLFrameOwnerElement&) final { return nullptr; }
+    // Iframes, as WebKit's WebFrame::createSubframe makes them: the parent's
+    // sandbox flags apply, and the subframe's loader client reports to the view.
+    // Their loads go through the same policy (allowNavigation, not the main frame).
+    RefPtr<LocalFrame> createFrame(const AtomString& name, HTMLFrameOwnerElement& ownerElement) final
+    {
+        RefPtr page = frame().page();
+        if (!m_view || !page)
+            return nullptr;
+        auto sandboxFlags = ownerElement.sandboxFlags();
+        sandboxFlags.add(frame().effectiveSandboxFlags());
+        auto referrerPolicy = ownerElement.referrerPolicy();
+        if (RefPtr document = frame().document(); referrerPolicy == ReferrerPolicy::EmptyString && document)
+            referrerPolicy = document->referrerPolicy();
+
+        auto* view = m_view;
+        Ref subframe = LocalFrame::createSubframe(*page, [view](auto&, auto& frameLoader) {
+            return createFrameLoaderClient(frameLoader, *view);
+        }, generateFrameIdentifier(), sandboxFlags, referrerPolicy, ownerElement, FrameTreeSyncData::create());
+        subframe->tree().setSpecifiedName(name);
+        subframe->init();
+        // Creating the frame may run script that removed it already.
+        if (!subframe->page())
+            return nullptr;
+        return subframe;
+    }
     RefPtr<Widget> createPlugin(HTMLPlugInElement&, const URL&, const Vector<AtomString>&, const Vector<AtomString>&, const String&, bool) final { return nullptr; }
     ObjectContentType objectContentType(const URL&, const String&) final { return ObjectContentType::None; }
     AtomString overrideMediaType() const final { return nullAtom(); }

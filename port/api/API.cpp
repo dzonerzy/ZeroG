@@ -30,6 +30,8 @@
 #include <WebCore/SecurityOrigin.h>
 #include <algorithm>
 #include <cstring>
+#include <wtf/FileSystem.h>
+#include <wtf/MainThread.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/RunLoop.h>
 #include <wtf/text/MakeString.h>
@@ -93,8 +95,11 @@ static constexpr bool devProfile = false;
 
 bool isTrusted(zg_context& context, const URL& url, zg_trust_request request, bool isMainFrame)
 {
-    // HTML the application loads itself.
-    if (url.isEmpty() || url.isAboutBlank() || url.protocolIsData() || url.protocolIsAbout())
+    // HTML the application loads itself (zg_view_load_html), and its own schemes.
+    // data: is not: a page could build one from any string.
+    if (url.isEmpty() || url.isAboutBlank() || url.protocolIsAbout())
+        return true;
+    if (context.session && context.session->hasScheme(url.protocol()))
         return true;
     if (devProfile && !context.devServerURL.empty()) {
         auto devServer = SecurityOrigin::create(URL { String::fromUTF8(context.devServerURL.c_str()) });
@@ -482,6 +487,8 @@ void zg_runtime_memory_stats(zg_runtime* rt, zg_memory_stats* out)
     }
     stats.resource_cache_bytes = MemoryCache::singleton().size();
     for (auto* context : rt->contexts) {
+        for (auto& fileSystem : context->fileSystems.values())
+            stats.asset_bytes += fileSystem->ownedBytes();
         for (auto* view : context->views) {
             auto size = view->view->surface().size();
             stats.surface_bytes += static_cast<size_t>(size.width()) * size.height() * 4 * 2;
@@ -502,6 +509,40 @@ void zg_runtime_collect_garbage(zg_runtime* rt)
 
 // ---- Contexts ----
 
+static std::string toStdString(const String& string)
+{
+    auto utf8 = string.utf8();
+    return { byteCast<char>(utf8.data()), utf8.length() };
+}
+
+// The app_id names a directory: reverse-DNS characters only.
+static bool isValidAppID(const std::string& appID)
+{
+    if (!appID.empty() && appID.front() == '.')
+        return false;
+    return std::all_of(appID.begin(), appID.end(), [](char character) {
+        return isASCIIAlphanumeric(character) || character == '.' || character == '-' || character == '_';
+    });
+}
+
+// The per-app data directory: %LOCALAPPDATA%\<app_id> on Windows,
+// $XDG_DATA_HOME/<app_id> (default ~/.local/share) elsewhere. Empty without an app_id.
+static std::string defaultDataDirectory(const std::string& appID)
+{
+    if (appID.empty())
+        return { };
+#if OS(WINDOWS)
+    if (auto* localAppData = std::getenv("LOCALAPPDATA"); localAppData && *localAppData)
+        return std::string(localAppData) + "\\" + appID;
+#else
+    if (auto* dataHome = std::getenv("XDG_DATA_HOME"); dataHome && *dataHome)
+        return std::string(dataHome) + "/" + appID;
+    if (auto* home = std::getenv("HOME"); home && *home)
+        return std::string(home) + "/.local/share/" + appID;
+#endif
+    return { };
+}
+
 zg_context* zg_context_create(zg_runtime* rt, const zg_context_config* configuration)
 {
     clearError();
@@ -512,15 +553,30 @@ zg_context* zg_context_create(zg_runtime* rt, const zg_context_config* configura
     if (!checkThread())
         return nullptr;
     auto config = copyConfig(configuration);
+    std::string appID = config.app_id ? config.app_id : "";
+    if (!isValidAppID(appID)) {
+        fail(ZG_ERROR_INVALID_ARGUMENT, makeString("invalid app_id (letters, digits, '.', '-' and '_'): "_s, String::fromUTF8(appID.c_str())));
+        return nullptr;
+    }
     auto* context = new zg_context;
     context->runtime = rt;
-    context->appID = config.app_id ? config.app_id : "";
-    context->dataDirectory = config.data_dir ? config.data_dir : "";
+    context->appID = appID;
+    context->dataDirectory = config.data_dir ? config.data_dir : defaultDataDirectory(appID);
     context->devServerURL = config.dev_server_url ? config.dev_server_url : "";
     context->ephemeral = config.ephemeral;
     context->allowExternalContent = config.allow_external_content;
     context->trust = config.trust;
     context->trustUser = config.trust_user;
+
+    // Cookies persist in the data directory unless the context is ephemeral or
+    // has none (no data_dir and no app_id): then they live in memory.
+    String cookieDatabase;
+    if (!context->ephemeral && !context->dataDirectory.empty()) {
+        auto directory = String::fromUTF8(context->dataDirectory.c_str());
+        if (FileSystem::makeAllDirectories(directory))
+            cookieDatabase = FileSystem::pathByAppendingComponent(directory, "Cookies.sqlite"_s);
+    }
+    context->session = Session::create(cookieDatabase);
     rt->contexts.push_back(context);
     return context;
 }
@@ -529,48 +585,224 @@ void zg_context_destroy(zg_context* context)
 {
     if (!context || !checkThread())
         return;
+    // Its windows and views go first.
+    auto& windows = context->runtime->windows;
+    for (auto iterator = windows.begin(); iterator != windows.end();) {
+        if ((*iterator)->context == context) {
+            zg_window_destroy(*iterator);
+            iterator = windows.begin();
+        } else
+            ++iterator;
+    }
     while (!context->views.empty())
         zg_view_destroy(context->views.back());
+    context->session->close();
+    context->fileSystems.clear();
     auto& contexts = context->runtime->contexts;
     contexts.erase(std::remove(contexts.begin(), contexts.end(), context), contexts.end());
     delete context;
 }
 
-zg_result zg_context_mount_assets(zg_context*, const char*, const void*, size_t)
+// ---- Schemes and files ----
+
+static zg_result registrationFailure(Session::RegisterResult result, const String& scheme)
 {
-    return fail(ZG_ERROR_UNSUPPORTED, "asset archives come with the resource loader"_s);
+    switch (result) {
+    case Session::RegisterResult::Registered:
+        return ZG_OK;
+    case Session::RegisterResult::InvalidScheme:
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("invalid scheme name (lowercase letter, then letters, digits, '+', '-', '.'): "_s, scheme));
+    case Session::RegisterResult::BuiltinScheme:
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("built-in scheme: "_s, scheme));
+    case Session::RegisterResult::AlreadyRegistered:
+        return fail(ZG_ERROR_ALREADY_EXISTS, makeString("scheme already registered: "_s, scheme));
+    }
+    return ZG_ERROR_INTERNAL;
 }
 
-const char* zg_scheme_request_url(const zg_scheme_request*, size_t* length)
+// The file system serving `scheme` in the context, created and registered on
+// first use. Null if the scheme cannot serve files; `result` says why.
+static MemoryFS* fileSystem(zg_context& context, const String& scheme, zg_result& result)
+{
+    result = ZG_OK;
+    if (auto* fileSystem = context.fileSystems.get(scheme))
+        return fileSystem;
+    if (context.session->hasScheme(scheme)) {
+        result = fail(ZG_ERROR_ALREADY_EXISTS, makeString("scheme has a handler: "_s, scheme));
+        return nullptr;
+    }
+    auto fileSystem = MemoryFS::create();
+    result = registrationFailure(context.session->registerScheme(scheme, fileSystem.copyRef()), scheme);
+    if (result != ZG_OK)
+        return nullptr;
+    auto* pointer = fileSystem.ptr();
+    context.fileSystems.add(scheme, WTF::move(fileSystem));
+    return pointer;
+}
+
+zg_result zg_context_mount_assets(zg_context* context, const char* scheme, const void* archive, size_t length)
+{
+    clearError();
+    if (!context || !scheme || (!archive && length))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no context, scheme or archive"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    zg_result result;
+    auto* files = fileSystem(*context, stringFromUTF8(scheme), result);
+    if (!files)
+        return result;
+    auto mounted = files->mountArchive("/"_s, std::span { static_cast<const uint8_t*>(archive), length });
+    if (!mounted)
+        return fail(mounted.error().kind == MemoryFS::MountError::Kind::Conflict ? ZG_ERROR_ALREADY_EXISTS : ZG_ERROR_INVALID_ARGUMENT, mounted.error().message);
+    return ZG_OK;
+}
+
+zg_result zg_context_add_file(zg_context* context, const char* scheme, const char* path, const void* data, size_t length, const char* mimeType, zg_release_fn release, void* user)
+{
+    clearError();
+    if (!context || !scheme || !path || (!data && length))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no context, scheme, path or data"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    zg_result fileSystemResult;
+    auto* files = fileSystem(*context, stringFromUTF8(scheme), fileSystemResult);
+    if (!files)
+        return fileSystemResult;
+    std::span bytes { static_cast<const uint8_t*>(data), length };
+    auto filePath = stringFromUTF8(path);
+    auto type = stringFromUTF8(mimeType);
+    auto result = release
+        ? files->addFile(filePath, bytes, type, [release, user] { release(user); })
+        : files->addFile(filePath, bytes, type);
+    switch (result) {
+    case MemoryFS::AddResult::Added:
+        return ZG_OK;
+    case MemoryFS::AddResult::InvalidPath:
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("invalid path (absolute, '/' separated, no '.' or '..' segments): "_s, filePath));
+    case MemoryFS::AddResult::AlreadyExists:
+        return fail(ZG_ERROR_ALREADY_EXISTS, makeString("file already exists: "_s, filePath));
+    }
+    return ZG_ERROR_INTERNAL;
+}
+
+// A request to the application's scheme handler. Owned by the application until
+// it answers; the task is only touched on the runtime thread.
+struct zg_scheme_request {
+    RefPtr<SchemeTask> task;
+    std::string url;
+    std::string method;
+    std::vector<std::pair<std::string, std::string>> headers; // names in lowercase
+    Vector<std::pair<String, String>> responseHeaders;
+};
+
+namespace {
+
+class SchemeHandlerAPI final : public SchemeHandler {
+public:
+    SchemeHandlerAPI(zg_scheme_fn handler, void* user)
+        : m_handler(handler)
+        , m_user(user)
+    {
+    }
+
+private:
+    void start(SchemeTask& task) final
+    {
+        auto* request = new zg_scheme_request;
+        request->task = &task;
+        auto& resourceRequest = task.request();
+        request->url = toStdString(resourceRequest.url().string());
+        request->method = toStdString(resourceRequest.httpMethod());
+        for (auto& header : resourceRequest.httpHeaderFields())
+            request->headers.emplace_back(toStdString(header.key.convertToASCIILowercase()), toStdString(header.value));
+        m_handler(request, m_user);
+    }
+
+    zg_scheme_fn m_handler;
+    void* m_user;
+};
+
+// Answers arrive from any thread; the task is used, and the request freed, on the
+// runtime thread.
+void answer(zg_scheme_request* request, Function<void(SchemeTask&)>&& reply)
+{
+    ensureOnMainThread([request, reply = WTF::move(reply)] {
+        if (!request->task->isStopped())
+            reply(*request->task);
+        delete request;
+    });
+}
+
+} // anonymous namespace
+
+const char* zg_scheme_request_url(const zg_scheme_request* request, size_t* length)
+{
+    if (length)
+        *length = request ? request->url.size() : 0;
+    return request ? request->url.c_str() : nullptr;
+}
+
+const char* zg_scheme_request_method(const zg_scheme_request* request)
+{
+    return request ? request->method.c_str() : nullptr;
+}
+
+const char* zg_scheme_request_header(const zg_scheme_request* request, const char* name, size_t* length)
 {
     if (length)
         *length = 0;
+    if (!request || !name)
+        return nullptr;
+    std::string lowercase = name;
+    std::transform(lowercase.begin(), lowercase.end(), lowercase.begin(), [](char character) { return toASCIILower(character); });
+    for (auto& [headerName, value] : request->headers) {
+        if (headerName == lowercase) {
+            if (length)
+                *length = value.size();
+            return value.c_str();
+        }
+    }
     return nullptr;
 }
 
-const char* zg_scheme_request_method(const zg_scheme_request*)
+void zg_scheme_request_add_header(zg_scheme_request* request, const char* name, const char* value)
 {
-    return nullptr;
+    if (!request || !name || !*name || !value)
+        return;
+    request->responseHeaders.append({ stringFromUTF8(name).isolatedCopy(), stringFromUTF8(value).isolatedCopy() });
 }
 
-const char* zg_scheme_request_header(const zg_scheme_request*, const char*, size_t* length)
+void zg_scheme_request_respond(zg_scheme_request* request, int status, const char* mimeType, const void* body, size_t length)
 {
-    if (length)
-        *length = 0;
-    return nullptr;
+    if (!request)
+        return;
+    Vector<uint8_t> bytes(std::span { static_cast<const uint8_t*>(body), body ? length : 0 });
+    auto headers = WTF::move(request->responseHeaders);
+    answer(request, [status, mimeType = stringFromUTF8(mimeType).isolatedCopy(), bytes = WTF::move(bytes), headers = WTF::move(headers)](SchemeTask& task) mutable {
+        task.respond(status ? status : 200, mimeType, SharedBuffer::create(WTF::move(bytes)), headers);
+    });
 }
 
-void zg_scheme_request_respond(zg_scheme_request*, int, const char*, const void*, size_t)
+void zg_scheme_request_fail(zg_scheme_request* request, const char* reason)
 {
+    if (!request)
+        return;
+    answer(request, [reason = stringFromUTF8(reason).isolatedCopy()](SchemeTask& task) {
+        task.didFail(failedError(task.request().url(), reason.isEmpty() ? "The scheme handler failed the request"_s : reason));
+    });
 }
 
-void zg_scheme_request_fail(zg_scheme_request*, const char*)
+zg_result zg_context_register_scheme(zg_context* context, const char* scheme, zg_scheme_fn handler, void* user)
 {
-}
-
-zg_result zg_context_register_scheme(zg_context*, const char*, zg_scheme_fn, void*)
-{
-    return fail(ZG_ERROR_UNSUPPORTED, "custom schemes come with the resource loader"_s);
+    clearError();
+    if (!context || !scheme || !handler)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no context, scheme or handler"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    auto name = stringFromUTF8(scheme);
+    if (context->fileSystems.contains(name))
+        return fail(ZG_ERROR_ALREADY_EXISTS, makeString("scheme serves files: "_s, name));
+    return registrationFailure(context->session->registerScheme(name, adoptRef(*new SchemeHandlerAPI(handler, user))), name);
 }
 
 zg_result zg_context_register_font(zg_context*, const void*, size_t)
@@ -692,7 +924,7 @@ zg_view* zg_view_create(zg_context* context, const zg_view_config* configuration
     IntSize size { static_cast<int>(config.width ? config.width : 800), static_cast<int>(config.height ? config.height : 600) };
     auto* view = new zg_view;
     view->context = context;
-    view->owned = View::create({ size, config.scale > 0 ? config.scale : 1, !!config.transparent, true, WTF::move(surface) });
+    view->owned = View::create({ size, config.scale > 0 ? config.scale : 1, !!config.transparent, true, WTF::move(surface), context->session });
     view->view = view->owned.get();
     view->surface.surface = &view->view->surface();
     attachView(*view);
@@ -719,9 +951,17 @@ zg_surface* zg_view_surface(zg_view* view)
     return view && !view->window ? &view->surface : nullptr;
 }
 
-zg_result zg_view_load_url(zg_view*, const char*)
+zg_result zg_view_load_url(zg_view* view, const char* url)
 {
-    return fail(ZG_ERROR_UNSUPPORTED, "URL loading comes with the resource loader"_s);
+    clearError();
+    if (!viewOrFail(view))
+        return t_lastError.empty() ? ZG_ERROR_INVALID_ARGUMENT : ZG_ERROR_WRONG_THREAD;
+    URL target { stringFromUTF8(url) };
+    if (!url || !target.isValid())
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("invalid URL: "_s, stringFromUTF8(url)));
+    // The navigation policy applies the trust rules (allowNavigation).
+    view->view->loadURL(target);
+    return ZG_OK;
 }
 
 zg_result zg_view_load_html(zg_view* view, const char* html, size_t length, const char* baseURL)
@@ -907,7 +1147,7 @@ zg_window* zg_window_create(zg_context* context, const zg_window_config* configu
         return nullptr;
     auto config = copyConfig(configuration);
     IntSize size { static_cast<int>(config.width ? config.width : 1024), static_cast<int>(config.height ? config.height : 768) };
-    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, true });
+    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, true, context->session });
     if (!window) {
         fail(ZG_ERROR_GPU, makeString("cannot create the window: "_s, Window::lastError()));
         return nullptr;

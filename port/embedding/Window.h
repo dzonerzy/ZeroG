@@ -31,6 +31,7 @@ public:
         bool resizable { true };
         bool frameless { false };
         bool visible { true };
+        RefPtr<Session> session; // null: the default session
     };
     // Null if no window or no GPU is available. The first window decides the GPU
     // display on Linux (X11 or Wayland); it has to be created before any GPU view.

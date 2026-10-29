@@ -1,0 +1,585 @@
+/*
+ * Copyright (C) 2010-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2017 Igalia S.L.
+ * Copyright (C) 2018-2020 Sony Interactive Entertainment Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// Derived, at the pinned WebKit commit, from WebKit's WebLoaderStrategy (load
+// dispatch), WebURLSchemeTaskProxy (scheme tasks), WebErrors (error domains and
+// codes) and NetworkStorageSessionCurl (cookies) (docs/PROVENANCE.md).
+
+#include "config.h"
+#include "Loader.h"
+
+#include "View.h"
+#include <WebCore/Cookie.h>
+#include <WebCore/CookieJar.h>
+#include <WebCore/CookieJarDB.h>
+#include <WebCore/DataURLDecoder.h>
+#include <WebCore/Document.h>
+#include <WebCore/StorageSessionProvider.h>
+#include <WebCore/DocumentPage.h>
+#include <WebCore/FrameLoader.h>
+#include <WebCore/HTTPHeaderNames.h>
+#include <WebCore/HTTPParsers.h>
+#include <WebCore/LegacySchemeRegistry.h>
+#include <WebCore/LoaderStrategy.h>
+#include <WebCore/LocalFrame.h>
+#include <WebCore/MemoryCache.h>
+#include <WebCore/NetworkLoadMetrics.h>
+#include <WebCore/Page.h>
+#include <WebCore/ResourceLoader.h>
+#include <WebCore/SubresourceLoader.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/RunLoop.h>
+
+namespace ZeroG {
+
+using namespace WebCore;
+
+// ---- Errors ----
+
+// WebKit's policy error domain and codes (WebKit's WebErrors.cpp), which
+// WebCore's loader and the inspector recognize.
+static constexpr auto policyErrorDomain = "WebKitErrorDomain"_s;
+enum PolicyError : int {
+    CannotShowMIMEType = 100,
+    CannotShowURL = 101,
+    FrameLoadInterruptedByPolicyChange = 102,
+    CannotUseRestrictedPort = 103,
+    PlugInWillHandleLoad = 204,
+};
+
+ResourceError cancelledError(const URL& url)
+{
+    return { errorDomainWebKitInternal, 0, url, "Load cancelled"_s, ResourceError::Type::Cancellation };
+}
+
+ResourceError cannotShowURLError(const URL& url)
+{
+    return { policyErrorDomain, CannotShowURL, url, "The URL can't be shown"_s };
+}
+
+ResourceError blockedError(const URL& url)
+{
+    return { policyErrorDomain, CannotUseRestrictedPort, url, "Not allowed to use restricted network port"_s, ResourceError::Type::AccessControl };
+}
+
+ResourceError notFoundError(const URL& url)
+{
+    return { errorDomainWebKitNetwork, 404, url, "Resource not found"_s };
+}
+
+ResourceError failedError(const URL& url, const String& description)
+{
+    return { errorDomainWebKitNetwork, 0, url, description };
+}
+
+// ---- Scheme tasks ----
+
+Ref<SchemeTask> SchemeTask::create(ResourceLoader& loader, SchemeHandler& handler)
+{
+    return adoptRef(*new SchemeTask(loader, handler));
+}
+
+SchemeTask::SchemeTask(ResourceLoader& loader, SchemeHandler& handler)
+    : m_loader(&loader)
+    , m_handler(handler)
+    , m_request(loader.request())
+{
+}
+
+ResourceLoader* SchemeTask::loader()
+{
+    if (m_loader && m_loader->reachedTerminalState())
+        m_loader = nullptr;
+    return m_loader.get();
+}
+
+void SchemeTask::start()
+{
+    if (!loader())
+        return;
+    Ref protectedThis { *this };
+    m_handler->start(*this);
+}
+
+void SchemeTask::stop()
+{
+    if (!m_loader)
+        return;
+    m_loader = nullptr;
+    m_queuedTasks.clear();
+    Ref protectedThis { *this };
+    m_handler->stop(*this);
+}
+
+// While WebCore decides what to do with a response, data and completion wait,
+// as in WebKit's WebURLSchemeTaskProxy.
+void SchemeTask::runOrQueue(Function<void()>&& task)
+{
+    if (m_waitingForResponsePolicy) {
+        m_queuedTasks.append(WTF::move(task));
+        return;
+    }
+    task();
+}
+
+void SchemeTask::processNextTask()
+{
+    while (!m_waitingForResponsePolicy && !m_queuedTasks.isEmpty())
+        m_queuedTasks.takeFirst()();
+}
+
+void SchemeTask::didReceiveResponse(ResourceResponse&& response)
+{
+    runOrQueue([this, protectedThis = Ref { *this }, response = WTF::move(response)] mutable {
+        RefPtr loader = this->loader();
+        if (!loader)
+            return;
+        m_waitingForResponsePolicy = true;
+        loader->didReceiveResponse(WTF::move(response), [this, protectedThis = Ref { *this }] {
+            m_waitingForResponsePolicy = false;
+            processNextTask();
+        });
+    });
+}
+
+void SchemeTask::didReceiveData(Ref<SharedBuffer>&& data)
+{
+    runOrQueue([this, protectedThis = Ref { *this }, data = WTF::move(data)] {
+        if (RefPtr loader = this->loader())
+            loader->didReceiveData(data, data->size(), DataPayloadType::DataPayloadBytes);
+    });
+}
+
+void SchemeTask::didFinish()
+{
+    runOrQueue([this, protectedThis = Ref { *this }] {
+        RefPtr loader = this->loader();
+        if (!loader)
+            return;
+        // Finishing removes the loader from the strategy, which stops the task:
+        // forget the loader first, so the handler is not told to stop.
+        m_loader = nullptr;
+        loader->didFinishLoading(NetworkLoadMetrics { });
+    });
+}
+
+void SchemeTask::didFail(const ResourceError& error)
+{
+    runOrQueue([this, protectedThis = Ref { *this }, error] {
+        RefPtr loader = this->loader();
+        if (!loader)
+            return;
+        m_loader = nullptr;
+        loader->didFail(error);
+    });
+}
+
+static ASCIILiteral statusText(int);
+
+void SchemeTask::redirect(const URL& location, int status)
+{
+    runOrQueue([this, protectedThis = Ref { *this }, location, status] {
+        RefPtr loader = this->loader();
+        if (!loader)
+            return;
+        if (location.protocol() != m_request.url().protocol()) {
+            m_loader = nullptr;
+            loader->didFail(ZeroG::cannotShowURLError(location));
+            return;
+        }
+        ResourceResponse response { URL { m_request.url() }, String { }, 0, String { } };
+        response.setHTTPStatusCode(status);
+        response.setHTTPStatusText(statusText(status));
+        response.setHTTPHeaderField(HTTPHeaderName::Location, location.string());
+        auto request = m_request;
+        request.setURL(URL { location });
+        m_waitingForResponsePolicy = true;
+        loader->willSendRequest(WTF::move(request), response, [this, protectedThis = Ref { *this }](ResourceRequest&& newRequest) {
+            m_waitingForResponsePolicy = false;
+            m_queuedTasks.clear();
+            // A null request: WebCore refused the redirect and cancels the load.
+            if (newRequest.isNull() || !this->loader())
+                return;
+            m_request = WTF::move(newRequest);
+            m_handler->start(*this);
+        });
+    });
+}
+
+static ASCIILiteral statusText(int status)
+{
+    switch (status) {
+    case 200: return "OK"_s;
+    case 204: return "No Content"_s;
+    case 206: return "Partial Content"_s;
+    case 301: return "Moved Permanently"_s;
+    case 302: return "Found"_s;
+    case 304: return "Not Modified"_s;
+    case 400: return "Bad Request"_s;
+    case 403: return "Forbidden"_s;
+    case 404: return "Not Found"_s;
+    case 405: return "Method Not Allowed"_s;
+    case 416: return "Range Not Satisfiable"_s;
+    case 500: return "Internal Server Error"_s;
+    default: return ""_s;
+    }
+}
+
+void SchemeTask::respond(int status, const String& mediaType, Ref<SharedBuffer>&& body, const Vector<std::pair<String, String>>& headers)
+{
+    auto mimeType = extractMIMETypeFromMediaType(mediaType);
+    auto charset = extractCharsetFromMediaType(mediaType).toString();
+    ResourceResponse response { URL { m_request.url() }, WTF::move(mimeType), static_cast<long long>(body->size()), WTF::move(charset) };
+    response.setHTTPStatusCode(status);
+    response.setHTTPStatusText(statusText(status));
+    if (!mediaType.isEmpty())
+        response.setHTTPHeaderField(HTTPHeaderName::ContentType, mediaType);
+    response.setHTTPHeaderField(HTTPHeaderName::ContentLength, String::number(body->size()));
+    for (auto& [name, value] : headers)
+        response.setHTTPHeaderField(name, value);
+    didReceiveResponse(WTF::move(response));
+    if (body->size())
+        didReceiveData(WTF::move(body));
+    didFinish();
+}
+
+// ---- Sessions ----
+
+static bool s_creatingDefaultSession;
+
+Session& Session::defaultSession()
+{
+    static NeverDestroyed<Ref<Session>> session { [] {
+        s_creatingDefaultSession = true;
+        auto session = Session::create();
+        s_creatingDefaultSession = false;
+        return session;
+    }() };
+    return session.get();
+}
+
+// Never WebKit's ephemeral IDs: they mean private browsing (no console output,
+// among others). What a session keeps on disk is decided here, by its cookie
+// database.
+static PAL::SessionID newSessionID()
+{
+    if (s_creatingDefaultSession)
+        return PAL::SessionID::defaultSessionID();
+    return PAL::SessionID::generatePersistentSessionID();
+}
+
+Session::Session(const String& cookieDatabasePath)
+    : m_sessionID(newSessionID())
+    // ":memory:" is SQLite's in-memory database, as WebKit's ephemeral sessions use.
+    , m_cookieDatabase(makeUnique<CookieJarDB>(cookieDatabasePath.isEmpty() ? ":memory:"_s : cookieDatabasePath))
+{
+}
+
+Session::~Session()
+{
+    // Cached responses keep their files alive; a session's go with it.
+    MemoryCache::singleton().evictResources(m_sessionID);
+}
+
+void Session::close()
+{
+    m_schemeHandlers.clear();
+    MemoryCache::singleton().evictResources(m_sessionID);
+}
+
+CookieJarDB& Session::cookieDatabase()
+{
+    m_cookieDatabase->open();
+    return *m_cookieDatabase;
+}
+
+// As WebKit's NetworkStorageSessionCurl: name=value pairs for the URL, HttpOnly
+// ones only for HTTP, secure ones only over secure transports.
+static String cookieString(CookieJarDB& database, const URL& firstParty, const URL& url, bool forHTTPHeader)
+{
+    auto httpOnly = forHTTPHeader ? std::nullopt : std::optional<bool> { false };
+    auto secure = CookieJar::shouldIncludeSecureCookies(url) == IncludeSecureCookies::Yes ? std::nullopt : std::optional<bool> { false };
+    StringBuilder cookies;
+    if (auto result = database.searchCookies(firstParty, url, httpOnly, secure, std::nullopt)) {
+        for (auto& cookie : *result) {
+            if (!cookies.isEmpty())
+                cookies.append("; "_s);
+            if (!cookie.name.isEmpty())
+                cookies.append(cookie.name, '=');
+            cookies.append(cookie.value);
+        }
+    }
+    return cookies.toString();
+}
+
+String Session::cookieHeader(const URL& firstParty, const URL& url)
+{
+    return cookieString(cookieDatabase(), firstParty, url, true);
+}
+
+void Session::storeCookies(const URL& firstParty, const URL& url, const Vector<String>& headerLines)
+{
+    // Each Set-Cookie header is one cookie. ResourceResponse joins repeated
+    // headers with commas, which also appear in Expires dates, so read the raw
+    // lines, as WebKit's NetworkDataTaskCurl does.
+    static constexpr auto setCookie = "set-cookie:"_s;
+    for (auto& line : headerLines) {
+        if (!line.startsWithIgnoringASCIICase(setCookie))
+            continue;
+        auto value = line.substring(setCookie.length()).trim(isASCIIWhitespace<char16_t>);
+        cookieDatabase().setCookie(firstParty, url, value, CookieJarDB::Source::Network);
+    }
+}
+
+namespace {
+
+class NoStorageSessionProvider final : public StorageSessionProvider {
+    CookieStorageSession* storageSession() const final { return nullptr; }
+};
+
+class CookieJarZeroG final : public CookieJar {
+public:
+    explicit CookieJarZeroG(Session& session)
+        : CookieJar(adoptRef(*new NoStorageSessionProvider))
+        , m_session(session)
+    {
+    }
+
+private:
+    String cookies(Document& document, const URL& url) const final
+    {
+        return cookieString(m_session->cookieDatabase(), document.firstPartyForCookies(), url, false);
+    }
+
+    void setCookies(Document& document, const URL& url, const String& cookieString) final
+    {
+        m_session->cookieDatabase().setCookie(document.firstPartyForCookies(), url, cookieString, CookieJarDB::Source::Script);
+    }
+
+    bool cookiesEnabled(Document&) final { return true; }
+    void remoteCookiesEnabled(const Document&, CompletionHandler<void(bool)>&& completionHandler) const final { completionHandler(true); }
+
+    std::pair<String, SecureCookiesAccessed> cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo&, const URL& url, IncludeSecureCookies) const final
+    {
+        return { cookieString(m_session->cookieDatabase(), firstParty, url, true), SecureCookiesAccessed::No };
+    }
+
+    bool getRawCookies(Document& document, const URL& url, Vector<Cookie>& cookies) const final
+    {
+        auto result = m_session->cookieDatabase().searchCookies(document.firstPartyForCookies(), url, std::nullopt, std::nullopt, std::nullopt);
+        if (!result)
+            return false;
+        cookies = WTF::move(*result);
+        return true;
+    }
+
+    void deleteCookie(const Document&, const URL& url, const String& name, CompletionHandler<void()>&& completionHandler) final
+    {
+        m_session->cookieDatabase().deleteCookie(url.string(), name);
+        completionHandler();
+    }
+
+    const Ref<Session> m_session;
+};
+
+} // anonymous namespace
+
+Ref<CookieJar> createCookieJar(Session& session)
+{
+    return adoptRef(*new CookieJarZeroG(session));
+}
+
+static bool isValidScheme(const String& scheme)
+{
+    if (scheme.isEmpty() || !isASCIILower(scheme[0]))
+        return false;
+    for (auto character : StringView { scheme }.codeUnits()) {
+        if (!isASCIILower(character) && !isASCIIDigit(character) && character != '+' && character != '-' && character != '.')
+            return false;
+    }
+    return true;
+}
+
+Session::RegisterResult Session::registerScheme(const String& scheme, Ref<SchemeHandler>&& handler)
+{
+    if (!isValidScheme(scheme))
+        return RegisterResult::InvalidScheme;
+    if (LegacySchemeRegistry::isBuiltinScheme(scheme) || scheme == "file"_s || scheme == "ws"_s || scheme == "wss"_s)
+        return RegisterResult::BuiltinScheme;
+    if (m_schemeHandlers.contains(scheme))
+        return RegisterResult::AlreadyRegistered;
+
+    // ZeroG.md, "Schema custom app://": secure (so crypto.subtle and other
+    // secure-context APIs work) and CORS-enabled (fetch). Process-wide in WebCore.
+    LegacySchemeRegistry::registerURLSchemeAsSecure(scheme);
+    LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(scheme);
+    LegacySchemeRegistry::registerURLSchemeAsHandledBySchemeHandler(scheme);
+    m_schemeHandlers.add(scheme, WTF::move(handler));
+    return RegisterResult::Registered;
+}
+
+SchemeHandler* Session::schemeHandler(StringView scheme) const
+{
+    auto iterator = m_schemeHandlers.find<StringViewHashTranslator>(scheme);
+    return iterator == m_schemeHandlers.end() ? nullptr : iterator->value.ptr();
+}
+
+Session& sessionForFrame(LocalFrame* frame)
+{
+    if (frame) {
+        if (RefPtr page = frame->page()) {
+            if (auto* view = View::fromPage(*page))
+                return view->session();
+        }
+    }
+    return Session::defaultSession();
+}
+
+// ---- The loader strategy ----
+
+namespace {
+
+class LoaderStrategyZeroG final : public LoaderStrategy {
+private:
+    void loadResource(LocalFrame& frame, CachedResource& resource, ResourceRequest&& request, const ResourceLoaderOptions& options, CompletionHandler<void(RefPtr<SubresourceLoader>&&)>&& completionHandler) final
+    {
+        SubresourceLoader::create(frame, resource, WTF::move(request), options, [this, completionHandler = WTF::move(completionHandler)](RefPtr<SubresourceLoader>&& loader) mutable {
+            if (loader)
+                schedule(*loader);
+            completionHandler(WTF::move(loader));
+        });
+    }
+
+    void schedule(ResourceLoader& loader)
+    {
+        auto& url = loader.request().url();
+        // WebCore decodes data: URLs itself.
+        if (url.protocolIsData()) {
+            loader.start();
+            return;
+        }
+
+        RefPtr<LoadTask> task;
+        if (auto* handler = sessionForFrame(loader.frame()).schemeHandler(url.protocol()))
+            task = SchemeTask::create(loader, *handler);
+        else if (url.protocolIsInHTTPFamily())
+            task = createNetworkTask(loader);
+
+        if (!task) {
+            RunLoop::mainSingleton().dispatch([loader = Ref { loader }] {
+                if (!loader->reachedTerminalState())
+                    loader->didFail(ZeroG::cannotShowURLError(loader->request().url()));
+            });
+            return;
+        }
+
+        m_tasks.set(*loader.identifier(), *task);
+        // Answers always come after loadResource returns, as from a network process.
+        RunLoop::mainSingleton().dispatch([task = task.releaseNonNull()] {
+            task->start();
+        });
+    }
+
+    void loadResourceSynchronously(FrameLoader& frameLoader, ResourceLoaderIdentifier, const ResourceRequest& request, ClientCredentialPolicy, const FetchOptions&, const HTTPHeaderMap&, ResourceError& error, ResourceResponse& response, Vector<uint8_t>& data) final
+    {
+        auto& url = request.url();
+        if (url.protocolIsData()) {
+            auto result = DataURLDecoder::decode(url);
+            if (!result) {
+                error = failedError(url, "Invalid data URL"_s);
+                return;
+            }
+            response = ResourceResponse::dataURLResponse(url, *result);
+            data = WTF::move(result->data);
+            return;
+        }
+        if (auto* handler = sessionForFrame(&frameLoader.frame()).schemeHandler(url.protocol())) {
+            Ref protectedHandler { *handler };
+            if (!handler->loadSynchronously(request, response, data))
+                error = failedError(url, "This scheme does not answer synchronous loads"_s);
+            return;
+        }
+        if (url.protocolIsInHTTPFamily()) {
+            loadNetworkResourceSynchronously(request, error, response, data);
+            return;
+        }
+        error = ZeroG::cannotShowURLError(url);
+    }
+
+    void remove(ResourceLoader* loader) final
+    {
+        auto identifier = loader->identifier();
+        if (!identifier)
+            return;
+        if (RefPtr task = m_tasks.take(*identifier))
+            task->stop();
+    }
+
+    void pageLoadCompleted(Page&) final { }
+    void browsingContextRemoved(LocalFrame&) final { }
+    void setDefersLoading(ResourceLoader&, bool) final { }
+    void crossOriginRedirectReceived(ResourceLoader*, const URL&) final { }
+    void servePendingRequests(ResourceLoadPriority) final { }
+    void suspendPendingRequests() final { }
+    void resumePendingRequests() final { }
+    void preconnectTo(FrameLoader&, ResourceRequest&&, StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&& completionHandler) final
+    {
+        if (completionHandler)
+            completionHandler({ });
+    }
+    void setCaptureExtraNetworkLoadMetricsEnabled(bool) final { }
+    bool isOnLine() const final { return true; }
+    void addOnlineStateChangeListener(Function<void(bool)>&&) final { }
+    void isResourceLoadFinished(CachedResource&, CompletionHandler<void(bool)>&& completionHandler) final { completionHandler(true); }
+
+    ResourceError cancelledError(const ResourceRequest& request) const final { return ZeroG::cancelledError(request.url()); }
+    ResourceError blockedError(const ResourceRequest& request) const final { return ZeroG::blockedError(request.url()); }
+    bool isBlockedError(const ResourceError& error) const final { return error.domain() == policyErrorDomain && error.errorCode() == CannotUseRestrictedPort; }
+    ResourceError blockedByContentBlockerError(const ResourceRequest& request) const final { return { policyErrorDomain, CannotShowURL, request.url(), "The URL was blocked by a content blocker"_s, ResourceError::Type::AccessControl }; }
+    ResourceError cannotShowURLError(const ResourceRequest& request) const final { return ZeroG::cannotShowURLError(request.url()); }
+    ResourceError interruptedForPolicyChangeError(const ResourceRequest& request) const final { return { policyErrorDomain, FrameLoadInterruptedByPolicyChange, request.url(), "Frame load interrupted"_s }; }
+#if ENABLE(CONTENT_FILTERING)
+    ResourceError blockedByContentFilterError(const ResourceRequest& request) const final { return { policyErrorDomain, CannotShowURL, request.url(), "The URL was blocked by a content filter"_s, ResourceError::Type::AccessControl }; }
+#endif
+    ResourceError cannotShowMIMETypeError(const ResourceResponse& response) const final { return { policyErrorDomain, CannotShowMIMEType, response.url(), "Content with specified MIME type can't be shown"_s }; }
+    ResourceError fileDoesNotExistError(const ResourceResponse& response) const final { return notFoundError(response.url()); }
+    ResourceError httpsUpgradeRedirectLoopError(const ResourceRequest& request) const final { return failedError(request.url(), "HTTPS upgrade redirect loop detected"_s); }
+    ResourceError httpNavigationWithHTTPSOnlyError(const ResourceRequest& request) const final { return failedError(request.url(), "HTTP navigation with HTTPS-only enabled"_s); }
+    bool isHttpNavigationWithHTTPSOnlyError(const ResourceError&) const final { return false; }
+    ResourceError pluginWillHandleLoadError(const ResourceResponse& response) const final { return { policyErrorDomain, PlugInWillHandleLoad, response.url(), "Plug-in handled load"_s }; }
+
+    HashMap<ResourceLoaderIdentifier, Ref<LoadTask>> m_tasks;
+};
+
+} // anonymous namespace
+
+LoaderStrategy* createLoaderStrategy()
+{
+    return new LoaderStrategyZeroG;
+}
+
+} // namespace ZeroG

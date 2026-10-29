@@ -9,6 +9,9 @@ set(ZeroGEmbedding_SOURCES
     Embedding.cpp
     FrameLoaderClientZeroG.cpp
     KeyboardSDL.cpp
+    Loader.cpp
+    LoaderCurl.cpp
+    MemoryFS.cpp
     PlatformStrategiesZeroG.cpp
     Surface.cpp
     SurfaceGL.cpp
@@ -18,7 +21,7 @@ set(ZeroGEmbedding_SOURCES
 
 # Window mode: SDL3, static; on Linux it loads X11 or Wayland at run time.
 find_package(SDL3 CONFIG REQUIRED)
-set(ZeroGEmbedding_LIBRARIES SDL3::SDL3-static)
+set(ZeroGEmbedding_LIBRARIES SDL3::SDL3-static ZLIB::ZLIB)
 
 if (WIN32)
     list(APPEND ZeroGEmbedding_SOURCES SurfaceD3D11.cpp)
@@ -100,6 +103,18 @@ set(ZeroGInput_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRE
 WEBKIT_EXECUTABLE_DECLARE(ZeroGInput)
 WEBKIT_EXECUTABLE(ZeroGInput)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGInput)
+
+# The resource loader: app:// from memory, data:, http over curl.
+set(ZeroGLoader_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/loader.cpp)
+set(ZeroGLoader_LIBRARIES ZeroGEmbedding ZLIB::ZLIB)
+if (WIN32)
+    list(APPEND ZeroGLoader_LIBRARIES ws2_32)
+endif ()
+set(ZeroGLoader_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGLoader_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGLoader)
+WEBKIT_EXECUTABLE(ZeroGLoader)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGLoader)
 
 # Window mode: a native window presented at vsync.
 set(ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window.cpp)

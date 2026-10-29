@@ -153,7 +153,7 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     auto surface = createGPUSurface(2);
     if (!surface)
         return fail("no GPU surface"_s);
-    auto view = View::create({ configuration.size, scale > 0 ? scale : 1, false, true, WTF::move(surface) });
+    auto view = View::create({ configuration.size, scale > 0 ? scale : 1, false, true, WTF::move(surface), WTF::move(configuration.session) });
 
     destroyWindow.release();
     std::unique_ptr<Window> result(new Window(window, WTF::move(view), WTF::move(presentContext), native->window));

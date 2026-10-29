@@ -30,6 +30,7 @@ run "default EGL display (X11)" env ZEROG_EGL_PLATFORM=default xvfb-run -a "$bin
 run "frame loop" "$bin/ZeroGFrameLoop"
 run "texture mode" "$bin/ZeroGTexture"
 run "input" "$bin/ZeroGInput"
+run "resource loader" "$bin/ZeroGLoader"
 run "window on X11" xvfb-run -a "$bin/ZeroGWindow"
 run "C API" xvfb-run -a "$bin/ZeroGAPITest"
 run "C API without a display" "$bin/ZeroGAPITest" --no-window
