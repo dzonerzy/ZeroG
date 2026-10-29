@@ -8,14 +8,18 @@ set(ZeroGEmbedding_SOURCES
     Embedding.cpp
     PlatformStrategiesZeroG.cpp
     Surface.cpp
+    SurfaceGL.cpp
     View.cpp
+    Window.cpp
 )
+
+# Window mode: SDL3, static; on Linux it loads X11 or Wayland at run time.
+find_package(SDL3 CONFIG REQUIRED)
+set(ZeroGEmbedding_LIBRARIES SDL3::SDL3-static)
 
 if (WIN32)
     list(APPEND ZeroGEmbedding_SOURCES SurfaceD3D11.cpp)
-    set(ZeroGEmbedding_LIBRARIES d3d11 dxgi)
-else ()
-    list(APPEND ZeroGEmbedding_SOURCES SurfaceGL.cpp)
+    list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi)
 endif ()
 
 set(ZeroGEmbedding_FRAMEWORKS
@@ -84,3 +88,12 @@ set(ZeroGTexture_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DI
 WEBKIT_EXECUTABLE_DECLARE(ZeroGTexture)
 WEBKIT_EXECUTABLE(ZeroGTexture)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGTexture)
+
+# Window mode: a native window presented at vsync.
+set(ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window.cpp)
+set(ZeroGWindow_LIBRARIES ZeroGEmbedding)
+set(ZeroGWindow_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGWindow_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGWindow)
+WEBKIT_EXECUTABLE(ZeroGWindow)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGWindow)

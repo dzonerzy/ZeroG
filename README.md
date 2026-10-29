@@ -63,6 +63,7 @@ build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 | --- | --- |
 | `ZeroGFirstRender [--gpu]` | HTML, CSS, script and text painted on the CPU (and GPU), pixels checked |
 | `ZeroGFrameLoop` | `requestAnimationFrame` on the application's frame clock; each frame repaints only the damage; buffers match a full repaint |
+| `ZeroGWindow` | window mode (SDL3 window, GPU presentation at vsync): rAF at the display's rate, presented image matches a CPU render, resizing reaches the page. On Linux: `xvfb-run -a ZeroGWindow` |
 | `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render |
 
 `--profile minimal|standard|dev` selects the build profile and its ICU data;

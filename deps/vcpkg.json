@@ -19,6 +19,15 @@
     { "name": "egl-registry", "platform": "linux", "$comment": "Khronos EGL headers only; the driver is loaded at run time" },
     { "name": "opengl-registry", "platform": "linux", "$comment": "Khronos GLES headers only" },
     {
+      "name": "sdl3",
+      "$comment": "Window mode (ZeroG.md, 'Modalità finestra'): window, events, input. X11 and Wayland are loaded at run time; IBus (D-Bus) comes with IME support.",
+      "default-features": false,
+      "features": [
+        { "name": "x11", "platform": "linux" },
+        { "name": "wayland", "platform": "linux" }
+      ]
+    },
+    {
       "name": "curl",
       "$comment": "HTTP/1.1 and HTTP/2 over BoringSSL; brotli/zstd decoding; WebSocket for dev-mode hot reload. Cookies and the PSL are handled by WebCore.",
       "default-features": false,

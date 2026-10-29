@@ -5,11 +5,11 @@
 // frame's fence, which the application waits on (eglWaitSync) before sampling, and
 // one created when the application releases the frame, which the engine waits on
 // before drawing into that texture again.
+//
+// The same surface without the EGLImages serves window mode on every OS: frames
+// are textures in the engine's GL share group, which the window's context blits.
 
 #include "config.h"
-
-#if !OS(WINDOWS)
-
 #include "Surface.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -40,12 +40,14 @@ namespace {
 
 class GLSurface final : public Surface {
 public:
+    // `hostDisplay`: export EGLImages on that display (it must be the engine's).
+    // Null: textures for the engine's own share group.
     static std::unique_ptr<GLSurface> create(EGLDisplay hostDisplay, unsigned bufferCount)
     {
         auto* display = PlatformDisplay::sharedDisplayIfExists();
-        if (!display || display->eglDisplay() != hostDisplay || !display->skiaGLContext())
+        if (!display || (hostDisplay && display->eglDisplay() != hostDisplay) || !display->skiaGLContext())
             return nullptr;
-        return std::unique_ptr<GLSurface>(new GLSurface(hostDisplay, bufferCount));
+        return std::unique_ptr<GLSurface>(new GLSurface(display->eglDisplay(), !!hostDisplay, bufferCount));
     }
 
     ~GLSurface()
@@ -54,9 +56,10 @@ public:
     }
 
 private:
-    GLSurface(EGLDisplay display, unsigned bufferCount)
-        : Surface(SurfaceKind::GL, bufferCount)
+    GLSurface(EGLDisplay display, bool exportImages, unsigned bufferCount)
+        : Surface(exportImages ? SurfaceKind::GL : SurfaceKind::GPU, bufferCount)
         , m_display(display)
+        , m_exportImages(exportImages)
     {
     }
 
@@ -87,11 +90,13 @@ private:
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size.width(), size.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
 
-        texture->image = PlatformDisplay::sharedDisplay().createEGLImage(static_cast<EGLContext>(context->platformContext()), EGL_GL_TEXTURE_2D,
-            reinterpret_cast<EGLClientBuffer>(static_cast<uintptr_t>(texture->glTexture)), { });
-        if (texture->image == EGL_NO_IMAGE) {
-            glDeleteTextures(1, &texture->glTexture);
-            return false;
+        if (m_exportImages) {
+            texture->image = PlatformDisplay::sharedDisplay().createEGLImage(static_cast<EGLContext>(context->platformContext()), EGL_GL_TEXTURE_2D,
+                reinterpret_cast<EGLClientBuffer>(static_cast<uintptr_t>(texture->glTexture)), { });
+            if (texture->image == EGL_NO_IMAGE) {
+                glDeleteTextures(1, &texture->glTexture);
+                return false;
+            }
         }
 
         auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
@@ -165,7 +170,7 @@ private:
     void fillFrame(Buffer& buffer, Frame& frame) final
     {
         auto& texture = *static_cast<Texture*>(buffer.backend);
-        frame.texture = texture.image;
+        frame.texture = m_exportImages ? texture.image : reinterpret_cast<void*>(static_cast<uintptr_t>(texture.glTexture));
         frame.fence = texture.readyFence;
     }
 
@@ -181,15 +186,23 @@ private:
     }
 
     EGLDisplay m_display;
+    bool m_exportImages;
 };
 
 } // namespace
 
+#if !OS(WINDOWS)
 std::unique_ptr<Surface> createGLSurface(void* hostDisplay, unsigned bufferCount)
 {
+    if (!hostDisplay)
+        return nullptr;
     return GLSurface::create(static_cast<EGLDisplay>(hostDisplay), bufferCount);
+}
+#endif
+
+std::unique_ptr<Surface> createGPUSurface(unsigned bufferCount)
+{
+    return GLSurface::create(EGL_NO_DISPLAY, bufferCount);
 }
 
 } // namespace ZeroG
-
-#endif // !OS(WINDOWS)

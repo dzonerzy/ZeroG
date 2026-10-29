@@ -42,11 +42,18 @@ ENV ZEROG_VCPKG_ROOT=/opt/vcpkg \
     VCPKG_KEEP_ENV_VARS=ZEROG_ZIG_TARGET;ZIG_GLOBAL_CACHE_DIR \
     ZEROG_SYSROOT=/build/sysroot
 
-# For the render tests only, the engine depends on neither: fonts (it reads
-# whatever the host has under /usr/share/fonts) and Mesa's EGL with llvmpipe, a
-# software GPU driver for `first_render --gpu` (port/gl loads the system driver).
+# Headers to build SDL3's X11 and Wayland backends (window mode). SDL loads the
+# libraries themselves at run time, so binaries do not link them.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        fonts-dejavu-core libegl1 libegl-mesa0 libgles2 mesa-libgallium \
+        libx11-dev libxext-dev libxkbcommon-dev libwayland-dev libwayland-bin wayland-protocols libegl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# For the render tests only, the engine depends on neither: fonts (it reads
+# whatever the host has under /usr/share/fonts), Mesa's EGL with llvmpipe, a
+# software GPU driver for the GPU tests (port/gl loads the system driver), and
+# Xvfb, a headless X server for the window test.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        fonts-dejavu-core libegl1 libegl-mesa0 libgles2 mesa-libgallium xvfb xauth \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

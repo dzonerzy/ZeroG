@@ -35,6 +35,7 @@ enum class SurfaceKind : uint8_t {
     CPU, // BGRA8 premultiplied pixels in memory
     D3D11, // Windows: a texture shared with the host's ID3D11Device
     GL, // Linux: an EGLImage on the host's EGLDisplay
+    GPU, // a GL texture in the engine's share group (window mode)
 };
 
 // One acquired frame. Rows go from top to bottom.
@@ -145,6 +146,9 @@ private:
 };
 
 std::unique_ptr<Surface> createCPUSurface(unsigned bufferCount);
+// Frames are GL textures (names cast to void*) in the engine's share group, with
+// an EGLSync to wait on. Null without a GPU (initializeGPU).
+std::unique_ptr<Surface> createGPUSurface(unsigned bufferCount);
 #if OS(WINDOWS)
 // `hostDevice` is the application's ID3D11Device. Null if ANGLE's D3D11 device or
 // the shared textures are not available.

@@ -44,6 +44,7 @@ under `patches/` is listed here when it is created.
 | `port/embedding/View.*`, `port/embedding/Surface*`, `port/embedding/Window.*`, `tests/render/frame_loop.cpp`, `tests/render/texture_*.cpp`, `tests/render/window.cpp` | Original | BSD-2-Clause |
 | `port/embedding/ChromeClientZeroG.*` | Upstream, derived from `EmptyChromeClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple header kept) |
 | `patches/0015-webcore-embedder-frame-time.patch` | Original, modifies `Page.{h,cpp}` and `LocalDOMWindow.{h,cpp}` | Same as the modified files; upstream candidate |
+| `patches/0016-wtf-generic-run-loop-next-wake-up-time.patch` | Original, modifies `RunLoop.h` and `RunLoopGeneric.cpp` (BSD) | BSD-2-Clause; upstream candidate |
 | `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from

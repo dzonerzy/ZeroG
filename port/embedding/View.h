@@ -54,6 +54,9 @@ public:
     // From ChromeClientZeroG.
     void invalidate(const WebCore::IntRect& rootViewRect);
     void setNeedsRenderingUpdate() { m_needsRenderingUpdate = true; }
+    // An animation or requestAnimationFrame callback waits for the next frame.
+    bool hasPendingRenderingUpdate() const { return m_needsRenderingUpdate; }
+    bool hasDamage() const { return !m_damage.isEmpty(); }
 
 private:
     explicit View(Configuration&&);

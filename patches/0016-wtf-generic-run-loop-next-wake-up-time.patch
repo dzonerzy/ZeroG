@@ -1,0 +1,37 @@
+diff --git a/Source/WTF/wtf/RunLoop.h b/Source/WTF/wtf/RunLoop.h
+index 4757a94de7..5e71769682 100644
+--- a/Source/WTF/wtf/RunLoop.h
++++ b/Source/WTF/wtf/RunLoop.h
+@@ -147,6 +147,11 @@ public:
+ #if USE(GENERIC_EVENT_LOOP) || USE(WINDOWS_EVENT_LOOP)
+     WTF_EXPORT_PRIVATE static void setWakeUpCallback(WTF::Function<void()>&&);
+ #endif
++#if USE(GENERIC_EVENT_LOOP)
++    // For an embedder that drives the loop with cycle(): when the loop next has
++    // work, now if tasks are pending, nullopt if nothing is scheduled.
++    WTF_EXPORT_PRIVATE std::optional<MonotonicTime> nextWakeUpTime();
++#endif
+ 
+ #if USE(WINDOWS_EVENT_LOOP)
+     using WindowsMessageHandler = Function<bool(MSG&)>;
+diff --git a/Source/WTF/wtf/generic/RunLoopGeneric.cpp b/Source/WTF/wtf/generic/RunLoopGeneric.cpp
+index 1b5a02a921..1d4a157822 100644
+--- a/Source/WTF/wtf/generic/RunLoopGeneric.cpp
++++ b/Source/WTF/wtf/generic/RunLoopGeneric.cpp
+@@ -274,6 +274,16 @@ void RunLoop::wakeUp()
+     wakeUpWithLock();
+ }
+ 
++std::optional<MonotonicTime> RunLoop::nextWakeUpTime()
++{
++    Locker locker { m_loopLock };
++    if (m_pendingTasks)
++        return MonotonicTime::now();
++    if (m_schedules.isEmpty())
++        return std::nullopt;
++    return m_schedules.first()->scheduledTimePoint();
++}
++
+ RunLoop::CycleResult RunLoop::cycle(RunLoopMode)
+ {
+     RunLoop::currentSingleton().runImpl(RunMode::Iterate);
