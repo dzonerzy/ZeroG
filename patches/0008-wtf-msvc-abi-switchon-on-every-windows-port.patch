@@ -1,0 +1,22 @@
+diff --git a/Source/WTF/wtf/StdLibExtras.h b/Source/WTF/wtf/StdLibExtras.h
+index bad8bd4563..1a01488ea5 100644
+--- a/Source/WTF/wtf/StdLibExtras.h
++++ b/Source/WTF/wtf/StdLibExtras.h
+@@ -534,7 +534,7 @@ concept IntegralOrEnum = std::integral<T> || std::is_enum_v<T>;
+ template<typename Derived, typename Base>
+ concept DerivedFromOrConvertibleTo = std::is_base_of_v<Base, Derived> || std::is_convertible_v<Derived, Base>;
+ 
+-#if PLATFORM(WIN)
++#if OS(WINDOWS)
+ 
+ // Use a single unconstrained function template with if constexpr to work around Clang's
+ // MS ABI mangler failing on pack expansions in constrained function templates when the
+@@ -589,7 +589,7 @@ template<class V, class... F> requires (HasSwitchOn<V>) ALWAYS_INLINE auto switc
+     return v.switchOn(std::forward<F>(f)...);
+ }
+ 
+-#endif // !PLATFORM(WIN)
++#endif // !OS(WINDOWS)
+ 
+ // Implementation of std::variant_alternative_index from https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p2527r3.html.
+ 

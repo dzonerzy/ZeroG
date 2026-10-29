@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fetch and check the pinned toolchain described in toolchain.json.
 
-    fetch          download and verify the pinned LLVM for Windows into
-                   third_party/toolchains/llvm-<version>
+    fetch          download and verify the pinned Windows tools (LLVM, native
+                   Perl) into third_party/toolchains
     docker-build   build the Linux builder image with the manifest's zig,
                    glibc target and vcpkg commit as build arguments
     check          verify that the toolchain in use matches the manifest
@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,12 +51,19 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def cmd_fetch(args):
-    if not IS_WINDOWS:
-        sys.exit("fetch is for Windows; Linux uses the Docker builder (docker-build)")
-    spec = manifest()["llvm"]["windows-x86_64"]
-    if (llvm_bin() / "clang-cl.exe").exists() and not args.force:
-        print(f"{llvm_root().name} already present")
+def perl_root():
+    return TOOLCHAINS / f"strawberry-perl-{manifest()['perl']['version']}"
+
+
+def perl_exe():
+    """The pinned native Perl (Windows); only perl/bin is used, not Strawberry's gcc."""
+    return perl_root() / "perl" / "bin" / "perl.exe"
+
+
+def install(spec, root, marker, strip_top):
+    """Download spec["url"], verify its sha256, unpack it into `root`."""
+    if marker.exists():
+        print(f"{root.name} already present")
         return
     downloads = TOOLCHAINS / "downloads"
     downloads.mkdir(parents=True, exist_ok=True)
@@ -68,16 +76,34 @@ def cmd_fetch(args):
     actual = sha256(archive)
     if actual != spec["sha256"]:
         sys.exit(f"{archive.name}: sha256 {actual} does not match the manifest")
-    staging = TOOLCHAINS / f"{llvm_root().name}.extract"
+    staging = TOOLCHAINS / f"{root.name}.extract"
     shutil.rmtree(staging, ignore_errors=True)
     print(f"extracting {archive.name}")
-    with tarfile.open(archive) as tar:
-        tar.extractall(staging, filter="data")
-    (top,) = list(staging.iterdir())
-    shutil.rmtree(llvm_root(), ignore_errors=True)
-    top.rename(llvm_root())
-    staging.rmdir()
-    print(f"installed {llvm_root()}")
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as z:
+            z.extractall(staging)
+    else:
+        with tarfile.open(archive) as tar:
+            tar.extractall(staging, filter="data")
+    shutil.rmtree(root, ignore_errors=True)
+    if strip_top:
+        (top,) = list(staging.iterdir())
+        top.rename(root)
+        staging.rmdir()
+    else:
+        staging.rename(root)
+    print(f"installed {root}")
+
+
+def cmd_fetch(args):
+    if not IS_WINDOWS:
+        sys.exit("fetch is for Windows; Linux uses the Docker builder (docker-build)")
+    m = manifest()
+    if args.force:
+        shutil.rmtree(llvm_root(), ignore_errors=True)
+        shutil.rmtree(perl_root(), ignore_errors=True)
+    install(m["llvm"]["windows-x86_64"], llvm_root(), llvm_bin() / "clang-cl.exe", strip_top=True)
+    install(m["perl"]["windows-x86_64"], perl_root(), perl_exe(), strip_top=False)
 
 
 def tool_version(exe, pattern=r"clang version (\S+)"):
@@ -105,6 +131,14 @@ def problems():
             found.append(f"pinned LLVM missing: run `python tools/toolchain.py fetch`")
         elif tool_version(clang) != m["llvm"]["version"]:
             found.append(f"{clang} is {tool_version(clang)}, manifest wants {m['llvm']['version']}")
+        perl = perl_exe()
+        if not perl.exists():
+            found.append("pinned Perl missing: run `python tools/toolchain.py fetch`")
+        else:
+            # `perl --version` reports "(v5.42.3)"; Strawberry's release adds a fourth digit.
+            version = tool_version(perl, r"\(v([0-9.]+)\)")
+            if not version or not m["perl"]["version"].startswith(version):
+                found.append(f"{perl} is {version}, manifest wants {m['perl']['version']}")
     elif os.environ.get("ZEROG_ZIG_TARGET"):
         zig = shutil.which("zig")
         version = subprocess.run([zig, "version"], text=True, capture_output=True).stdout.strip() if zig else None

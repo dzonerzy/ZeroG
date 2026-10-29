@@ -1,0 +1,64 @@
+diff --git a/Source/WebCore/accessibility/AXCoreObject.h b/Source/WebCore/accessibility/AXCoreObject.h
+index cd1266b0b7..65b6a973c4 100644
+--- a/Source/WebCore/accessibility/AXCoreObject.h
++++ b/Source/WebCore/accessibility/AXCoreObject.h
+@@ -81,7 +81,7 @@ class AccessibilityObjectAtspi;
+ 
+ typedef WebCore::AccessibilityObjectAtspi AccessibilityObjectWrapper;
+ 
+-#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU)
++#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU) || PLATFORM(ZEROG)
+ class AccessibilityObjectWrapper : public RefCounted<AccessibilityObjectWrapper> { };
+ #else
+ class AccessibilityObjectWrapper;
+@@ -1535,7 +1535,7 @@ private:
+     RetainPtr<WebAccessibilityObjectWrapper> m_wrapper;
+ #elif PLATFORM(WIN)
+     COMPtr<AccessibilityObjectWrapper> m_wrapper;
+-#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU)
++#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU) || PLATFORM(ZEROG)
+     RefPtr<AccessibilityObjectWrapper> m_wrapper;
+ #elif USE(ATSPI)
+     RefPtr<AccessibilityObjectAtspi> m_wrapper;
+diff --git a/Source/WebCore/css/StyleRule.cpp b/Source/WebCore/css/StyleRule.cpp
+index 60cfacb60b..dea4135ca9 100644
+--- a/Source/WebCore/css/StyleRule.cpp
++++ b/Source/WebCore/css/StyleRule.cpp
+@@ -63,7 +63,7 @@ struct SameSizeAsStyleRuleBase : public WTF::RefCountedBase {
+     unsigned bitfields : 5;
+ };
+ 
+-#if !PLATFORM(WIN)
++#if !OS(WINDOWS)
+ static_assert(sizeof(StyleRuleBase) == sizeof(SameSizeAsStyleRuleBase), "StyleRuleBase should stay small");
+ #endif
+ 
+diff --git a/Source/WebCore/platform/network/curl/CurlContext.cpp b/Source/WebCore/platform/network/curl/CurlContext.cpp
+index 2e6a2537f3..17c6d594a9 100644
+--- a/Source/WebCore/platform/network/curl/CurlContext.cpp
++++ b/Source/WebCore/platform/network/curl/CurlContext.cpp
+@@ -43,8 +43,10 @@
+ #include <wtf/text/CString.h>
+ #include <wtf/text/MakeString.h>
+ 
+-#if OS(WINDOWS)
++#if PLATFORM(WIN)
+ #include "WebCoreBundleWin.h"
++#endif
++#if OS(WINDOWS)
+ #include <shlobj.h>
+ #include <shlwapi.h>
+ #endif
+diff --git a/Source/WebCore/platform/network/curl/CurlProxySettings.cpp b/Source/WebCore/platform/network/curl/CurlProxySettings.cpp
+index d915c55c02..694140705f 100644
+--- a/Source/WebCore/platform/network/curl/CurlProxySettings.cpp
++++ b/Source/WebCore/platform/network/curl/CurlProxySettings.cpp
+@@ -28,7 +28,7 @@
+ 
+ #if USE(CURL)
+ 
+-#if PLATFORM(WIN)
++#if OS(WINDOWS)
+ #include <winsock2.h>
+ #endif
+ 

@@ -7,6 +7,14 @@
       "sha256": "751aab63f074f041883a5317ad100dbe1e60794693f896df83958824cbc4962a"
     }
   },
+  "perl": {
+    "_comment": "Windows only: WebKit's code generators need a native Perl; Git for Windows' MSYS Perl mangles Windows paths (WebCore's IDL generator cannot find EventInit). Only perl/bin goes on PATH, never Strawberry's bundled gcc.",
+    "version": "5.42.3.1",
+    "windows-x86_64": {
+      "url": "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_54231_64bit/strawberry-perl-5.42.3.1-64bit-portable.zip",
+      "sha256": "6a081a811781c30aca51dbc036afd93092af91e3297901f02c17043795a10690"
+    }
+  },
   "zig": {
     "version": "0.16.0",
     "clang_version": "21.1.0",

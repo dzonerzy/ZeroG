@@ -1,8 +1,21 @@
 # ZeroG port: one single-process, statically linked port for Linux, Windows and macOS.
-# Stage 1 builds WTF, bmalloc and JavaScriptCore only (parity with JSCOnly);
-# WebCore, PAL and the ZeroG layers are switched on in later stages.
+# WTF, bmalloc, JavaScriptCore, PAL and WebCore, with Skia, curl over BoringSSL and
+# RunLoopGeneric everywhere. The embedding layer and the zg_* API build on top.
 
 find_package(Threads REQUIRED)
+
+# Build profile (ZeroG.md, "Profili di build"), passed by tools/build.py.
+set(ZEROG_PROFILE "minimal" CACHE STRING "minimal, standard, dev or debug")
+if (ZEROG_PROFILE STREQUAL "minimal")
+    set(_zerog_full_web OFF)
+else ()
+    set(_zerog_full_web ON)
+endif ()
+if (ZEROG_PROFILE STREQUAL "dev" OR ZEROG_PROFILE STREQUAL "debug")
+    set(_zerog_inspector ON)
+else ()
+    set(_zerog_inspector OFF)
+endif ()
 
 if (MSVC)
     include(OptionsMSVC)
@@ -60,16 +73,41 @@ WEBKIT_OPTION_BEGIN()
 # (Source/bmalloc/mimalloc/PlatformZeroG.cmake).
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SYSTEM_MALLOC PRIVATE OFF)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_MIMALLOC PRIVATE ON)
-# Only the dev profile gets the inspector (ZeroG.md, "Funzioni da spegnere").
-WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE OFF)
 WEBKIT_OPTION_DEFINE(USE_SYSTEM_UNIFDEF "Whether to use a system-provided unifdef" PRIVATE OFF)
+
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA PRIVATE ON)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE ON) # toDataURL, toBlob
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_WOFF2 PRIVATE ON)
+
+# Functions per profile (ZeroG.md, "Funzioni da spegnere").
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE ${_zerog_full_web})
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY PRIVATE ${_zerog_full_web})
+# The WebAssembly JIT tiers default to the FTL setting, not to ENABLE_WEBASSEMBLY:
+# left on without WebAssembly they pull Wasm types into B3 and fail to compile.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY_BBQJIT PRIVATE ${_zerog_full_web})
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY_OMGJIT PRIVATE ${_zerog_full_web})
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE ${_zerog_inspector})
+# Media (ZeroG.md, "Media"): no backend yet, so nothing plays. ENABLE_VIDEO stays on:
+# no upstream port builds without it and WebCore compiles media code unguarded;
+# <video>/<audio> exist and report that they cannot play. Web Audio is off (as on
+# PlayStation, which builds that way).
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE OFF)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)
+# Image formats and color management left out of every profile for now.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_AVIF PRIVATE OFF)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_JPEGXL PRIVATE OFF)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_LCMS PRIVATE OFF)
+# Browser features an application engine does not provide.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_GEOLOCATION PRIVATE OFF)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_NOTIFICATIONS PRIVATE OFF)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_USER_MESSAGE_HANDLERS PRIVATE OFF) # WebKit2 API
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_IMAGE_DIFF PRIVATE OFF)
 WEBKIT_OPTION_END()
 
-set(ENABLE_WEBCORE OFF)
+set(ENABLE_WEBCORE ON)
 set(ENABLE_WEBKIT_LEGACY OFF)
 set(ENABLE_WEBKIT OFF)
 set(ENABLE_WEBINSPECTORUI OFF)
-set(ENABLE_WEBGL OFF)
 set(ENABLE_WEBGPU OFF)
 set(ENABLE_API_TESTS OFF)
 
@@ -77,6 +115,9 @@ set(ENABLE_API_TESTS OFF)
 set(bmalloc_LIBRARY_TYPE STATIC)
 set(WTF_LIBRARY_TYPE STATIC)
 set(JavaScriptCore_LIBRARY_TYPE STATIC)
+set(PAL_LIBRARY_TYPE STATIC)
+set(WebCore_LIBRARY_TYPE STATIC)
+set(WebCoreTestSupport_LIBRARY_TYPE STATIC)
 
 # WTF's RunLoopGeneric everywhere: no GLib, no RunLoopWin, no CFRunLoop.
 set(EVENT_LOOP_TYPE "Generic")
@@ -110,6 +151,20 @@ set(ICU_DATA_LIBRARY_RELEASE "${ZEROG_ICU_DATA_LIBRARY_${ZEROG_ICU_DATA}}" CACHE
 
 find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
 
+# vcpkg's ICU wrapper creates ICU::uc first and sets its location afterwards, but
+# WebKit's FindICU calls find_package(ICU) again from inside, and the nested run of
+# the wrapper resets the outer run's fixup list in the shared scope: ICU::uc ends
+# up without a location. Complete it here.
+get_target_property(_zerog_icu_uc ICU::uc IMPORTED_LOCATION_RELEASE)
+if (NOT _zerog_icu_uc)
+    set_property(TARGET ICU::uc APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
+    set_target_properties(ICU::uc PROPERTIES
+        IMPORTED_LOCATION_RELEASE "${ICU_UC_LIBRARY_RELEASE}"
+        IMPORTED_LOCATION "${ICU_UC_LIBRARY_RELEASE}"
+        IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
+        INTERFACE_INCLUDE_DIRECTORIES "${ICU_INCLUDE_DIR}")
+endif ()
+
 # Static ICU: declare i18n -> uc -> data so single-pass linkers (GNU ld) see the
 # libraries in dependency order; FindICU lists data first.
 set_property(TARGET ICU::i18n APPEND PROPERTY INTERFACE_LINK_LIBRARIES ICU::uc)
@@ -117,3 +172,52 @@ set_property(TARGET ICU::uc APPEND PROPERTY INTERFACE_LINK_LIBRARIES ICU::data)
 if (APPLE)
     add_definitions(-DU_DISABLE_RENAMING=1)
 endif ()
+
+# WebCore dependencies, all from the static sysroot (deps/vcpkg.json).
+find_package(CURL 7.87.0 REQUIRED)
+find_package(Freetype 2.9.0 REQUIRED)
+find_package(HarfBuzz 1.4.2 REQUIRED COMPONENTS ICU)
+find_package(JPEG 1.5.2 REQUIRED)
+find_package(LibPSL 0.20.2 REQUIRED)
+find_package(LibXml2 2.9.7 REQUIRED)
+find_package(OpenSSL REQUIRED) # BoringSSL (deps/ports/openssl)
+find_package(PNG 1.6.34 REQUIRED)
+find_package(SQLite3 3.23.1 REQUIRED)
+find_package(WebP REQUIRED COMPONENTS demux mux)
+find_package(ZLIB 1.2.11 REQUIRED)
+if (USE_WOFF2)
+    find_package(WOFF2 1.0.2 REQUIRED COMPONENTS dec)
+    find_package(Brotli REQUIRED COMPONENTS dec)
+endif ()
+
+SET_AND_EXPOSE_TO_BUILD(USE_CURL ON)
+SET_AND_EXPOSE_TO_BUILD(USE_HARFBUZZ ON)
+# Form controls and scrollbars drawn by WebCore itself (as on Win, GTK, WPE): the
+# same look on every OS.
+SET_AND_EXPOSE_TO_BUILD(USE_THEME_ADWAITA ON)
+SET_AND_EXPOSE_TO_BUILD(USE_OPENSSL ON)
+SET_AND_EXPOSE_TO_BUILD(USE_BORINGSSL ON)
+SET_AND_EXPOSE_TO_BUILD(USE_INSPECTOR_SOCKET_SERVER ${ENABLE_REMOTE_INSPECTOR})
+if (NOT WIN32)
+    SET_AND_EXPOSE_TO_BUILD(USE_UNIX_DOMAIN_SOCKETS ON)
+endif ()
+
+# GPU (ZeroG.md, "Backend GPU per piattaforma"): Skia Ganesh over GLES through EGL,
+# the one GPU path upstream supports. Windows uses ANGLE (GL over D3D11), built in
+# tree. Linux uses the system driver, loaded at run time; only the Khronos headers
+# are needed to build, so no EGL/GLES library is linked.
+if (WIN32)
+    SET_AND_EXPOSE_TO_BUILD(USE_ANGLE ON)
+    SET_AND_EXPOSE_TO_BUILD(USE_ANGLE_EGL ON)
+    # ANGLE is static (Source/ThirdParty/ANGLE/PlatformZeroG.cmake): without these the
+    # Khronos headers and ANGLE's export.h mark every EGL/GLES entry point dllimport.
+    add_definitions(-DKHRONOS_STATIC -DANGLE_EXPORT=)
+else ()
+    find_path(EGL_INCLUDE_DIRS NAMES EGL/egl.h REQUIRED)
+    set(EGL_LIBRARIES "")
+    if (NOT TARGET OpenGL::GLES)
+        add_library(OpenGL::GLES INTERFACE IMPORTED)
+        set_target_properties(OpenGL::GLES PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${EGL_INCLUDE_DIRS}")
+    endif ()
+endif ()
+SET_AND_EXPOSE_TO_BUILD(USE_EGL ON)

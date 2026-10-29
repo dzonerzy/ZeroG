@@ -85,9 +85,10 @@ def build_env():
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
             user_path = winreg.QueryValueEx(key, "Path")[0]
         env["PATH"] = env["PATH"] + ";" + os.path.expandvars(user_path)
-        # The pinned LLVM (toolchain.json) goes first: vcvars puts Visual Studio's
-        # bundled clang-cl on PATH, which would otherwise win.
-        env["PATH"] = f"{toolchain.llvm_bin()};{env['PATH']}"
+        # The pinned LLVM and native Perl (toolchain.json) go first: vcvars puts Visual
+        # Studio's bundled clang-cl on PATH, and Git for Windows' MSYS Perl mangles
+        # Windows paths in WebKit's code generators.
+        env["PATH"] = f"{toolchain.llvm_bin()};{toolchain.perl_exe().parent};{env['PATH']}"
     return env
 
 
@@ -148,12 +149,24 @@ def configure_options(args):
     opts["USE_THIN_ARCHIVES"] = "OFF"
     if args.port == "ZeroG":
         opts["ZEROG_ICU_DATA"] = ICU_DATA[args.profile]
+        opts["ZEROG_PROFILE"] = args.profile
+        # vcpkg's toolchain makes find_package see the sysroot the way vcpkg installed
+        # it (its wrappers know names such as zs.lib for static zlib). Manifest mode
+        # is off: the sysroot is built by `deps`, and WebKit has its own vcpkg.json.
+        opts.update({
+            "CMAKE_TOOLCHAIN_FILE": (VCPKG / "scripts" / "buildsystems" / "vcpkg.cmake").as_posix(),
+            "VCPKG_TARGET_TRIPLET": TRIPLET,
+            "VCPKG_INSTALLED_DIR": SYSROOT.as_posix(),
+            "VCPKG_MANIFEST_MODE": "OFF",
+            "VCPKG_APPLOCAL_DEPS": "OFF",
+        })
     if IS_WINDOWS:
         llvm = toolchain.llvm_bin()
         opts.update({"CMAKE_C_COMPILER": (llvm / "clang-cl.exe").as_posix(),
                      "CMAKE_CXX_COMPILER": (llvm / "clang-cl.exe").as_posix(),
                      "CMAKE_LINKER": (llvm / "lld-link.exe").as_posix(),
-                     "CMAKE_AR": (llvm / "llvm-lib.exe").as_posix()})
+                     "CMAKE_AR": (llvm / "llvm-lib.exe").as_posix(),
+                     "PERL_EXECUTABLE": toolchain.perl_exe().as_posix()})
     else:
         # The Docker builder sets CC/CXX/AR/RANLIB to zig wrappers (glibc baseline,
         # static libc++); outside it, plain clang.
@@ -179,9 +192,11 @@ def cmd_configure(args):
 def cmd_build(args):
     out = build_dir(args)
     start = time.monotonic()
-    cmd = ["cmake", "--build", out]
+    cmd = ["cmake", "--build", out, "--"]
     if args.jobs:
-        cmd += ["--", f"-j{args.jobs}"]
+        cmd.append(f"-j{args.jobs}")
+    if args.keep_going:
+        cmd += ["-k", "0"]  # report every failing file in one pass (port bring-up)
     run(cmd, env=build_env())
     elapsed = time.monotonic() - start
     # Build time and artifact sizes are tracked from the start (ZeroG.md, "Tempi e cache", "Ordine di lavoro" step 4).
@@ -348,6 +363,7 @@ def main():
     parser.add_argument("--profile", default="minimal", choices=sorted(PROFILES))
     parser.add_argument("-D", "--define", action="append", help="extra CMake definition KEY=VALUE")
     parser.add_argument("-j", "--jobs", type=int)
+    parser.add_argument("-k", "--keep-going", action="store_true", help="keep building after failures")
     parser.add_argument("--build-dir", help="default: build/<port>-<profile>")
     args = parser.parse_args()
     toolchain.check()

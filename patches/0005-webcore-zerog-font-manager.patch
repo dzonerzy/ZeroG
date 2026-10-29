@@ -1,0 +1,75 @@
+diff --git a/Source/WebCore/platform/graphics/FontCache.h b/Source/WebCore/platform/graphics/FontCache.h
+index 7c1e3dced1..e01785e5d5 100644
+--- a/Source/WebCore/platform/graphics/FontCache.h
++++ b/Source/WebCore/platform/graphics/FontCache.h
+@@ -83,7 +83,7 @@ struct IDWriteFontCollection;
+ #if USE(SKIA)
+ #include "SkiaHarfBuzzFontCache.h"
+ #include <skia/core/SkFontMgr.h>
+-#if !OS(ANDROID) && !PLATFORM(WIN)
++#if !OS(ANDROID) && !PLATFORM(WIN) && !PLATFORM(ZEROG)
+ #include "SkiaSystemFallbackFontCache.h"
+ #endif
+ #endif
+@@ -286,7 +286,7 @@ private:
+ #if USE(SKIA)
+     mutable sk_sp<SkFontMgr> m_fontManager;
+     SkiaHarfBuzzFontCache m_harfBuzzFontCache;
+-#if !OS(ANDROID) && !PLATFORM(WIN)
++#if !OS(ANDROID) && !PLATFORM(WIN) && !PLATFORM(ZEROG)
+     SkiaSystemFallbackFontCache m_skiaSystemFallbackFontCache;
+ #endif
+ #endif
+diff --git a/Source/WebCore/platform/graphics/skia/FontCacheSkia.cpp b/Source/WebCore/platform/graphics/skia/FontCacheSkia.cpp
+index 74cfeb60ac..e63ea30427 100644
+--- a/Source/WebCore/platform/graphics/skia/FontCacheSkia.cpp
++++ b/Source/WebCore/platform/graphics/skia/FontCacheSkia.cpp
+@@ -44,6 +44,8 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ 
+ #if OS(ANDROID)
+ #include <skia/ports/SkFontMgr_android.h>
++#elif PLATFORM(ZEROG)
++#include "FontManagerZeroG.h"
+ #elif PLATFORM(WIN)
+ #include <dwrite.h>
+ #include <skia/ports/SkTypeface_win.h>
+@@ -63,6 +65,8 @@ SkFontMgr& FontCache::fontManager() const
+     if (!m_fontManager) {
+ #if OS(ANDROID)
+         m_fontManager = SkFontMgr_New_Android(nullptr, SkFontScanner_Make_FreeType());
++#elif PLATFORM(ZEROG)
++        m_fontManager = createFontManagerZeroG();
+ #elif OS(WINDOWS)
+         auto result = createDWriteFactory();
+         m_fontManager = SkFontMgr_New_DirectWrite(result.factory.get(), result.fontCollection.get());
+@@ -134,7 +138,7 @@ RefPtr<Font> FontCache::systemFallbackForCharacterCluster(const FontDescription&
+ 
+     bool isEmoji = (codePointsIterator != codePoints.end() && *codePointsIterator == emojiVariationSelector) || preferColoredFont == PreferColoredFont::Yes;
+ 
+-#if OS(ANDROID) || PLATFORM(WIN)
++#if OS(ANDROID) || PLATFORM(WIN) || PLATFORM(ZEROG)
+     // FIXME: handle locale.
+     Vector<const char*, 1> bcp47;
+     if (isEmoji)
+@@ -454,7 +458,7 @@ void FontCache::platformInvalidate()
+ void FontCache::platformPurgeInactiveFontData()
+ {
+     m_harfBuzzFontCache.clear();
+-#if !OS(ANDROID) && !PLATFORM(WIN)
++#if !OS(ANDROID) && !PLATFORM(WIN) && !PLATFORM(ZEROG)
+     m_skiaSystemFallbackFontCache.clear();
+ #endif
+ }
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaSystemFallbackFontCache.cpp b/Source/WebCore/platform/graphics/skia/SkiaSystemFallbackFontCache.cpp
+index 224f9c34c4..c71232c2b2 100644
+--- a/Source/WebCore/platform/graphics/skia/SkiaSystemFallbackFontCache.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaSystemFallbackFontCache.cpp
+@@ -26,7 +26,7 @@
+ #include "config.h"
+ #include "SkiaSystemFallbackFontCache.h"
+ 
+-#if USE(SKIA) && !OS(ANDROID) && !PLATFORM(WIN)
++#if USE(SKIA) && !OS(ANDROID) && !PLATFORM(WIN) && !PLATFORM(ZEROG)
+ #include "FontCache.h"
+ #include <fontconfig/fontconfig.h>
+ #include <wtf/FileSystem.h>

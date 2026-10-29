@@ -1,0 +1,54 @@
+diff --git a/Source/ThirdParty/skia/CMakeLists.txt b/Source/ThirdParty/skia/CMakeLists.txt
+index 93b909fe3c..165087702b 100644
+--- a/Source/ThirdParty/skia/CMakeLists.txt
++++ b/Source/ThirdParty/skia/CMakeLists.txt
+@@ -1031,17 +1031,15 @@ target_include_directories(Skia
+ )
+ 
+ file(MAKE_DIRECTORY "${Skia_FRAMEWORK_HEADERS_DIR}/top")
+-file(CREATE_LINK
++WEBKIT_CREATE_DIRECTORY_LINK(
+     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+     "${Skia_FRAMEWORK_HEADERS_DIR}/top/skia"
+-    SYMBOLIC
+ )
+ 
+ file(MAKE_DIRECTORY "${Skia_FRAMEWORK_HEADERS_DIR}/mod/skia/modules")
+-file(CREATE_LINK
++WEBKIT_CREATE_DIRECTORY_LINK(
+     "${CMAKE_CURRENT_SOURCE_DIR}/modules/svg/include"
+     "${Skia_FRAMEWORK_HEADERS_DIR}/mod/skia/modules/svg"
+-    SYMBOLIC
+ )
+ 
+ target_compile_definitions(Skia PRIVATE
+diff --git a/Source/cmake/WebKitMacros.cmake b/Source/cmake/WebKitMacros.cmake
+index edb163ba07..26ee97c0d3 100644
+--- a/Source/cmake/WebKitMacros.cmake
++++ b/Source/cmake/WebKitMacros.cmake
+@@ -1064,6 +1064,25 @@ function(WEBKIT_COPY_FILES target_name)
+     add_custom_target(${target_name} ALL DEPENDS ${dst_files})
+ endfunction()
+ 
++# Link a directory into the build tree. On Windows a junction: unlike a symlink it
++# needs neither Developer Mode nor elevation, and it resolves to the real path, so
++# headers reached through it keep one identity.
++function(WEBKIT_CREATE_DIRECTORY_LINK target link)
++    if (WIN32)
++        if (NOT EXISTS "${link}")
++            file(TO_NATIVE_PATH "${link}" _native_link)
++            file(TO_NATIVE_PATH "${target}" _native_target)
++            execute_process(COMMAND cmd /c mklink /J "${_native_link}" "${_native_target}"
++                RESULT_VARIABLE _result OUTPUT_QUIET ERROR_VARIABLE _error)
++            if (NOT _result EQUAL 0)
++                message(FATAL_ERROR "Could not create junction ${link}: ${_error}")
++            endif ()
++        endif ()
++    else ()
++        file(CREATE_LINK "${target}" "${link}" SYMBOLIC)
++    endif ()
++endfunction()
++
+ function(WEBKIT_SYMLINK_FILES target_name)
+     set(options FLATTENED)
+     set(oneValueArgs DESTINATION)

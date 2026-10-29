@@ -1,0 +1,13 @@
+diff --git a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+index 7b84194433..3035521359 100644
+--- a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
++++ b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+@@ -2809,7 +2809,7 @@ HardwareAccelerationEnabled:
+   status: internal
+   humanReadableName: "Hardware acceleration"
+   humanReadableDescription: "Enable hardware acceleration"
+-  condition: PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
++  condition: PLATFORM(GTK) || ENABLE(WPE_PLATFORM) || PLATFORM(ZEROG)
+   defaultValue: true
+ 
+ HeadingOffsetEnabled:

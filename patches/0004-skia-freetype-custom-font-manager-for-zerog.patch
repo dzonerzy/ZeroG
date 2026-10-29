@@ -1,0 +1,58 @@
+diff --git a/Source/ThirdParty/skia/CMakeLists.txt b/Source/ThirdParty/skia/CMakeLists.txt
+index c89dcdfafc..eb2bd8a4d0 100644
+--- a/Source/ThirdParty/skia/CMakeLists.txt
++++ b/Source/ThirdParty/skia/CMakeLists.txt
+@@ -1,7 +1,10 @@
+ set_property(DIRECTORY . PROPERTY FOLDER "skia")
+ 
+ # Skia dependencies not used directly in WebKit.
+-if (NOT WIN32 AND NOT PLAYSTATION)
++if (PORT STREQUAL "ZeroG")
++    # FreeType and Skia's custom font manager on every OS: no Fontconfig, no DirectWrite.
++    find_package(Freetype 2.9.0 REQUIRED)
++elseif (NOT WIN32 AND NOT PLAYSTATION)
+     find_package(Freetype 2.9.0 REQUIRED)
+     find_package(Fontconfig 2.13.0 REQUIRED)
+ endif ()
+@@ -812,7 +815,31 @@ add_library(Skia STATIC
+     modules/skcms/src/skcms_TransformSkx.cc
+ )
+ 
+-if (WIN32)
++if (PORT STREQUAL "ZeroG")
++    target_sources(Skia PRIVATE
++        src/ports/SkFontHost_FreeType.cpp
++        src/ports/SkFontHost_FreeType_common.cpp
++        src/ports/SkFontMgr_custom.cpp
++        src/ports/SkFontMgr_custom_directory.cpp
++        src/ports/SkFontMgr_custom_embedded.cpp
++        src/ports/SkFontMgr_custom_empty.cpp
++        src/ports/SkTypeface_proxy.cpp
++    )
++    if (WIN32)
++        target_sources(Skia PRIVATE
++            src/ports/SkLog_win.cpp
++            src/ports/SkOSFile_win.cpp
++        )
++    else ()
++        target_sources(Skia PRIVATE
++            src/ports/SkLog_stdio.cpp
++            src/ports/SkOSFile_posix.cpp
++        )
++    endif ()
++    target_link_libraries(Skia PRIVATE Freetype::Freetype)
++    # FreeType is linked statically: no dlopen probing for newer FreeType functions.
++    target_compile_definitions(Skia PRIVATE SK_FREETYPE_MINIMUM_RUNTIME_VERSION_IS_BUILD_VERSION)
++elseif (WIN32)
+     target_sources(Skia PRIVATE
+         src/ports/SkFontHost_win.cpp
+         src/ports/SkFontMgr_win_dw.cpp
+@@ -1085,7 +1112,7 @@ target_compile_definitions(Skia PUBLIC
+     SK_ASSUME_WEBGL=0
+ )
+ 
+-if (WIN32)
++if (WIN32 AND NOT PORT STREQUAL "ZeroG")
+     target_compile_definitions(Skia PRIVATE SK_TYPEFACE_FACTORY_DIRECTWRITE)
+ else ()
+     target_compile_definitions(Skia PRIVATE SK_TYPEFACE_FACTORY_FREETYPE)

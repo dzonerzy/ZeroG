@@ -12,10 +12,18 @@
     "sqlite3",
     { "name": "freetype", "default-features": false, "features": ["png", "zlib"] },
     { "name": "harfbuzz", "default-features": false, "features": ["freetype", "icu"] },
-    "boringssl",
+    { "name": "openssl", "$comment": "BoringSSL, through the overlay in deps/ports/openssl" },
     { "name": "libpsl", "default-features": false },
     "brotli",
-    "woff2"
+    "woff2",
+    { "name": "egl-registry", "platform": "linux", "$comment": "Khronos EGL headers only; the driver is loaded at run time" },
+    { "name": "opengl-registry", "platform": "linux", "$comment": "Khronos GLES headers only" },
+    {
+      "name": "curl",
+      "$comment": "HTTP/1.1 and HTTP/2 over BoringSSL; brotli/zstd decoding; WebSocket for dev-mode hot reload. Cookies and the PSL are handled by WebCore.",
+      "default-features": false,
+      "features": ["openssl", "http2", "brotli", "zstd", "websockets"]
+    }
   ],
   "builtin-baseline": "0e5eb43501dab17aa055dd54bd7a8c018f330fe2"
 }
