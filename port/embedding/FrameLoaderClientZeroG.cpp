@@ -35,8 +35,11 @@
 #include "config.h"
 #include "FrameLoaderClientZeroG.h"
 
+#include "Download.h"
+#include "Loader.h"
 #include "View.h"
 #include <WebCore/Color.h>
+#include <WebCore/SubresourceLoader.h>
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/DocumentLoader.h>
 #include <WebCore/DocumentPage.h>
@@ -118,7 +121,18 @@ private:
     void setCopiesOnScroll() final { }
     void detachedFromParent2() final { }
     void detachedFromParent3() final { }
-    void convertMainResourceLoadToDownload(DocumentLoader*, const ResourceRequest&, const ResourceResponse&) final { }
+    // The page's load continues into the file: its task now writes the download.
+    void convertMainResourceLoadToDownload(DocumentLoader* documentLoader, const ResourceRequest& request, const ResourceResponse& response) final
+    {
+        if (!m_view)
+            return;
+        RefPtr mainLoader = documentLoader ? documentLoader->mainResourceLoader() : nullptr;
+        auto download = Download::create(*m_view, request.url());
+        if (!download->start(response))
+            return;
+        if (!mainLoader || !convertLoadToDownload(*mainLoader, download))
+            download->didFail(failedError(request.url(), "The load could not continue as a download"_s));
+    }
     void assignIdentifierToInitialRequest(ResourceLoaderIdentifier, DocumentLoader*, const ResourceRequest&) final { }
     bool shouldUseCredentialStorage(DocumentLoader*, ResourceLoaderIdentifier) final { return true; }
     void dispatchWillSendRequest(DocumentLoader*, ResourceLoaderIdentifier, ResourceRequest&, const ResourceResponse&) final { }
@@ -153,6 +167,9 @@ private:
 
     void dispatchDidFailProvisionalLoad(const ResourceError& error, WillContinueLoading, WillInternallyHandleFailure) final
     {
+        // A navigation that became a download did not fail: the page stays.
+        if (isInterruptedForPolicyChangeError(error))
+            return;
         if (m_view && isMainFrame())
             m_view->client().loadFinished(error.failingURL(), error);
     }
@@ -177,11 +194,12 @@ private:
     LocalFrame* dispatchCreatePage(const NavigationAction&, NewFrameOpenerPolicy, const String&) final { return nullptr; }
     void dispatchShow() final { }
 
-    // Responses: what WebCore can show is shown; there are no downloads yet.
+    // Responses: attachments, and what WebCore cannot show, are downloads.
     void dispatchDecidePolicyForResponse(const ResourceResponse& response, const ResourceRequest&, const String&, FramePolicyFunction&& function) final
     {
         auto mimeType = response.mimeType();
-        function(mimeType.isEmpty() || MIMETypeRegistry::canShowMIMEType(mimeType) ? PolicyAction::Use : PolicyAction::Ignore);
+        bool showable = !response.isAttachment() && (mimeType.isEmpty() || MIMETypeRegistry::canShowMIMEType(mimeType));
+        function(showable ? PolicyAction::Use : PolicyAction::Download);
     }
 
     // New windows (target=_blank, window.open): handed to the application.
@@ -192,9 +210,14 @@ private:
         function(PolicyAction::Ignore);
     }
 
-    void dispatchDecidePolicyForNavigationAction(const NavigationAction&, const ResourceRequest& request, const ResourceResponse&, FormState*, const String&, std::optional<NavigationIdentifier>,
+    void dispatchDecidePolicyForNavigationAction(const NavigationAction& action, const ResourceRequest& request, const ResourceResponse&, FormState*, const String&, std::optional<NavigationIdentifier>,
         std::optional<HitTestResult>&&, bool, NavigationUpgradeToHTTPSBehavior, SandboxFlags, PolicyDecisionMode, FramePolicyFunction&& function) final
     {
+        // <a download>: not a navigation (WebCore then calls startDownload).
+        if (!action.downloadAttribute().isNull()) {
+            function(PolicyAction::Download);
+            return;
+        }
         bool allowed = !m_view || m_view->client().allowNavigation(request.url(), isMainFrame());
         function(allowed ? PolicyAction::Use : PolicyAction::Ignore);
     }
@@ -209,7 +232,12 @@ private:
     void revertToProvisionalState(DocumentLoader*) final { }
     void setMainDocumentError(DocumentLoader*, const ResourceError&) final { }
     void setMainFrameDocumentReady(bool) final { }
-    void startDownload(const ResourceRequest&, const String&, FromDownloadAttribute) final { }
+    // <a download>, and data: URLs that are downloads.
+    void startDownload(const ResourceRequest& request, const String& suggestedName, FromDownloadAttribute) final
+    {
+        if (m_view)
+            ZeroG::startDownload(*m_view, request, suggestedName);
+    }
     void willChangeTitle(DocumentLoader*) final { }
     void didChangeTitle(DocumentLoader*) final { }
     void willReplaceMultipartContent() final { }

@@ -143,29 +143,29 @@ std::expected<ResourceRequest, ResourceError> redirectedRequest(const ResourceRe
 
 class NetworkTask final : public LoadTask, public CurlRequestClient {
 public:
-    static Ref<NetworkTask> create(ResourceLoader& loader) { return adoptRef(*new NetworkTask(loader)); }
+    static Ref<NetworkTask> create(ResourceLoader& loader)
+    {
+        return adoptRef(*new NetworkTask(LoadTarget { loader }, sessionForFrame(loader.frame()), loader.request()));
+    }
+    static Ref<NetworkTask> create(Download& download, Session& session, const ResourceRequest& request)
+    {
+        return adoptRef(*new NetworkTask(LoadTarget { download }, session, request));
+    }
 
     void ref() const final { LoadTask::ref(); }
     void deref() const final { LoadTask::deref(); }
 
 private:
-    explicit NetworkTask(ResourceLoader& loader)
-        : m_loader(&loader)
-        , m_session(sessionForFrame(loader.frame()))
-        , m_request(loader.request())
+    NetworkTask(LoadTarget&& target, Session& session, const ResourceRequest& request)
+        : m_target(WTF::move(target))
+        , m_session(session)
+        , m_request(request)
     {
-    }
-
-    ResourceLoader* loader()
-    {
-        if (m_loader && m_loader->reachedTerminalState())
-            m_loader = nullptr;
-        return m_loader.get();
     }
 
     void start() final
     {
-        if (!loader())
+        if (!m_target.isActive())
             return;
         initializeCertificates();
         send();
@@ -173,8 +173,19 @@ private:
 
     void stop() final
     {
-        m_loader = nullptr;
+        m_target.clear();
         cancelRequest();
+    }
+
+    bool convertToDownload(Download& download) final
+    {
+        if (!m_target.isActive() || !m_curlRequest)
+            return false;
+        m_target.convertToDownload(download);
+        // The page's response policy will not complete for it any more.
+        if (std::exchange(m_waitingForResponsePolicy, false))
+            m_curlRequest->completeDidReceiveResponse();
+        return true;
     }
 
     void send()
@@ -212,7 +223,7 @@ private:
             return;
         }
         view->client().authenticationChallenge(challenge, [this, protectedThis = Ref { *this }, challenge](std::optional<Credential>&& credential) {
-            if (!this->loader() || !m_curlRequest)
+            if (!m_target.isActive() || !m_curlRequest)
                 return;
             // No credential: the server's own 401 response is the page.
             if (!credential || credential->isEmpty()) {
@@ -234,7 +245,7 @@ private:
 
     View* viewForLoader()
     {
-        RefPtr loader = this->loader();
+        RefPtr loader = m_target.loader();
         RefPtr frame = loader ? loader->frame() : nullptr;
         RefPtr page = frame ? frame->page() : nullptr;
         return page ? View::fromPage(*page) : nullptr;
@@ -242,12 +253,18 @@ private:
 
     void deliverResponse()
     {
-        RefPtr loader = this->loader();
-        if (!loader)
+        if (!m_target.isActive())
             return;
-        loader->didReceiveResponse(ResourceResponse { m_response }, [this, protectedThis = Ref { *this }] {
-            // WebCore keeps the load: let curl deliver the body.
-            if (this->loader() && m_curlRequest)
+        m_waitingForResponsePolicy = true;
+        m_target.didReceiveResponse(ResourceResponse { m_response }, [this, protectedThis = Ref { *this }](bool accepted) {
+            if (!std::exchange(m_waitingForResponsePolicy, false))
+                return;
+            if (!accepted) {
+                stop();
+                return;
+            }
+            // The target keeps the load: let curl deliver the body.
+            if (m_target.isActive() && m_curlRequest)
                 m_curlRequest->completeDidReceiveResponse();
         });
     }
@@ -264,27 +281,26 @@ private:
 
     void curlDidSendData(CurlRequest&, unsigned long long bytesSent, unsigned long long totalBytesToBeSent) final
     {
-        if (RefPtr loader = this->loader())
-            loader->didSendData(bytesSent, totalBytesToBeSent);
+        m_target.didSendData(bytesSent, totalBytesToBeSent);
     }
 
     void curlDidReceiveResponse(CurlRequest&, CurlResponse&& curlResponse) final
     {
         Ref protectedThis { *this };
-        RefPtr loader = this->loader();
-        if (!loader)
+        if (!m_target.isActive())
             return;
+        RefPtr loader = m_target.loader();
 
         if (m_request.allowCookies())
             m_session->storeCookies(m_request.firstPartyForCookies(), curlResponse.url, curlResponse.headers);
         m_response = ResourceResponse { curlResponse };
         m_response.setDeprecatedNetworkLoadMetrics(Box<NetworkLoadMetrics>::create(WTF::move(curlResponse.networkLoadMetrics)));
         if (isRedirection(m_response)) {
-            redirect(*loader);
+            redirect();
             return;
         }
-        // Loads that may ask (not fetch with credentials: 'omit', for example).
-        if (m_response.isUnauthorized() && curlResponse.availableHttpAuth && loader->options().clientCredentialPolicy == ClientCredentialPolicy::MayAskClientForCredentials) {
+        // Page loads that may ask (not fetch with credentials: 'omit', for example).
+        if (m_response.isUnauthorized() && curlResponse.availableHttpAuth && loader && loader->options().clientCredentialPolicy == ClientCredentialPolicy::MayAskClientForCredentials) {
             authenticate(AuthenticationChallenge { curlResponse, m_authenticationFailures++, m_response });
             return;
         }
@@ -293,69 +309,64 @@ private:
 
     void curlDidReceiveData(CurlRequest&, Ref<SharedBuffer>&& buffer) final
     {
-        if (RefPtr loader = this->loader())
-            loader->didReceiveData(buffer, buffer->size(), DataPayloadType::DataPayloadBytes);
+        m_target.didReceiveData(WTF::move(buffer));
     }
 
     void curlDidComplete(CurlRequest&, NetworkLoadMetrics&& metrics) final
     {
         Ref protectedThis { *this };
-        RefPtr loader = std::exchange(m_loader, nullptr);
         m_curlRequest = nullptr;
-        if (loader && !loader->reachedTerminalState())
-            loader->didFinishLoading(metrics);
+        m_target.didFinish(metrics);
     }
 
     void curlDidFailWithError(CurlRequest&, ResourceError&& error, CertificateInfo&&) final
     {
         Ref protectedThis { *this };
-        RefPtr loader = std::exchange(m_loader, nullptr);
         m_curlRequest = nullptr;
-        if (loader && !loader->reachedTerminalState())
-            loader->didFail(error);
+        m_target.didFail(error);
     }
 
     // ---- Redirects ----
 
-    void redirect(ResourceLoader& loader)
+    void redirect()
     {
         if (++m_redirectCount > maximumRedirects) {
-            fail(loader, failedError(m_response.url(), "Too many redirects"_s));
+            fail(failedError(m_response.url(), "Too many redirects"_s));
             return;
         }
         auto redirected = redirectedRequest(m_request, m_response);
         if (!redirected) {
-            fail(loader, redirected.error());
+            fail(redirected.error());
             return;
         }
         auto request = WTF::move(*redirected);
 
         // The current request answered with the redirect; it is done.
         cancelRequest();
-        loader.willSendRequest(WTF::move(request), m_response, [this, protectedThis = Ref { *this }](ResourceRequest&& newRequest) {
+        m_target.willSendRequest(WTF::move(request), m_response, [this, protectedThis = Ref { *this }](ResourceRequest&& newRequest) {
             // A null request: WebCore refused the redirect and cancels the load itself.
-            if (newRequest.isNull() || !this->loader())
+            if (newRequest.isNull() || !m_target.isActive())
                 return;
             m_request = WTF::move(newRequest);
             send();
         });
     }
 
-    void fail(ResourceLoader& loader, const ResourceError& error)
+    void fail(const ResourceError& error)
     {
-        Ref protectedLoader { loader };
-        m_loader = nullptr;
+        Ref protectedThis { *this };
         cancelRequest();
-        loader.didFail(error);
+        m_target.didFail(error);
     }
 
-    RefPtr<ResourceLoader> m_loader;
+    LoadTarget m_target;
     const Ref<Session> m_session;
     ResourceRequest m_request;
     ResourceResponse m_response;
     RefPtr<CurlRequest> m_curlRequest;
     unsigned m_redirectCount { 0 };
     unsigned m_authenticationFailures { 0 };
+    bool m_waitingForResponsePolicy { false };
     Credential m_credential;
     ProtectionSpace::AuthenticationScheme m_authenticationScheme { ProtectionSpace::AuthenticationScheme::Default };
 };
@@ -365,6 +376,11 @@ private:
 Ref<LoadTask> createNetworkTask(ResourceLoader& loader)
 {
     return NetworkTask::create(loader);
+}
+
+Ref<LoadTask> createNetworkTask(Download& download, Session& session, const ResourceRequest& request)
+{
+    return NetworkTask::create(download, session, request);
 }
 
 // ---- Synchronous loads (synchronous XMLHttpRequest) ----

@@ -17,9 +17,11 @@
 #endif
 
 #include "config.h"
+#include "Download.h"
 #include "Embedding.h"
 #include "MemoryFS.h"
 #include "View.h"
+#include <wtf/FileSystem.h>
 
 #include <algorithm>
 #include <atomic>
@@ -376,6 +378,10 @@ private:
             auto realm = path == "/protected" ? "zerog" : "other";
             return response("401 Unauthorized", "text/html", "<!DOCTYPE html><title>denied</title>denied", std::string("WWW-Authenticate: Basic realm=\"") + realm + "\"\r\n");
         }
+        if (path == "/attachment")
+            return response("200 OK", "text/plain", std::string(100000, 'z'), "Content-Disposition: attachment; filename=\"file.bin\"\r\n");
+        if (path == "/octet")
+            return response("200 OK", "application/octet-stream", "binary!");
         if (path == "/set-cookie")
             return response("200 OK", "text/plain", "set", "Set-Cookie: visible=1; Path=/\r\nSet-Cookie: hidden=2; Path=/; HttpOnly\r\n");
         if (path == "/echo-cookie") {
@@ -440,6 +446,24 @@ public:
         completionHandler(Credential { user, password, CredentialPersistence::ForSession });
     }
 
+    // Downloads go to `downloadDirectory` under their suggested name; none: refused.
+    void downloadStarted(ZeroG::Download& download) final
+    {
+        ++downloadsStarted;
+        if (!downloadDirectory.isEmpty())
+            download.setDestination(FileSystem::pathByAppendingComponent(downloadDirectory, download.suggestedFilename()));
+    }
+
+    void downloadFinished(ZeroG::Download& download, const ResourceError& error) final
+    {
+        lastDownload = makeString(download.suggestedFilename(), ' ', download.mimeType(), ' ', error.isNull() ? "ok"_s : error.localizedDescription());
+        ++downloadsFinished;
+    }
+
+    String downloadDirectory;
+    String lastDownload;
+    int downloadsStarted { 0 };
+    int downloadsFinished { 0 };
     Vector<String> challenges;
     Deque<std::pair<String, String>> credentials;
     URL finishedURL;
@@ -593,6 +617,23 @@ int main()
             "return [r.headers.get('content-type'), (await r.json()).from, partial, sync, revoked].join(' '); })()"_s);
         passed &= check(objectURL == "application/json blob from {\"from\":\"blob\"} gone"_s, "object URL (fetch, range, synchronous XHR, revoke): %s", objectURL.utf8().data());
 
+        // Downloads by <a download>: a data: URL, a blob, a file of the scheme.
+        auto downloads = FileSystem::createTemporaryDirectory();
+        client.downloadDirectory = downloads;
+        auto clickDownload = [&](const String& href, const String& name) {
+            int finished = client.downloadsFinished;
+            view->evaluateScript(makeString("(() => { const a = document.createElement('a'); a.href = "_s, href, "; a.download = '"_s, name, "'; document.body.appendChild(a); a.click(); a.remove(); })()"_s));
+            runUntil([&] { return client.downloadsFinished > finished; });
+            auto contents = FileSystem::readEntireFile(FileSystem::pathByAppendingComponent(downloads, name));
+            return contents ? String::fromUTF8(contents->span()) : "(no file)"_s;
+        };
+        auto dataDownload = clickDownload("'data:text/plain,hello%20download'"_s, "report.txt"_s);
+        passed &= check(dataDownload == "hello download"_s, "a data: URL downloaded: %s (%s)", dataDownload.utf8().data(), client.lastDownload.utf8().data());
+        auto blobDownload = clickDownload("URL.createObjectURL(new Blob(['from a blob']))"_s, "blob.txt"_s);
+        passed &= check(blobDownload == "from a blob"_s, "a blob downloaded: %s (%s)", blobDownload.utf8().data(), client.lastDownload.utf8().data());
+        auto schemeDownload = clickDownload("'/data.json'"_s, "data.json"_s);
+        passed &= check(schemeDownload == "{\"answer\":42}"_s, "a file of the scheme downloaded: %s (%s)", schemeDownload.utf8().data(), client.lastDownload.utf8().data());
+
         auto unknown = await(*view, "fetch('nowhere://x/y').then(() => 'loaded')"_s);
         passed &= check(unknown.startsWith("error:"_s), "unregistered scheme fails: %s", unknown.utf8().data());
 
@@ -677,6 +718,35 @@ int main()
         passed &= check(syncPost == "200 /echo-body posted body"_s, "sends a body: %s", syncPost.utf8().data());
         auto syncCookies = view->evaluateScript(makeString('(', syncXHR, ")('GET', '/echo-cookie')"_s));
         passed &= check(syncCookies.contains("hidden=2"_s), "and cookies: %s", syncCookies.utf8().data());
+
+        // Navigations that are downloads: the page's load continues into the file.
+        {
+            int finished = client.downloadsFinished;
+            view->loadURL(URL { makeString(http, "/attachment"_s) });
+            runUntil([&] { return client.downloadsFinished > finished; });
+            auto file = FileSystem::readEntireFile(FileSystem::pathByAppendingComponent(client.downloadDirectory, "file.bin"_s));
+            passed &= check(file && file->size() == 100000, "an attachment is downloaded: %zu bytes (%s)", file ? file->size() : 0, client.lastDownload.utf8().data());
+            passed &= check(view->evaluateScript("document.title"_s) == "From HTTP"_s, "and the page stays: %s", view->evaluateScript("document.title"_s).utf8().data());
+
+            finished = client.downloadsFinished;
+            view->loadURL(URL { makeString(http, "/octet"_s) });
+            runUntil([&] { return client.downloadsFinished > finished; });
+            auto octet = FileSystem::readEntireFile(FileSystem::pathByAppendingComponent(client.downloadDirectory, "octet"_s));
+            passed &= check(octet && String::fromUTF8(octet->span()) == "binary!"_s, "content that cannot be shown is downloaded, named from the URL (%s)", client.lastDownload.utf8().data());
+
+            // Without a destination the download is refused: no file, no end report.
+            client.downloadDirectory = { };
+            int started = client.downloadsStarted;
+            finished = client.downloadsFinished;
+            FileSystem::deleteFile(FileSystem::pathByAppendingComponent(downloads, "file.bin"_s));
+            view->loadURL(URL { makeString(http, "/attachment"_s) });
+            runUntil([&] { return client.downloadsStarted > started; });
+            for (int i = 0; i < 50; ++i)
+                ZeroG::runPendingWork();
+            passed &= check(client.downloadsFinished == finished && !FileSystem::fileExists(FileSystem::pathByAppendingComponent(downloads, "file.bin"_s)),
+                "a refused download leaves nothing");
+            FileSystem::deleteNonEmptyDirectory(downloads);
+        }
 
         // HTTP authentication: a wrong password, then the right one.
         client.credentials.append({ "user"_s, "wrong"_s });

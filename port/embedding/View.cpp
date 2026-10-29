@@ -2,6 +2,7 @@
 #include "View.h"
 
 #include "ChromeClientZeroG.h"
+#include "Download.h"
 #include "EditorClientZeroG.h"
 #include "FrameLoaderClientZeroG.h"
 #include "WebSocketChannelZeroG.h"
@@ -94,6 +95,8 @@ View::View(Configuration&& configuration)
     viewsByPage().set(page.ptr(), this);
     auto& settings = page->settings();
     settings.setScriptEnabled(configuration.scriptEnabled);
+    // <a download> (WebKit2 turns it on; it is an embedder setting).
+    settings.setDownloadAttributeEnabled(true);
     // Compositing version 1 (ZeroG.md, "Compositing"): one surface, dirty regions.
     settings.setAcceleratedCompositingEnabled(false);
     page->setDeviceScaleFactor(m_scale);
@@ -122,6 +125,8 @@ ViewClient View::s_defaultClient;
 
 View::~View()
 {
+    for (auto& download : std::exchange(m_downloads, { }))
+        download->detachFromView();
     viewsByPage().remove(m_page.ptr());
     if (RefPtr frame = m_page->localMainFrame())
         frame->loader().stopAllLoaders();
@@ -136,6 +141,16 @@ View::~View()
 void View::setClient(ViewClient* client)
 {
     m_client = client;
+}
+
+void View::addDownload(Download& download)
+{
+    m_downloads.append(download);
+}
+
+void View::removeDownload(Download& download)
+{
+    m_downloads.removeFirstMatching([&](auto& item) { return item.ptr() == &download; });
 }
 
 IntSize View::physicalSize() const

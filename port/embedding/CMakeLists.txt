@@ -5,6 +5,7 @@ set(ZeroGEmbedding_LIBRARY_TYPE STATIC)
 
 set(ZeroGEmbedding_SOURCES
     ChromeClientZeroG.cpp
+    Download.cpp
     EditorClientZeroG.cpp
     Embedding.cpp
     Fonts.cpp

@@ -35,6 +35,8 @@ class Page;
 
 namespace ZeroG {
 
+class Download;
+
 // What a view reports to its embedder (the C API maps it onto zg_view_callbacks).
 // Every call happens on the engine thread.
 class ViewClient {
@@ -56,6 +58,11 @@ public:
     // with it, or nullopt to show the server's response; the answer may come
     // later. The default answers nullopt.
     virtual void authenticationChallenge(const WebCore::AuthenticationChallenge&, CompletionHandler<void(std::optional<WebCore::Credential>&&)>&& completionHandler) { completionHandler(std::nullopt); }
+    // Downloads (Download.h): accept one by giving it a destination during
+    // downloadStarted. downloadFinished has a null error on success.
+    virtual void downloadStarted(Download&) { }
+    virtual void downloadProgress(Download&) { }
+    virtual void downloadFinished(Download&, const WebCore::ResourceError&) { }
     virtual void alert(const String&) { }
     virtual bool confirm(const String&) { return false; }
     virtual std::optional<String> prompt(const String& /* message */, const String& /* defaultValue */) { return std::nullopt; }
@@ -128,6 +135,10 @@ public:
 
     // Not owned; null restores the default (silent) client.
     void setClient(ViewClient*);
+
+    // Downloads in progress; they end with the view.
+    void addDownload(Download&);
+    void removeDownload(Download&);
     ViewClient& client() { return m_client ? *m_client : s_defaultClient; }
 
     // The cursor the page wants over its current mouse position.
@@ -161,6 +172,7 @@ private:
     uint64_t m_lastPaintedArea { 0 };
     ViewClient* m_client { nullptr };
     static ViewClient s_defaultClient;
+    Vector<Ref<Download>> m_downloads;
     WebCore::PlatformCursorType m_cursor { WebCore::PlatformCursorType::Pointer };
     Function<void(WebCore::PlatformCursorType)> m_cursorChanged;
 };

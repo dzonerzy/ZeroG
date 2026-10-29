@@ -50,7 +50,7 @@ under `patches/` is listed here when it is created.
 | `port/embedding/Loader.*` | Upstream, derived from WebKit's `WebLoaderStrategy`, `WebURLSchemeTaskProxy` (`Source/WebKit/WebProcess`), `WebErrors` (`Source/WebKit/Shared`) and `NetworkStorageSessionCurl` (`Source/WebKit/NetworkProcess/curl`) | BSD-2-Clause (Apple, Igalia and Sony headers kept) |
 | `port/embedding/LoaderBlob.cpp` | Original; the load follows `Source/WebKit/NetworkProcess/NetworkDataTaskBlob.cpp` over WebCore's `BlobResourceHandleBase` and `BlobRegistryImpl` | BSD-2-Clause |
 | `port/embedding/LoaderCurl.cpp` | Upstream, derived from `Source/WebKit/NetworkProcess/curl/NetworkDataTaskCurl.cpp` | BSD-2-Clause (Sony header kept) |
-| `port/embedding/MemoryFS.*`, `port/embedding/Fonts.cpp`, `tools/assets.py`, `tests/render/loader.cpp` | Original | BSD-2-Clause |
+| `port/embedding/MemoryFS.*`, `port/embedding/Fonts.cpp`, `port/embedding/Download.*`, `tools/assets.py`, `tests/render/loader.cpp` | Original | BSD-2-Clause |
 | `patches/0015-webcore-embedder-frame-time.patch` | Original, modifies `Page.{h,cpp}` and `LocalDOMWindow.{h,cpp}` | Same as the modified files; upstream candidate |
 | `patches/0016-wtf-generic-run-loop-next-wake-up-time.patch` | Original, modifies `RunLoop.h` and `RunLoopGeneric.cpp` (BSD) | BSD-2-Clause; upstream candidate |
 | `patches/0017-webcore-threadable-loader-redirected-after-restart.patch` | Original, modifies `DocumentThreadableLoader.{h,cpp}` | Same as the modified files; upstream candidate |

@@ -7,6 +7,7 @@
 // answered by a SchemeHandler on the engine thread, http and https go to curl.
 // Every callback into WebCore happens on the engine thread.
 
+#include "Download.h"
 #include <WebCore/ResourceError.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
@@ -30,13 +31,16 @@ class CookieJarDB;
 class CredentialStorage;
 class LoaderStrategy;
 class LocalFrame;
+class NetworkLoadMetrics;
 class ResourceLoader;
 class UserContentProvider;
 }
 
 namespace ZeroG {
 
+class Download;
 class SchemeHandler;
+class View;
 
 // A load in flight, kept by the loader strategy until WebCore removes its loader.
 class LoadTask : public RefCounted<LoadTask> {
@@ -44,6 +48,38 @@ public:
     virtual ~LoadTask() = default;
     virtual void start() = 0;
     virtual void stop() = 0;
+    // The page's load becomes a download: the rest of the response goes to it.
+    virtual bool convertToDownload(Download&) = 0;
+};
+
+// Where a task's results go: the page's ResourceLoader, or a Download (from the
+// start, or after the page's load was converted).
+class LoadTarget {
+public:
+    LoadTarget() = default;
+    explicit LoadTarget(WebCore::ResourceLoader&);
+    explicit LoadTarget(Download&);
+    ~LoadTarget();
+
+    // Null once WebCore's loader reached its end.
+    WebCore::ResourceLoader* loader();
+    Download* download() const { return m_download.get(); }
+    bool isActive() { return loader() || m_download; }
+    void clear();
+    void convertToDownload(Download&);
+
+    // `continueLoad(true)` once the body may come; false: the target refused it
+    // (a download without a destination) and the task must stop.
+    void didReceiveResponse(WebCore::ResourceResponse&&, CompletionHandler<void(bool)>&& continueLoad);
+    void willSendRequest(WebCore::ResourceRequest&&, const WebCore::ResourceResponse& redirectResponse, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
+    void didSendData(unsigned long long bytesSent, unsigned long long totalBytesToBeSent);
+    void didReceiveData(Ref<WebCore::SharedBuffer>&&);
+    void didFinish(const WebCore::NetworkLoadMetrics&);
+    void didFail(const WebCore::ResourceError&);
+
+private:
+    RefPtr<WebCore::ResourceLoader> m_loader;
+    RefPtr<Download> m_download;
 };
 
 // One load answered by a SchemeHandler. Calls arrive in order: a response, its
@@ -52,9 +88,11 @@ public:
 class SchemeTask final : public LoadTask {
 public:
     static Ref<SchemeTask> create(WebCore::ResourceLoader&, SchemeHandler&);
+    // A download from the scheme (Download.h).
+    static Ref<SchemeTask> create(Download&, const WebCore::ResourceRequest&, SchemeHandler&);
 
     const WebCore::ResourceRequest& request() const { return m_request; }
-    bool isStopped() const { return !m_loader; }
+    bool isStopped() { return !m_target.isActive(); }
 
     void didReceiveResponse(WebCore::ResourceResponse&&);
     void didReceiveData(Ref<WebCore::SharedBuffer>&&);
@@ -71,14 +109,14 @@ public:
     // From the loader strategy.
     void start() final;
     void stop() final;
+    bool convertToDownload(Download&) final;
 
 private:
-    SchemeTask(WebCore::ResourceLoader&, SchemeHandler&);
-    WebCore::ResourceLoader* loader();
+    SchemeTask(LoadTarget&&, const WebCore::ResourceRequest&, SchemeHandler&);
     void runOrQueue(Function<void()>&&);
     void processNextTask();
 
-    RefPtr<WebCore::ResourceLoader> m_loader;
+    LoadTarget m_target;
     const Ref<SchemeHandler> m_handler;
     WebCore::ResourceRequest m_request;
     bool m_waitingForResponsePolicy { false };
@@ -163,6 +201,7 @@ Session& sessionForFrame(WebCore::LocalFrame*);
 // before the first TLS connection (WebSockets included).
 void initializeCertificates();
 Ref<LoadTask> createNetworkTask(WebCore::ResourceLoader&);
+Ref<LoadTask> createNetworkTask(Download&, Session&, const WebCore::ResourceRequest&);
 bool loadNetworkResourceSynchronously(Session&, const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);
 
 // Errors handed to WebCore, in WebKit's domains so its loader classifies them.
@@ -171,6 +210,8 @@ WebCore::ResourceError cannotShowURLError(const URL&);
 WebCore::ResourceError blockedError(const URL&);
 WebCore::ResourceError notFoundError(const URL&);
 WebCore::ResourceError failedError(const URL&, const String& description);
+// A load WebCore stopped for a policy decision (it became a download, for example).
+bool isInterruptedForPolicyChangeError(const WebCore::ResourceError&);
 
 // The loader strategy (PlatformStrategiesZeroG).
 WebCore::LoaderStrategy* createLoaderStrategy();
@@ -178,6 +219,11 @@ WebCore::LoaderStrategy* createLoaderStrategy();
 // Blobs (LoaderBlob.cpp): the process's blob registry, and loads of blob: URLs.
 WebCore::BlobRegistry* createBlobRegistry();
 Ref<LoadTask> createBlobTask(WebCore::ResourceLoader&);
+Ref<LoadTask> createBlobTask(Download&, const WebCore::ResourceRequest&, WebCore::LocalFrame*);
+
+// Downloads (Download.h): a page's load becomes one, or one starts anew.
+bool convertLoadToDownload(WebCore::ResourceLoader&, Download&);
+void startDownload(View&, const WebCore::ResourceRequest&, const String& suggestedFilename = { });
 bool loadBlobSynchronously(WebCore::LocalFrame*, const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);
 
 } // namespace ZeroG

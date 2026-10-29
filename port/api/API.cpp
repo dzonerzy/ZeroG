@@ -231,6 +231,14 @@ struct zg_auth_challenge {
     unsigned failures;
 };
 
+// A download, as the application sees it; its strings are kept for its lifetime.
+struct zg_download {
+    Ref<ZeroG::Download> download;
+    std::string url;
+    std::string suggestedFilename;
+    std::string mimeType;
+};
+
 // The view's events, as zg_view_callbacks.
 class ViewClientAPI final : public ViewClient {
 public:
@@ -373,7 +381,36 @@ private:
         return { byteCast<char>(utf8.data()), utf8.length() };
     }
 
+    void downloadStarted(ZeroG::Download& download) final
+    {
+        if (!callbacks().download_started)
+            return;
+        auto handle = std::unique_ptr<zg_download>(new zg_download { download, toUTF8(download.url().string()), toUTF8(download.suggestedFilename()), toUTF8(download.mimeType()) });
+        auto* pointer = handle.get();
+        callbacks().download_started(&m_view, pointer, callbacks().user);
+        // Accepted: kept until it ends.
+        if (!download.destination().isEmpty())
+            m_downloads.add(&download, WTF::move(handle));
+    }
+
+    void downloadProgress(ZeroG::Download& download) final
+    {
+        if (auto* handle = m_downloads.get(&download); handle && callbacks().download_progress)
+            callbacks().download_progress(&m_view, handle, callbacks().user);
+    }
+
+    void downloadFinished(ZeroG::Download& download, const ResourceError& error) final
+    {
+        auto handle = m_downloads.take(&download);
+        if (!handle || !callbacks().download_finished)
+            return;
+        if (!error.isNull())
+            fail(ZG_ERROR_INTERNAL, error.localizedDescription().isEmpty() ? "download failed"_s : error.localizedDescription());
+        callbacks().download_finished(&m_view, handle.get(), !error.isNull(), callbacks().user);
+    }
+
     zg_view& m_view;
+    HashMap<ZeroG::Download*, std::unique_ptr<zg_download>> m_downloads;
 };
 
 extern "C" {
@@ -847,6 +884,50 @@ void zg_scheme_request_fail(zg_scheme_request* request, const char* reason)
     answer(request, [reason = stringFromUTF8(reason).isolatedCopy()](SchemeTask& task) {
         task.didFail(failedError(task.request().url(), reason.isEmpty() ? "The scheme handler failed the request"_s : reason));
     });
+}
+
+// ---- Downloads ----
+
+const char* zg_download_url(const zg_download* download)
+{
+    return download ? download->url.c_str() : nullptr;
+}
+
+const char* zg_download_suggested_filename(const zg_download* download)
+{
+    return download ? download->suggestedFilename.c_str() : nullptr;
+}
+
+const char* zg_download_mime_type(const zg_download* download)
+{
+    return download ? download->mimeType.c_str() : nullptr;
+}
+
+int64_t zg_download_expected_length(const zg_download* download)
+{
+    return download ? download->download->expectedLength() : -1;
+}
+
+uint64_t zg_download_received_length(const zg_download* download)
+{
+    return download ? download->download->receivedLength() : 0;
+}
+
+zg_result zg_download_set_destination(zg_download* download, const char* path)
+{
+    clearError();
+    if (!download || !path || !*path)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no download or path"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    download->download->setDestination(stringFromUTF8(path));
+    return ZG_OK;
+}
+
+void zg_download_cancel(zg_download* download)
+{
+    if (download && checkThread())
+        Ref { download->download }->cancel();
 }
 
 // ---- HTTP authentication ----

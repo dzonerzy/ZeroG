@@ -462,6 +462,26 @@ ZG_API void zg_auth_challenge_respond(zg_auth_challenge *challenge, const char *
 /* No credentials: the server's 401 response is shown. */
 ZG_API void zg_auth_challenge_cancel(zg_auth_challenge *challenge);
 
+/* A download: a navigation to an attachment or to content the view cannot show
+   (the transfer continues into the file), or a <a download> link (blob: and
+   data: URLs included). Refused unless download_started gives it a destination.
+   Valid from download_started until download_finished returns (until
+   download_started returns, if refused). The partial file of a download that
+   fails or is cancelled is removed. Downloads end with their view. */
+typedef struct zg_download zg_download;
+
+ZG_API const char *zg_download_url(const zg_download *download);
+/* From the download attribute, Content-Disposition, or the URL. */
+ZG_API const char *zg_download_suggested_filename(const zg_download *download);
+ZG_API const char *zg_download_mime_type(const zg_download *download);
+ZG_API int64_t zg_download_expected_length(const zg_download *download); /* -1: unknown */
+ZG_API uint64_t zg_download_received_length(const zg_download *download);
+/* During download_started: write the file at `path` (UTF-8; an existing file is
+   replaced). */
+ZG_API zg_result zg_download_set_destination(zg_download *download, const char *path);
+/* Runtime thread. download_finished reports it as failed. */
+ZG_API void zg_download_cancel(zg_download *download);
+
 typedef struct zg_view_callbacks {
     size_t size;
     void *user;
@@ -483,6 +503,11 @@ typedef struct zg_view_callbacks {
                    const char *default_text, char **reply, void *user);
     /* HTTP authentication; NULL: every challenge is cancelled. */
     void (*auth_challenge)(zg_view *view, zg_auth_challenge *challenge, void *user);
+    /* Downloads; NULL download_started: every download is refused. When
+       `failed`, zg_last_error() gives the reason during the call. */
+    void (*download_started)(zg_view *view, zg_download *download, void *user);
+    void (*download_progress)(zg_view *view, zg_download *download, void *user);
+    void (*download_finished)(zg_view *view, zg_download *download, int failed, void *user);
 } zg_view_callbacks;
 
 ZG_API void zg_view_set_callbacks(zg_view *view, const zg_view_callbacks *callbacks);

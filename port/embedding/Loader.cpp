@@ -32,6 +32,7 @@
 #include "config.h"
 #include "Loader.h"
 
+#include "Download.h"
 #include "View.h"
 #include <WebCore/Cookie.h>
 #include <WebCore/CookieJar.h>
@@ -98,30 +99,132 @@ ResourceError failedError(const URL& url, const String& description)
     return { errorDomainWebKitNetwork, 0, url, description };
 }
 
-// ---- Scheme tasks ----
-
-Ref<SchemeTask> SchemeTask::create(ResourceLoader& loader, SchemeHandler& handler)
+bool isInterruptedForPolicyChangeError(const ResourceError& error)
 {
-    return adoptRef(*new SchemeTask(loader, handler));
+    return error.domain() == policyErrorDomain && error.errorCode() == FrameLoadInterruptedByPolicyChange;
 }
 
-SchemeTask::SchemeTask(ResourceLoader& loader, SchemeHandler& handler)
+// ---- Load targets ----
+
+LoadTarget::LoadTarget(ResourceLoader& loader)
     : m_loader(&loader)
-    , m_handler(handler)
-    , m_request(loader.request())
 {
 }
 
-ResourceLoader* SchemeTask::loader()
+LoadTarget::LoadTarget(Download& download)
+    : m_download(&download)
+{
+}
+
+LoadTarget::~LoadTarget() = default;
+
+ResourceLoader* LoadTarget::loader()
 {
     if (m_loader && m_loader->reachedTerminalState())
         m_loader = nullptr;
     return m_loader.get();
 }
 
+void LoadTarget::clear()
+{
+    m_loader = nullptr;
+    m_download = nullptr;
+}
+
+void LoadTarget::convertToDownload(Download& download)
+{
+    m_loader = nullptr;
+    m_download = &download;
+}
+
+void LoadTarget::didReceiveResponse(ResourceResponse&& response, CompletionHandler<void(bool)>&& continueLoad)
+{
+    if (RefPtr loader = this->loader()) {
+        loader->didReceiveResponse(WTF::move(response), [continueLoad = WTF::move(continueLoad)] mutable {
+            continueLoad(true);
+        });
+        return;
+    }
+    if (RefPtr download = m_download) {
+        bool accepted = download->start(response);
+        if (!accepted)
+            m_download = nullptr;
+        continueLoad(accepted);
+        return;
+    }
+    continueLoad(false);
+}
+
+void LoadTarget::willSendRequest(ResourceRequest&& request, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
+{
+    if (RefPtr loader = this->loader()) {
+        loader->willSendRequest(WTF::move(request), redirectResponse, WTF::move(completionHandler));
+        return;
+    }
+    // A download follows its redirects.
+    completionHandler(m_download ? WTF::move(request) : ResourceRequest { });
+}
+
+void LoadTarget::didSendData(unsigned long long bytesSent, unsigned long long totalBytesToBeSent)
+{
+    if (RefPtr loader = this->loader())
+        loader->didSendData(bytesSent, totalBytesToBeSent);
+}
+
+void LoadTarget::didReceiveData(Ref<SharedBuffer>&& data)
+{
+    if (RefPtr loader = this->loader())
+        loader->didReceiveData(data, data->size(), DataPayloadType::DataPayloadBytes);
+    else if (RefPtr download = m_download)
+        download->didReceiveData(data->span());
+}
+
+// The target is forgotten first: finishing removes the loader from the strategy,
+// which stops its task.
+void LoadTarget::didFinish(const NetworkLoadMetrics& metrics)
+{
+    RefPtr loader = this->loader();
+    RefPtr download = m_download;
+    clear();
+    if (loader)
+        loader->didFinishLoading(metrics);
+    else if (download)
+        download->didFinish();
+}
+
+void LoadTarget::didFail(const ResourceError& error)
+{
+    RefPtr loader = this->loader();
+    RefPtr download = m_download;
+    clear();
+    if (loader)
+        loader->didFail(error);
+    else if (download)
+        download->didFail(error);
+}
+
+// ---- Scheme tasks ----
+
+Ref<SchemeTask> SchemeTask::create(ResourceLoader& loader, SchemeHandler& handler)
+{
+    return adoptRef(*new SchemeTask(LoadTarget { loader }, loader.request(), handler));
+}
+
+Ref<SchemeTask> SchemeTask::create(Download& download, const ResourceRequest& request, SchemeHandler& handler)
+{
+    return adoptRef(*new SchemeTask(LoadTarget { download }, request, handler));
+}
+
+SchemeTask::SchemeTask(LoadTarget&& target, const ResourceRequest& request, SchemeHandler& handler)
+    : m_target(WTF::move(target))
+    , m_handler(handler)
+    , m_request(request)
+{
+}
+
 void SchemeTask::start()
 {
-    if (!loader())
+    if (!m_target.isActive())
         return;
     Ref protectedThis { *this };
     m_handler->start(*this);
@@ -129,12 +232,23 @@ void SchemeTask::start()
 
 void SchemeTask::stop()
 {
-    if (!m_loader)
+    if (!m_target.isActive())
         return;
-    m_loader = nullptr;
+    m_target.clear();
     m_queuedTasks.clear();
     Ref protectedThis { *this };
     m_handler->stop(*this);
+}
+
+bool SchemeTask::convertToDownload(Download& download)
+{
+    if (!m_target.isActive())
+        return false;
+    m_target.convertToDownload(download);
+    // The page's response policy will not complete for it any more.
+    m_waitingForResponsePolicy = false;
+    processNextTask();
+    return true;
 }
 
 // While WebCore decides what to do with a response, data and completion wait,
@@ -157,12 +271,15 @@ void SchemeTask::processNextTask()
 void SchemeTask::didReceiveResponse(ResourceResponse&& response)
 {
     runOrQueue([this, protectedThis = Ref { *this }, response = WTF::move(response)] mutable {
-        RefPtr loader = this->loader();
-        if (!loader)
+        if (!m_target.isActive())
             return;
         m_waitingForResponsePolicy = true;
-        loader->didReceiveResponse(WTF::move(response), [this, protectedThis = Ref { *this }] {
+        m_target.didReceiveResponse(WTF::move(response), [this, protectedThis = Ref { *this }](bool accepted) {
             m_waitingForResponsePolicy = false;
+            if (!accepted) {
+                stop();
+                return;
+            }
             processNextTask();
         });
     });
@@ -170,33 +287,22 @@ void SchemeTask::didReceiveResponse(ResourceResponse&& response)
 
 void SchemeTask::didReceiveData(Ref<SharedBuffer>&& data)
 {
-    runOrQueue([this, protectedThis = Ref { *this }, data = WTF::move(data)] {
-        if (RefPtr loader = this->loader())
-            loader->didReceiveData(data, data->size(), DataPayloadType::DataPayloadBytes);
+    runOrQueue([this, protectedThis = Ref { *this }, data = WTF::move(data)] mutable {
+        m_target.didReceiveData(WTF::move(data));
     });
 }
 
 void SchemeTask::didFinish()
 {
     runOrQueue([this, protectedThis = Ref { *this }] {
-        RefPtr loader = this->loader();
-        if (!loader)
-            return;
-        // Finishing removes the loader from the strategy, which stops the task:
-        // forget the loader first, so the handler is not told to stop.
-        m_loader = nullptr;
-        loader->didFinishLoading(NetworkLoadMetrics { });
+        m_target.didFinish(NetworkLoadMetrics { });
     });
 }
 
 void SchemeTask::didFail(const ResourceError& error)
 {
     runOrQueue([this, protectedThis = Ref { *this }, error] {
-        RefPtr loader = this->loader();
-        if (!loader)
-            return;
-        m_loader = nullptr;
-        loader->didFail(error);
+        m_target.didFail(error);
     });
 }
 
@@ -205,12 +311,10 @@ static ASCIILiteral statusText(int);
 void SchemeTask::redirect(const URL& location, int status)
 {
     runOrQueue([this, protectedThis = Ref { *this }, location, status] {
-        RefPtr loader = this->loader();
-        if (!loader)
+        if (!m_target.isActive())
             return;
         if (location.protocol() != m_request.url().protocol()) {
-            m_loader = nullptr;
-            loader->didFail(ZeroG::cannotShowURLError(location));
+            m_target.didFail(ZeroG::cannotShowURLError(location));
             return;
         }
         ResourceResponse response { URL { m_request.url() }, String { }, 0, String { } };
@@ -220,11 +324,11 @@ void SchemeTask::redirect(const URL& location, int status)
         auto request = m_request;
         request.setURL(URL { location });
         m_waitingForResponsePolicy = true;
-        loader->willSendRequest(WTF::move(request), response, [this, protectedThis = Ref { *this }](ResourceRequest&& newRequest) {
+        m_target.willSendRequest(WTF::move(request), response, [this, protectedThis = Ref { *this }](ResourceRequest&& newRequest) {
             m_waitingForResponsePolicy = false;
             m_queuedTasks.clear();
             // A null request: WebCore refused the redirect and cancels the load.
-            if (newRequest.isNull() || !this->loader())
+            if (newRequest.isNull() || !m_target.isActive())
                 return;
             m_request = WTF::move(newRequest);
             m_handler->start(*this);
@@ -473,6 +577,15 @@ Session& sessionForFrame(LocalFrame* frame)
 namespace {
 
 class LoaderStrategyZeroG final : public LoaderStrategy {
+public:
+    // A load leaving the page (a conversion to a download): WebCore's loader is
+    // about to fail, and must not stop the task with it.
+    RefPtr<LoadTask> takeTask(ResourceLoader& loader)
+    {
+        auto identifier = loader.identifier();
+        return identifier ? m_tasks.take(*identifier) : nullptr;
+    }
+
 private:
     void loadResource(LocalFrame& frame, CachedResource& resource, ResourceRequest&& request, const ResourceLoaderOptions& options, CompletionHandler<void(RefPtr<SubresourceLoader>&&)>&& completionHandler) final
     {
@@ -592,9 +705,59 @@ private:
 
 } // anonymous namespace
 
+static LoaderStrategyZeroG* s_loaderStrategy;
+
 LoaderStrategy* createLoaderStrategy()
 {
-    return new LoaderStrategyZeroG;
+    s_loaderStrategy = new LoaderStrategyZeroG;
+    return s_loaderStrategy;
+}
+
+// ---- Downloads ----
+
+bool convertLoadToDownload(ResourceLoader& loader, Download& download)
+{
+    RefPtr task = s_loaderStrategy ? s_loaderStrategy->takeTask(loader) : nullptr;
+    if (!task || !task->convertToDownload(download))
+        return false;
+    download.setTask(task.get());
+    return true;
+}
+
+void startDownload(View& view, const ResourceRequest& request, const String& suggestedFilename)
+{
+    auto download = Download::create(view, request.url(), suggestedFilename);
+    auto& url = request.url();
+    RefPtr frame = view.page().localMainFrame();
+
+    if (url.protocolIsData()) {
+        auto result = DataURLDecoder::decode(url);
+        if (!result) {
+            download->didFail(failedError(url, "Invalid data URL"_s));
+            return;
+        }
+        if (download->start(ResourceResponse::dataURLResponse(url, *result))) {
+            download->didReceiveData(result->data.span());
+            download->didFinish();
+        }
+        return;
+    }
+
+    RefPtr<LoadTask> task;
+    if (url.protocolIsBlob())
+        task = createBlobTask(download, request, frame.get());
+    else if (auto* handler = view.session().schemeHandler(url.protocol()))
+        task = SchemeTask::create(download, request, *handler);
+    else if (url.protocolIsInHTTPFamily())
+        task = createNetworkTask(download, view.session(), request);
+    if (!task) {
+        download->didFail(ZeroG::cannotShowURLError(url));
+        return;
+    }
+    download->setTask(task.get());
+    RunLoop::mainSingleton().dispatch([task = task.releaseNonNull()] {
+        task->start();
+    });
 }
 
 } // namespace ZeroG

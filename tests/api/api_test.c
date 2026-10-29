@@ -301,6 +301,31 @@ static int allowAll(zg_view *view, const char *url, void *user)
     return 1;
 }
 
+/* ---- Downloads ---- */
+
+static char downloadPath[512];
+static char downloadSeen[256];
+static int downloadsDone;
+
+static void onDownloadStarted(zg_view *view, zg_download *download, void *user)
+{
+    (void)view;
+    (void)user;
+    snprintf(downloadSeen, sizeof downloadSeen, "%s %s", zg_download_suggested_filename(download), zg_download_mime_type(download));
+    zg_download_set_destination(download, downloadPath);
+}
+
+static void onDownloadFinished(zg_view *view, zg_download *download, int failed, void *user)
+{
+    (void)view;
+    (void)user;
+    if (failed)
+        snprintf(downloadSeen, sizeof downloadSeen, "failed: %s", zg_last_error());
+    else
+        snprintf(downloadSeen + strlen(downloadSeen), sizeof downloadSeen - strlen(downloadSeen), " %llu bytes", (unsigned long long)zg_download_received_length(download));
+    ++downloadsDone;
+}
+
 /* tests/api/assets, packed by tools/assets.py at build time. */
 extern const unsigned char test_assets[];
 extern const size_t test_assets_len;
@@ -549,6 +574,31 @@ int main(int argc, char **argv)
             CHECK(!strcmp(awaitJS(view, "(() => { const s = document.createElement('span'); s.style.font = '20px Ahem'; s.textContent = 'XX';"
                 " document.body.appendChild(s); return document.fonts.load('20px Ahem').then(() => Math.round(s.getBoundingClientRect().width)); })()"), "\"40\""),
                 "an open page uses it: %s px", evaluate(view, "__result"));
+        }
+
+        /* A download by <a download>, saved where download_started says. */
+        {
+            const char *temp = getenv("TEMP") ? getenv("TEMP") : getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
+            char contents[64] = { 0 };
+            FILE *file;
+            snprintf(downloadPath, sizeof downloadPath, "%s/zerog-api-download.txt", temp);
+            remove(downloadPath);
+            callbacks.download_started = onDownloadStarted;
+            callbacks.download_finished = onDownloadFinished;
+            zg_view_set_callbacks(view, &callbacks);
+            evaluate(view, "(() => { const a = document.createElement('a'); a.href = 'data:text/plain,saved%20by%20zerog'; a.download = 'note.txt';"
+                " document.body.appendChild(a); a.click(); a.remove(); return 0; })()");
+            for (i = 0; i < 400 && !downloadsDone; ++i) {
+                sleepMilliseconds(5);
+                frame(view);
+            }
+            file = fopen(downloadPath, "rb");
+            if (file) {
+                fread(contents, 1, sizeof contents - 1, file);
+                fclose(file);
+            }
+            CHECK(!strcmp(contents, "saved by zerog") && !strcmp(downloadSeen, "note.txt text/plain 14 bytes"), "a download through the callbacks: '%s' (%s)", contents, downloadSeen);
+            remove(downloadPath);
         }
 
         /* A frontend packed by tools/assets.py, under a scheme of its own. */

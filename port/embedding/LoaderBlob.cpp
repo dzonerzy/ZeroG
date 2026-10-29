@@ -67,16 +67,19 @@ class BlobRegistryZeroG final : public BlobRegistry {
 
 class BlobTask final : public LoadTask, public BlobResourceHandleBase {
 public:
-    static Ref<BlobTask> create(ResourceLoader& loader, RefPtr<BlobData>&& data) { return adoptRef(*new BlobTask(loader, WTF::move(data))); }
+    static Ref<BlobTask> create(LoadTarget&& target, const ResourceRequest& request, RefPtr<BlobData>&& data)
+    {
+        return adoptRef(*new BlobTask(WTF::move(target), request, WTF::move(data)));
+    }
 
     void ref() const final { LoadTask::ref(); }
     void deref() const final { LoadTask::deref(); }
 
 private:
-    BlobTask(ResourceLoader& loader, RefPtr<BlobData>&& data)
+    BlobTask(LoadTarget&& target, const ResourceRequest& request, RefPtr<BlobData>&& data)
         : BlobResourceHandleBase(true, WTF::move(data))
-        , m_loader(&loader)
-        , m_request(loader.request())
+        , m_target(WTF::move(target))
+        , m_request(request)
     {
     }
 
@@ -85,32 +88,36 @@ private:
         clearStream();
     }
 
-    ResourceLoader* loader()
-    {
-        if (m_loader && m_loader->reachedTerminalState())
-            m_loader = nullptr;
-        return m_loader.get();
-    }
-
     // ---- LoadTask ----
 
     void start() final
     {
-        if (!loader())
+        if (!m_target.isActive())
             return;
         BlobResourceHandleBase::start();
     }
 
     void stop() final
     {
-        m_loader = nullptr;
+        m_target.clear();
         clearStream();
+    }
+
+    bool convertToDownload(Download& download) final
+    {
+        if (!m_target.isActive() || m_completed)
+            return false;
+        m_target.convertToDownload(download);
+        // The page's response policy will not complete for it any more.
+        if (std::exchange(m_waitingForResponsePolicy, false))
+            readBody();
+        return true;
     }
 
     // ---- BlobResourceHandleBase ----
 
     const ResourceRequest& firstRequest() const final { return m_request; }
-    bool erroredOrAborted() const final { return m_completed || !m_loader || m_loader->reachedTerminalState(); }
+    bool erroredOrAborted() const final { return m_completed || !const_cast<LoadTarget&>(m_target).isActive(); }
 
     void clearStream() final
     {
@@ -123,48 +130,55 @@ private:
 
     void didReceiveResponse(ResourceResponse&& response) final
     {
-        RefPtr loader = this->loader();
-        if (!loader)
+        if (!m_target.isActive())
             return;
-        loader->didReceiveResponse(WTF::move(response), [this, protectedThis = Ref { *this }] {
-            if (!this->loader() || m_completed)
+        m_waitingForResponsePolicy = true;
+        m_target.didReceiveResponse(WTF::move(response), [this, protectedThis = Ref { *this }](bool accepted) {
+            if (!std::exchange(m_waitingForResponsePolicy, false))
                 return;
-            static constexpr size_t bufferSize = 512 * 1024;
-            resizeBuffer(bufferSize);
-            readAsync();
+            if (!accepted) {
+                stop();
+                return;
+            }
+            readBody();
         });
+    }
+
+    void readBody()
+    {
+        if (!m_target.isActive() || m_completed)
+            return;
+        static constexpr size_t bufferSize = 512 * 1024;
+        resizeBuffer(bufferSize);
+        readAsync();
     }
 
     bool didReceiveData(std::span<const uint8_t> data) final
     {
-        RefPtr loader = this->loader();
-        if (!loader)
+        if (!m_target.isActive())
             return false;
-        loader->didReceiveData(SharedBuffer::create(data), data.size(), DataPayloadType::DataPayloadBytes);
+        m_target.didReceiveData(SharedBuffer::create(data));
         return true;
     }
 
     void didFinish() final
     {
         Ref protectedThis { *this };
-        RefPtr loader = std::exchange(m_loader, nullptr);
         clearStream();
-        if (loader && !loader->reachedTerminalState())
-            loader->didFinishLoading(NetworkLoadMetrics { });
+        m_target.didFinish(NetworkLoadMetrics { });
     }
 
     void didFail(Error error) final
     {
         Ref protectedThis { *this };
-        RefPtr loader = std::exchange(m_loader, nullptr);
         clearStream();
-        if (loader && !loader->reachedTerminalState())
-            loader->didFail(ResourceError { blobErrorDomain, static_cast<int>(error), m_request.url(), { } });
+        m_target.didFail(ResourceError { blobErrorDomain, static_cast<int>(error), m_request.url(), { } });
     }
 
-    RefPtr<ResourceLoader> m_loader;
+    LoadTarget m_target;
     ResourceRequest m_request;
     bool m_completed { false };
+    bool m_waitingForResponsePolicy { false };
 };
 
 } // anonymous namespace
@@ -176,7 +190,12 @@ BlobRegistry* createBlobRegistry()
 
 Ref<LoadTask> createBlobTask(ResourceLoader& loader)
 {
-    return BlobTask::create(loader, registry().blobDataFromURL(loader.request().url(), topOrigin(loader.frame())));
+    return BlobTask::create(LoadTarget { loader }, loader.request(), registry().blobDataFromURL(loader.request().url(), topOrigin(loader.frame())));
+}
+
+Ref<LoadTask> createBlobTask(Download& download, const ResourceRequest& request, LocalFrame* frame)
+{
+    return BlobTask::create(LoadTarget { download }, request, registry().blobDataFromURL(request.url(), topOrigin(frame)));
 }
 
 // Synchronous loads (synchronous XMLHttpRequest, FileReaderSync): the whole

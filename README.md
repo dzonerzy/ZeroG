@@ -13,8 +13,7 @@ design against the pinned WebKit revision lives in [docs/verification](docs/veri
 > callbacks, direct JavaScript bindings, and the resource loader: the app's files
 > served from memory under `app://`, custom schemes, `data:`, http/https over
 > curl with cookies and HTTP authentication, WebSockets (`ws://`, `wss://`),
-> Blobs and `blob:` URLs, and fonts registered by the application. Downloads
-> are not there yet.
+> Blobs and `blob:` URLs, downloads, and fonts registered by the application.
 
 ## Layout
 
