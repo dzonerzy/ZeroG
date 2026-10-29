@@ -8,12 +8,15 @@ presented (native window, game texture, overlay).
 The full design is in [ZeroG.md](ZeroG.md) (Italian). Verification of the
 design against the pinned WebKit revision lives in [docs/verification](docs/verification).
 
-> Status: phase 2 — the `zg_*` C API (`include/zerog.h`) runs on Windows and
-> Linux: runtime and event loop, views in CPU, texture and window mode, input,
+> Status: phase 2 done — the `zg_*` C API (`include/zerog.h`, version 0.1,
+> frozen: [docs/api-changes.md](docs/api-changes.md)) runs on Windows and Linux:
+> runtime and event loop, views in CPU, texture and window mode, input,
 > callbacks, direct JavaScript bindings, and the resource loader: the app's files
 > served from memory under `app://`, custom schemes, `data:`, http/https over
 > curl with cookies and HTTP authentication, WebSockets (`ws://`, `wss://`),
 > Blobs and `blob:` URLs, downloads, and fonts registered by the application.
+> The API's tests also run under AddressSanitizer, and its parsers under
+> libFuzzer.
 
 ## Layout
 
@@ -24,7 +27,7 @@ design against the pinned WebKit revision lives in [docs/verification](docs/veri
 | `port/platform/` | Platform layer: GPU contexts for Skia, fonts, clipboard, cursor, IME, timers |
 | `port/embedding/` | Embedding layer: `Page`, `LocalFrame`, WebCore clients, resource loader |
 | `port/gl/` | Linux EGL/GLES loader: entry points generated from the Khronos headers, driver loaded with `dlopen` |
-| `tests/` | Link tests against the bundle, render tests |
+| `tests/` | Link tests against the bundle, render tests, C API tests, fuzz targets and their corpus |
 | `port/api/` | C API implementation |
 | `patches/` | Minimal patch series on upstream files, applied in `series` order |
 | `tools/` | Build and maintenance scripts |
@@ -72,6 +75,8 @@ build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 | `ZeroGLoader` | the resource loader: an `app://` page from memory (stylesheet, module scripts, fetch, range requests, compressed archive entries, percent-encoded paths, directory redirects, synchronous XHR, iframes), write-once files, `data:`, http over curl against a server in the test (CORS, redirects and `Response.redirected`, cookies, synchronous XHR, a main-frame navigation), WebSockets against the same server (subprotocol, handshake cookies, text, binary, a 100 KB message, the close handshake, refused and unreachable servers), registered fonts (TrueType and WOFF2, used by a page of their session only, also when registered while it is open). `ZEROG_ONLINE_TESTS=1` adds https to example.com and `wss://` to a public echo server |
 | `ZeroGAPITest [--no-window]` | the C API from a C99 program: runtime, bindings (synchronous, JSON, BigInt, exceptions, a Promise settled from another thread), evaluate, emit, callbacks, input and IME, frames, files and archives (one packed by `tools/assets.py`), a scheme handler answering from another thread, trust by scheme, a window whose loop a binding ends. `linktest` also links it against the bundle |
 | `ZeroGValuesTest` | value conversions for every JavaScript type, both ways: each `zg_call_arg_*` reader (embedded NULs, UTF-8 outside the BMP, BigInt, int64 saturation), each `zg_value_*`, Promises resolved with JSON or rejected, `zg_view_evaluate` results |
+| `ZeroGLifecycleTest [--no-window] [cycles]` | contexts, views and windows created and destroyed over and over, each with a page that has an iframe, a canvas, a `blob:` URL, timers and 3 MB of objects, destroyed while a scheme request, a fetch and a binding's Promise are pending (answered after the view is gone); afterwards the JavaScript heap, asset and surface memory are back where they were |
+| `ZeroGFuzz{Assets,Requests,Values} <files>` | the fuzz targets ([tests/fuzz](tests/fuzz)) replaying inputs: asset archives, paths and `Range` headers against `app://`, values across bindings. The seed corpus runs with the tests |
 | `ZeroGHello [--smoke]` | the example of ZeroG.md (`examples/hello`): a window, the frontend packed into the binary, `App.greet` called synchronously. `linktest` builds it against the bundle and runs it |
 | `ZeroGBindingBench [calls]` | binding latency: empty synchronous and asynchronous calls, in µs ([docs/phase2-measurements.md](docs/phase2-measurements.md)) |
 
@@ -87,6 +92,19 @@ python tools/assets.py dist -o build/app_assets.c --c-symbol app_assets
 
 `--profile minimal|standard|dev` selects the build profile and its ICU data;
 `--port JSCOnly` builds the upstream reference port.
+
+`--asan` builds with AddressSanitizer into `build/<port>-<profile>-asan` (Windows;
+zig ships no sanitizer runtimes). mimalloc stays the allocator and reports its
+blocks to the sanitizer. There the fuzz targets are libFuzzer programs, with
+coverage of ZeroG's own code:
+
+```sh
+python tools/build.py build --asan -t ZeroGLifecycleTest -t ZeroGFuzzValues
+build/zerog-minimal-asan/bin/ZeroGLifecycleTest
+# New inputs go to the first directory; the seeds in the repository stay as they are.
+mkdir -p build/fuzz/values
+build/zerog-minimal-asan/bin/ZeroGFuzzValues build/fuzz/values tests/fuzz/corpus/values -max_total_time=600
+```
 
 ### Toolchain
 

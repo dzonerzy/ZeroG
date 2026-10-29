@@ -8,6 +8,7 @@
 #include "Window.h"
 #include "zerog.h"
 #include <JavaScriptCore/JSBase.h>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -65,7 +66,7 @@ struct zg_runtime {
     zg_runtime_config config { };
     std::vector<zg_context*> contexts;
     std::vector<zg_window*> windows;
-    bool quit { false };
+    std::atomic<bool> quit { false }; // zg_runtime_quit, from any thread
     zg_native_handle wakeUpHandle { 0 };
 };
 

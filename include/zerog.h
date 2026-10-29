@@ -1,22 +1,34 @@
 /*
  * ZeroG — public C API.
  *
- * DRAFT: this header tracks the design in ZeroG.md ("API pubblica C") and is
- * not stable until roadmap phase 2 closes. Names and fields may still change.
+ * Version 0.1: the API of ZeroG.md ("API pubblica C"), frozen at the end of
+ * roadmap phase 2. Within 0.x a minor version may add functions, enum values
+ * and fields at the end of config structs; nothing is renamed or removed and no
+ * meaning changes without a new minor version and a note in docs/api-changes.md.
  *
  * Rules that hold for every function below:
  *   - C99, opaque handles, no WebKit type ever appears here.
  *   - Single thread: every call happens on the thread that created the
- *     runtime, and every callback is delivered on that thread. The only
- *     exceptions are marked "any thread" (zg_surface_acquire/release,
- *     zg_promise_resolve/reject).
+ *     runtime (the runtime thread), and every callback is delivered on that
+ *     thread. Calls from another thread fail with ZG_ERROR_WRONG_THREAD or do
+ *     nothing. The exceptions are marked "any thread": zg_runtime_quit,
+ *     zg_runtime_now_ms, zg_surface_acquire/release, zg_promise_resolve/reject,
+ *     answering a zg_scheme_request or a zg_auth_challenge; zg_last_error is
+ *     per thread. Release callbacks (zg_context_add_file) and the engine's own
+ *     log messages may come on any thread.
  *   - Config structs start with `size`; set it to sizeof(the struct) so new
  *     fields can be appended without breaking existing clients. Zeroed fields
  *     mean "default".
  *   - Functions that can fail return zg_result; zg_last_error() gives a
  *     readable message for the last failure on the calling thread.
  *   - Strings are UTF-8. Where a length parameter exists, the string need not
- *     be NUL-terminated; otherwise it must be.
+ *     be NUL-terminated; otherwise it must be. Strings the engine returns stay
+ *     valid as documented for each, at least until the next call on the object.
+ *   - Lifetimes: zg_runtime_destroy destroys the contexts left, and
+ *     zg_context_destroy its windows and views. A window owns its view. Work the
+ *     application answers (scheme requests, auth challenges, promises) stays
+ *     valid after its view or context is gone and must still be answered: the
+ *     answer is then dropped and the object freed.
  */
 #ifndef ZEROG_H
 #define ZEROG_H
@@ -43,7 +55,7 @@ extern "C" {
 #endif
 
 #define ZG_VERSION_MAJOR 0
-#define ZG_VERSION_MINOR 0
+#define ZG_VERSION_MINOR 1
 #define ZG_VERSION_PATCH 0
 
 /* ------------------------------------------------------------------------ */
@@ -161,6 +173,8 @@ ZG_API void zg_runtime_destroy(zg_runtime *rt);
    closed. Without windows (CPU and texture views) it runs the engine's work and
    sleeps until there is more. */
 ZG_API zg_result zg_runtime_run(zg_runtime *rt);
+/* Any thread: ends zg_runtime_run, waking it if it sleeps; called before it, the
+   next zg_runtime_run returns at once. */
 ZG_API void zg_runtime_quit(zg_runtime *rt);
 
 /* Own-loop mode: run due timers, network responses and pending tasks. */
@@ -181,8 +195,8 @@ ZG_API double zg_runtime_now_ms(void);
 
 typedef struct zg_memory_stats {
     size_t size;
-    size_t js_heap_bytes;
-    size_t js_heap_capacity;
+    size_t js_heap_bytes;      /* live at the last collection (zg_runtime_collect_garbage) */
+    size_t js_heap_capacity;   /* reserved by the heap */
     size_t resource_cache_bytes;
     size_t surface_bytes;   /* graphics surfaces owned by the engine */
     size_t asset_bytes;     /* files the engine holds: copied, or inflated from archives */
@@ -368,6 +382,11 @@ ZG_API zg_surface *zg_view_surface(zg_view *view);
 /* Starts a navigation; load_finished reports its end. The URL must be absolute
    and allowed by the context's trust rules (or allow_external_content). */
 ZG_API zg_result zg_view_load_url(zg_view *view, const char *url);
+/* Replaces the document with `html` at once, not as a navigation (no
+   load_finished): when this returns the page is parsed and its inline scripts
+   have run; its subresources load as usual. `base_url` (NULL: about:blank) is the
+   document's URL and origin: bindings follow the trust rules for it, as for a
+   page loaded from there. */
 ZG_API zg_result zg_view_load_html(zg_view *view, const char *html, size_t len, const char *base_url);
 ZG_API void zg_view_reload(zg_view *view);
 ZG_API void zg_view_stop(zg_view *view);
@@ -577,7 +596,9 @@ ZG_API zg_value *zg_call_throw(zg_call *call, const char *message);
 /* ---- Asynchronous calls ---- */
 
 /* Return a pending Promise to JavaScript. Resolve it later from any thread;
-   the engine settles it on the runtime thread. Each promise is settled once. */
+   the engine settles it on the runtime thread. Each promise must be settled
+   exactly once: until then it keeps its page's script objects alive, even after
+   the view is gone. */
 ZG_API zg_value *zg_call_promise(zg_call *call, zg_promise **out);
 ZG_API void zg_promise_resolve(zg_promise *p, const char *json, size_t len); /* JSON value */
 ZG_API void zg_promise_reject(zg_promise *p, const char *message);

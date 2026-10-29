@@ -95,7 +95,7 @@ def build_env():
 def build_dir(args):
     if args.build_dir:
         return Path(args.build_dir)
-    return ROOT / "build" / f"{args.port.lower()}-{args.profile}"
+    return ROOT / "build" / f"{args.port.lower()}-{args.profile}{'-asan' if args.asan else ''}"
 
 
 def cmd_deps(args):
@@ -177,6 +177,8 @@ def configure_options(args):
             opts.update({"CMAKE_AR": shutil.which(os.environ["AR"]),
                          "CMAKE_RANLIB": shutil.which(os.environ.get("RANLIB", "ranlib"))})
         opts["ZEROG_ZIG"] = "ON" if os.environ.get("ZEROG_ZIG_TARGET") else "OFF"
+    if args.asan:
+        opts["ENABLE_SANITIZERS"] = "address"  # OptionsZeroG.cmake
     for item in args.define or []:
         key, _, value = item.partition("=")
         opts[key] = value
@@ -440,6 +442,8 @@ def main():
     parser.add_argument("-j", "--jobs", type=int)
     parser.add_argument("-k", "--keep-going", action="store_true", help="keep building after failures")
     parser.add_argument("-t", "--target", action="append", help="build only these CMake targets")
+    parser.add_argument("--asan", action="store_true",
+                        help="AddressSanitizer build, in build/<port>-<profile>-asan")
     parser.add_argument("--build-dir", help="default: build/<port>-<profile>")
     args = parser.parse_args()
     toolchain.check()

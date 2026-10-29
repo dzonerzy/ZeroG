@@ -61,9 +61,29 @@ option(ZEROG_MIMALLOC_SECURE "mimalloc hardened mode: guard pages, randomized al
 add_definitions(-DJS_NO_EXPORT)
 
 set(PROJECT_VERSION_MAJOR 0)
-set(PROJECT_VERSION_MINOR 0)
+set(PROJECT_VERSION_MINOR 1) # include/zerog.h
 set(PROJECT_VERSION_MICRO 0)
 set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_MICRO})
+
+# AddressSanitizer builds: -DENABLE_SANITIZERS=address, tools/build.py --asan.
+# mimalloc stays (system malloc is refused on Windows, BPlatform.h) and reports its
+# blocks to the sanitizer (Source/bmalloc/mimalloc/PlatformZeroG.cmake).
+if (ENABLE_SANITIZERS AND MSVC)
+    # The runtime is the asan_dynamic DLL with the thunk for the CRT: the static-CRT
+    # one here (/MT). WebKitCompilerFlags.cmake links the /MD thunk instead, which
+    # does not link with /MT; lld-link is run directly, so nothing else names them.
+    get_directory_property(_zerog_link_options LINK_OPTIONS)
+    list(REMOVE_ITEM _zerog_link_options "${CLANG_ASAN_LIBRARY}" "${CLANG_ASAN_RT_LIBRARY}")
+    set_directory_properties(PROPERTIES LINK_OPTIONS "${_zerog_link_options}")
+    get_filename_component(_zerog_llvm "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    file(GLOB _zerog_clang_rt "${_zerog_llvm}/../lib/clang/*/lib/windows")
+    add_link_options("/LIBPATH:${_zerog_clang_rt}"
+        clang_rt.asan_dynamic-x86_64.lib clang_rt.asan_static_runtime_thunk-x86_64.lib)
+    # The sysroot's libraries are not instrumented; the STL's container annotations
+    # must then be off everywhere (/failifmismatch on annotate_string/vector).
+    add_definitions(-D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION)
+    file(COPY "${_zerog_clang_rt}/clang_rt.asan_dynamic-x86_64.dll" DESTINATION "${CMAKE_BINARY_DIR}/bin")
+endif ()
 
 WEBKIT_OPTION_BEGIN()
 # Allocator (ZeroG.md, "Allocatore di memoria"): the vendored mimalloc on every OS,

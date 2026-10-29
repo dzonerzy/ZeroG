@@ -12,6 +12,9 @@ namespace ZeroG {
 
 using namespace WebCore;
 
+// Deflate's best case is about 1032:1 (258-byte matches in 2-bit codes).
+static constexpr uint64_t maximumInflateRatio = 1032;
+
 // ---- Files ----
 
 class MemoryFS::File : public ThreadSafeRefCounted<File> {
@@ -62,7 +65,13 @@ public:
             return m_data;
         if (m_inflateFailed)
             return std::nullopt;
-        Vector<uint8_t> inflated(m_size);
+        // Out of memory fails this file's loads, not the process.
+        Vector<uint8_t> inflated;
+        if (!inflated.tryReserveInitialCapacity(m_size)) {
+            m_inflateFailed = true;
+            return std::nullopt;
+        }
+        inflated.grow(m_size);
         uLongf length = m_size;
         if (m_size && (uncompress(inflated.mutableSpan().data(), &length, m_stored.data(), m_stored.size()) != Z_OK || length != m_size)) {
             m_inflateFailed = true;
@@ -298,6 +307,10 @@ std::expected<size_t, MemoryFS::MountError> MemoryFS::mountArchive(const String&
         auto mimeBytes = slice(archive, mimeOffset, mimeLength);
         if (!stored || !pathBytes || !mimeBytes || compression > 1 || (!compression && storedSize != size) || size > std::numeric_limits<uint32_t>::max())
             return malformed(makeString("malformed entry "_s, i));
+        // Deflate expands at most about 1032:1: a larger recorded size is a lie the
+        // engine would otherwise allocate for at the first request.
+        if (compression && size > storedSize * maximumInflateRatio + 64)
+            return malformed(makeString("entry "_s, i, " records more bytes than its data can inflate to"_s));
 
         auto path = String::fromUTF8(*pathBytes);
         if (path.isNull() || normalizePath(path) != path || path.endsWith('/'))

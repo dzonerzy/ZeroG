@@ -539,7 +539,7 @@ zg_result zg_runtime_run(zg_runtime* rt)
         return fail(ZG_ERROR_INVALID_ARGUMENT, "no runtime"_s);
     if (!checkThread())
         return ZG_ERROR_WRONG_THREAD;
-    rt->quit = false;
+    // A quit asked for before the loop started ends it at once.
     bool hadWindows = !rt->windows.empty();
     while (!rt->quit) {
         std::vector<zg_window*> open;
@@ -568,8 +568,13 @@ zg_result zg_runtime_run(zg_runtime* rt)
 
 void zg_runtime_quit(zg_runtime* rt)
 {
-    if (rt)
-        rt->quit = true;
+    if (!rt)
+        return;
+    rt->quit = true;
+    // From another thread the loop may be asleep: an empty task wakes it (the
+    // wake-up handle, and the window loop's SDL event).
+    if (!isMainThread())
+        callOnMainThread([] { });
 }
 
 void zg_runtime_update(zg_runtime* rt)

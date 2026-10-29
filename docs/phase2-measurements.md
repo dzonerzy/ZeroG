@@ -43,3 +43,23 @@ Windows. Three causes, all fixed:
   touched; patch 0019 touches only those below what the thread already committed.
   An empty take-and-release of the lock went from 28 µs to 0.2 µs. This was a cost
   of every call from the host into JavaScript, not only of bindings.
+
+## Memory and fuzzing
+
+`ZeroGLifecycleTest` creates and destroys contexts, views and windows with work in
+flight (README, test table). With a page open the JavaScript heap holds about
+4.4 MB; after 17 more cycles and a collection it is back to 26 KB, as before them.
+Asset and surface bytes return to zero. It passes on both systems, and on Windows
+under AddressSanitizer (`tools/build.py --asan`), as do `ZeroGAPITest`,
+`ZeroGValuesTest` and `ZeroGLoader`.
+
+The fuzz targets (`tests/fuzz`) ran under libFuzzer with AddressSanitizer, two
+rounds of 10 minutes each, on the machine above:
+
+| Target | Inputs (second round) | Found |
+| --- | --- | --- |
+| `ZeroGFuzzAssets` | 937,000 | a compressed entry recording a size its data cannot inflate to (up to 4 GB): the engine allocated it at the first request and aborted when that failed. Such archives are now refused at mount, and inflating fails the file's loads, not the process, when memory runs out |
+| `ZeroGFuzzRequests` | 157,000 | nothing in the engine (a path with NULs was a bug of the harness) |
+| `ZeroGFuzzValues` | 3,110,000 | nothing |
+
+Both inputs are in the seed corpus (`tests/fuzz/corpus`), which the test runs replay.

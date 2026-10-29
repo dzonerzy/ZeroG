@@ -110,6 +110,25 @@ static zg_value *quit(zg_call *call, void *user)
     return NULL;
 }
 
+/* zg_runtime_quit from another thread, while zg_runtime_run sleeps. */
+#ifdef _WIN32
+static DWORD WINAPI quitLater(LPVOID argument)
+{
+    (void)argument;
+    Sleep(50);
+    zg_runtime_quit(runtime);
+    return 0;
+}
+#else
+static void *quitLater(void *argument)
+{
+    (void)argument;
+    usleep(50000);
+    zg_runtime_quit(runtime);
+    return NULL;
+}
+#endif
+
 /* ---- Callbacks ---- */
 
 static char lastConsole[256];
@@ -678,6 +697,20 @@ int main(int argc, char **argv)
         CHECK(stats.asset_bytes >= sizeof appPage - 1, "memory stats count the copied files: %zu bytes", stats.asset_bytes);
     }
     zg_view_destroy(view);
+
+    {
+        /* No window and no timer due: the loop sleeps until the other thread's quit. */
+        double start = zg_runtime_now_ms();
+#ifdef _WIN32
+        CloseHandle(CreateThread(NULL, 0, quitLater, NULL, 0, NULL));
+#else
+        pthread_t thread;
+        pthread_create(&thread, NULL, quitLater, NULL);
+        pthread_detach(thread);
+#endif
+        CHECK(zg_runtime_run(runtime) == ZG_OK && zg_runtime_now_ms() - start < 5000,
+            "zg_runtime_run without windows ends on zg_runtime_quit from another thread (%.0f ms)", zg_runtime_now_ms() - start);
+    }
 
     if (withWindow) {
         zg_window_config windowConfig = { sizeof windowConfig };

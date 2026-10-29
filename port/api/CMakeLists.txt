@@ -65,6 +65,45 @@ set(ZeroGValuesTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGValuesTest)
 WEBKIT_EXECUTABLE(ZeroGValuesTest)
 
+# Creating and destroying contexts, views and windows with work in flight.
+set(ZeroGLifecycleTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/lifecycle_test.c)
+set(ZeroGLifecycleTest_LIBRARIES ZeroGAPI)
+set(ZeroGLifecycleTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGLifecycleTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGLifecycleTest)
+WEBKIT_EXECUTABLE(ZeroGLifecycleTest)
+
+# Fuzz targets (tests/fuzz). In the AddressSanitizer build on Windows they are
+# libFuzzer programs, with coverage of ZeroG's own code (the embedding layer and
+# the API, where the parsers are); elsewhere they replay inputs from files, so the
+# corpus runs as a regression test on every OS.
+set(ZEROG_LIBFUZZER OFF)
+if (MSVC AND ENABLE_SANITIZERS MATCHES "address")
+    find_library(ZEROG_LIBFUZZER_LIBRARY clang_rt.fuzzer_no_main-x86_64 PATHS ${_zerog_clang_rt} NO_DEFAULT_PATH)
+    if (ZEROG_LIBFUZZER_LIBRARY)
+        set(ZEROG_LIBFUZZER ON)
+        target_compile_options(ZeroGEmbedding PRIVATE -fsanitize=fuzzer-no-link)
+        target_compile_options(ZeroGAPI PRIVATE -fsanitize=fuzzer-no-link)
+        # The instrumented code calls the coverage hooks in every program that links
+        # it: libFuzzer without its main has them, and does nothing unless driven
+        # (tests/fuzz/fuzz.h calls LLVMFuzzerRunDriver).
+        set_property(TARGET ZeroGEmbedding APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${ZEROG_LIBFUZZER_LIBRARY})
+    endif ()
+endif ()
+foreach (_zerog_fuzz IN ITEMS Assets Requests Values)
+    string(TOLOWER ${_zerog_fuzz} _zerog_fuzz_file)
+    set(ZeroGFuzz${_zerog_fuzz}_SOURCES ${ZEROG_SOURCE_DIR}/tests/fuzz/fuzz_${_zerog_fuzz_file}.c)
+    set(ZeroGFuzz${_zerog_fuzz}_LIBRARIES ZeroGAPI)
+    set(ZeroGFuzz${_zerog_fuzz}_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+    set(ZeroGFuzz${_zerog_fuzz}_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+    WEBKIT_EXECUTABLE_DECLARE(ZeroGFuzz${_zerog_fuzz})
+    WEBKIT_EXECUTABLE(ZeroGFuzz${_zerog_fuzz})
+    if (ZEROG_LIBFUZZER)
+        target_compile_definitions(ZeroGFuzz${_zerog_fuzz} PRIVATE ZEROG_LIBFUZZER)
+        target_compile_options(ZeroGFuzz${_zerog_fuzz} PRIVATE -fsanitize=fuzzer-no-link)
+    endif ()
+endforeach ()
+
 # Binding latency, through the public API.
 set(ZeroGBindingBench_SOURCES ${ZEROG_SOURCE_DIR}/tests/bench/bindings.c)
 set(ZeroGBindingBench_LIBRARIES ZeroGAPI)

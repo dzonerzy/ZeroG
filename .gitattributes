@@ -9,3 +9,6 @@ CMakeLists.txt text eol=lf
 *.c text eol=lf
 *.md text eol=lf
 tools/docker/* text eol=lf
+# Fuzz inputs are bytes: never converted.
+tests/fuzz/corpus/** -text
+tests/fuzz/seeds/** -text
