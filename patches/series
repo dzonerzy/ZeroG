@@ -1,3 +1,4 @@
 # Patch series applied on top of WEBKIT_REVISION, in order.
 # One file per line, relative to this directory. Keep every patch minimal:
 # the size of this series is the port's health metric (see ZeroG.md, "Strategia upstream").
+0001-cmake-forwarding-headers-instead-of-symlinks-on-windows.patch

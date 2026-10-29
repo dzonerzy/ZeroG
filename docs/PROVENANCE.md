@@ -8,6 +8,8 @@ under `patches/` is listed here when it is created.
 | --- | --- | --- |
 | `include/zerog.h` | Original | BSD-2-Clause |
 | `tools/webkit.py` | Original | BSD-2-Clause |
+| `tools/build.py` | Original | BSD-2-Clause |
+| `patches/0001-cmake-forwarding-headers-instead-of-symlinks-on-windows.patch` | Original, modifies `Source/cmake/WebKitMacros.cmake` (BSD) | BSD-2-Clause; upstream candidate |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from
 `Source/WebKitLegacy`, BSD), **Ultralight WebCore** (derived from

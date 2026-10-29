@@ -1,0 +1,23 @@
+diff --git a/Source/cmake/WebKitMacros.cmake b/Source/cmake/WebKitMacros.cmake
+index b42e27238f..edb163ba07 100644
+--- a/Source/cmake/WebKitMacros.cmake
++++ b/Source/cmake/WebKitMacros.cmake
+@@ -1087,6 +1087,18 @@ function(WEBKIT_SYMLINK_FILES target_name)
+             file(MAKE_DIRECTORY ${opt_DESTINATION}/${file_dir})
+             set(dst_file ${opt_DESTINATION}/${file})
+         endif ()
++        if (WIN32)
++            # Creating symlinks on Windows needs Developer Mode or elevation. Write a
++            # forwarding header instead: it includes the real file by its real path, so
++            # #pragma once still sees one file (a copy or a hardlink would not).
++            if (NOT dst_file IN_LIST forwarded_files)
++                file(GENERATE OUTPUT ${dst_file} CONTENT "#include \"${src_file}\"\n")
++                list(APPEND forwarded_files ${dst_file})
++            endif ()
++            # Depend on the real header so generated ones (e.g. WasmOps.h) exist first.
++            list(APPEND dst_files ${src_file})
++            continue ()
++        endif ()
+         add_custom_command(OUTPUT ${dst_file}
+             COMMAND ${CMAKE_COMMAND} -E create_symlink ${src_file} ${dst_file}
+             MAIN_DEPENDENCY ${src_file}

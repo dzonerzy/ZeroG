@@ -48,10 +48,10 @@ Windows requirements:
 - Visual Studio 2022 (C++ workload, Windows SDK), LLVM/clang-cl >= 19, Ninja,
   Python 3, Perl (Git for Windows' perl works), Ruby, gperf;
   vcpkg cloned and bootstrapped in `third_party/vcpkg`.
-- **Developer Mode** (Settings → System → For developers), or a shell with the
-  symlink privilege. JavaScriptCore's private headers are symlinks upstream, and
-  clang-cl matches `#pragma once` by final resolved path: copies and hardlinks
-  cause redefinition errors, only symlinks work.
+- No Developer Mode or admin rights: upstream symlinks JavaScriptCore's private
+  headers, which Windows only allows with that privilege. Patch 0001 writes
+  forwarding headers instead (copies and hardlinks break `#pragma once`, since
+  clang-cl matches it by resolved path).
 - Long paths enabled (`LongPathsEnabled` registry key; `tools/webkit.py` sets
   `core.longpaths` and `core.autocrlf=false` on the checkout).
 

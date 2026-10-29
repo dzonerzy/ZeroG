@@ -7,7 +7,8 @@ The checkout lives in third_party/webkit and is never edited by hand:
     prepare   reset the checkout to that commit, apply patches/series,
               then copy port/overlay/ on top (new files only)
     status    show pinned vs checked-out revision and patch/overlay counts
-    diff      print upstream files modified by the patch series
+    diff      print the full diff of the checkout against WEBKIT_REVISION
+              (patched + hand-edited); redirect it to write a new patch
 
 Changes to upstream files belong in patches/; new port files belong in
 port/overlay/ (mirroring the WebKit tree). `prepare` refuses to let the
@@ -106,7 +107,12 @@ def cmd_status(args):
 
 
 def cmd_diff(args):
-    git("diff", "--stat", "--cached", pinned_revision())
+    # Against the commit, not the index: `prepare` stages applied patches, so a
+    # plain `git diff` would only show edits made since then.
+    cmd = ["diff", pinned_revision()]
+    if args.stat:
+        cmd.insert(1, "--stat")
+    git(*cmd)
 
 
 def main():
@@ -117,7 +123,9 @@ def main():
     fetch.set_defaults(func=cmd_fetch)
     sub.add_parser("prepare").set_defaults(func=cmd_prepare)
     sub.add_parser("status").set_defaults(func=cmd_status)
-    sub.add_parser("diff").set_defaults(func=cmd_diff)
+    diff = sub.add_parser("diff")
+    diff.add_argument("--stat", action="store_true")
+    diff.set_defaults(func=cmd_diff)
     args = parser.parse_args()
     args.func(args)
 
