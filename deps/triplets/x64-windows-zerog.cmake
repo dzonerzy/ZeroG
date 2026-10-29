@@ -10,3 +10,6 @@ set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/../toolchains/windo
 # A chainloaded toolchain turns the vcvars environment off by default; the SDK
 # (rc.exe, headers, import libraries) is still needed.
 set(VCPKG_LOAD_VCVARS_ENV ON)
+if (PORT STREQUAL "harfbuzz")
+    set(VCPKG_MESON_NATIVE_FILE "${CMAKE_CURRENT_LIST_DIR}/../toolchains/meson-cxx17.ini")
+endif ()

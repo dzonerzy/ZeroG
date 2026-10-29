@@ -109,7 +109,10 @@ def cmd_deps(args):
     run([exe, "install",
          f"--x-manifest-root={ROOT / 'deps'}",
          f"--x-install-root={SYSROOT}",
+         # Build logs survive the Docker builder's throwaway container this way.
+         f"--x-buildtrees-root={SYSROOT / 'buildtrees'}",
          f"--overlay-triplets={ROOT / 'deps' / 'triplets'}",
+         f"--overlay-ports={ROOT / 'deps' / 'ports'}",  # ZeroG changes to vcpkg ports
          f"--triplet={TRIPLET}", f"--host-triplet={TRIPLET}",
          "--disable-metrics"], env=env)
 

@@ -7,7 +7,7 @@ FROM debian:trixie
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         cmake ninja-build make python3 perl ruby gperf unifdef pkg-config \
-        autoconf automake autoconf-archive libtool \
+        autoconf automake autoconf-archive libtool nasm \
         git ca-certificates curl zip unzip tar xz-utils file binutils \
     && rm -rf /var/lib/apt/lists/*
 

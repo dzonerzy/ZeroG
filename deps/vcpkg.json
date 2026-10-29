@@ -1,12 +1,21 @@
 {
   "name": "zerog-deps",
   "version-string": "0",
-  "description": "Static dependency sysroot for the ZeroG port. Libraries are added one at a time, when the feature that needs them lands (ZeroG.md, 'Ordine di lavoro').",
+  "description": "Static dependency sysroot for the ZeroG port (ZeroG.md, 'Dipendenze'). Every library is static and built with the pinned toolchain; features are trimmed to what WebCore uses.",
   "dependencies": [
-    {
-      "name": "icu",
-      "default-features": false
-    }
+    { "name": "icu", "default-features": false },
+    "zlib",
+    "libpng",
+    "libjpeg-turbo",
+    { "name": "libwebp", "default-features": false, "features": ["libwebpmux", "simd"] },
+    { "name": "libxml2", "default-features": false, "features": ["icu"] },
+    "sqlite3",
+    { "name": "freetype", "default-features": false, "features": ["png", "zlib"] },
+    { "name": "harfbuzz", "default-features": false, "features": ["freetype", "icu"] },
+    "boringssl",
+    { "name": "libpsl", "default-features": false },
+    "brotli",
+    "woff2"
   ],
   "builtin-baseline": "0e5eb43501dab17aa055dd54bd7a8c018f330fe2"
 }

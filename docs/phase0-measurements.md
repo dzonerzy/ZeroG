@@ -219,5 +219,37 @@ zig needs `-Wno-date-time` for mimalloc (its verbose banner uses `__DATE__`).
 | Clean build | 166 s | 162 s |
 | Link test, stripped | 49.70 MB | 50.92 MB |
 
+## WebCore dependency sysroot
+
+`deps/vcpkg.json` now holds the full phase 1 set, all static and built with the
+pinned toolchain on both platforms (vcpkg at the manifest's commit):
+
+| Library | Version | Features / notes |
+| --- | --- | --- |
+| ICU | 79.1 | filtered data per profile (tools/icu_data.py) |
+| zlib | 1.3.2 | |
+| libpng | 1.6.59 | |
+| libjpeg-turbo | 3.2.0 | NASM SIMD |
+| libwebp | 1.6.0 | mux, demux, sharpyuv (required by WebCore's decoders and `toDataURL`) |
+| libxml2 | 2.15.4 | ICU only: no iconv, no LZMA |
+| SQLite | 3.54.1 | |
+| FreeType | 2.14.3 | zlib and PNG only: no bzip2, no brotli |
+| HarfBuzz | 14.6.0 | ICU (`hb-icu`, required by WebCore's Skia text path), FreeType |
+| BoringSSL | 2026-08-13 | needed already by PAL's digests |
+| libpsl | 0.21.5 | compiled-in list, no IDN runtime (overlay port) |
+| brotli, woff2 | 1.2.1, 1.0.2 | WOFF2 web fonts |
+
+Checked: every Windows library uses the static release CRT (`libcmt`) and is
+compiled by clang-cl (the rest are NASM objects and version resources); every
+Linux C++ library uses zig's libc++, none libstdc++. curl and nghttp2 come with
+the networking stage; Fontconfig and EXPAT are not used (Skia patch, step 2).
+
+What it took: `rc.exe` as the Windows resource compiler and no `/c65001` in the
+RC flags (CMake's llvm-rc driver and Ninja's `cmcldeps` both preprocess `.rc`
+files with clang-cl); `cpp_std=c++17` for HarfBuzz's Meson build on Windows
+(its `c++11` default breaks MSVC's STL under clang-cl); NASM in the Linux image;
+an overlay port so libpsl can build without libidn2 or ICU; vcpkg build logs
+kept on the build volume.
+
 ## Gaps to the single-binary goal
 

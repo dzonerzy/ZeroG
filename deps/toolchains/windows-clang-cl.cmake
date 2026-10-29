@@ -23,3 +23,12 @@ set(CMAKE_C_COMPILER "${_zerog_llvm_bin}/clang-cl.exe")
 set(CMAKE_CXX_COMPILER "${_zerog_llvm_bin}/clang-cl.exe")
 set(CMAKE_LINKER "${_zerog_llvm_bin}/lld-link.exe" CACHE FILEPATH "")
 set(CMAKE_AR "${_zerog_llvm_bin}/llvm-lib.exe" CACHE FILEPATH "")
+# Resource scripts (.rc, e.g. FreeType's version info): the Windows SDK's rc.exe.
+# CMake would pick llvm-rc next to clang-cl, whose driver preprocesses with the C
+# compiler and passes it every RC flag, including vcpkg's -c65001, which clang-cl
+# rejects. rc.exe comes with the SDK the build already requires.
+set(CMAKE_RC_COMPILER rc.exe CACHE FILEPATH "")
+# Ninja's .rc dependency scanning (cmcldeps) preprocesses with the C compiler, so
+# vcpkg's rc.exe-only /c65001 (UTF-8 code page for resource text) still reaches
+# clang-cl. Drop it: the version resources of these libraries are ASCII.
+set(CMAKE_RC_FLAGS "/DWIN32" CACHE STRING "" FORCE)
