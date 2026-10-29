@@ -104,12 +104,12 @@ String evaluateScript(Page& page, const String& script)
     return result.toWTFString(globalObject);
 }
 
-bool initializeGPU()
+bool initializeGPU(void* hostDisplay)
 {
     ASSERT(isMainThread());
     if (auto* display = PlatformDisplay::sharedDisplayIfExists())
-        return display->skiaGLContext();
-    auto display = PlatformDisplayZeroG::create();
+        return (!hostDisplay || display->eglDisplay() == hostDisplay) && display->skiaGLContext();
+    auto display = PlatformDisplayZeroG::create(hostDisplay);
     if (!display)
         return false;
     PlatformDisplay::setSharedDisplay(WTF::move(display));

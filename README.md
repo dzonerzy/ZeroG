@@ -59,6 +59,12 @@ python tools/build.py build -t ZeroGFirstRender
 build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 ```
 
+| Test | Checks |
+| --- | --- |
+| `ZeroGFirstRender [--gpu]` | HTML, CSS, script and text painted on the CPU (and GPU), pixels checked |
+| `ZeroGFrameLoop` | `requestAnimationFrame` on the application's frame clock; each frame repaints only the damage; buffers match a full repaint |
+| `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render |
+
 `--profile minimal|standard|dev` selects the build profile and its ICU data;
 `--port JSCOnly` builds the upstream reference port.
 
@@ -96,9 +102,22 @@ docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builde
     python3 tools/build.py all --build-dir /build/zerog-minimal
 ```
 
+The tests run in the same image, on Mesa's llvmpipe. On a Windows host with
+Docker Desktop (WSL 2) they can use the real GPU through Mesa's `d3d12` driver:
+
+```sh
+docker run --rm --gpus all -v /usr/lib/wsl:/usr/lib/wsl:ro \
+    -e LD_LIBRARY_PATH=/usr/lib/wsl/lib -e GALLIUM_DRIVER=d3d12 \
+    -e MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA \
+    -v zerog-linux-build:/build zerog-linux-builder /build/zerog-minimal/bin/ZeroGTexture
+```
+
 `tools/webkit.py prepare` gives files whose content did not change their old
 modification time back, so re-running it after editing a patch or an overlay
-file only rebuilds what that change touches.
+file only rebuilds what that change touches. Do not build (on either OS: the
+Docker build shares the tree) while `prepare` runs: anything compiled from the
+half-prepared tree, precompiled headers included, looks newer than its restored
+sources and is not rebuilt.
 
 ## License
 

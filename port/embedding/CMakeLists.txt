@@ -4,9 +4,19 @@
 set(ZeroGEmbedding_LIBRARY_TYPE STATIC)
 
 set(ZeroGEmbedding_SOURCES
+    ChromeClientZeroG.cpp
     Embedding.cpp
     PlatformStrategiesZeroG.cpp
+    Surface.cpp
+    View.cpp
 )
+
+if (WIN32)
+    list(APPEND ZeroGEmbedding_SOURCES SurfaceD3D11.cpp)
+    set(ZeroGEmbedding_LIBRARIES d3d11 dxgi)
+else ()
+    list(APPEND ZeroGEmbedding_SOURCES SurfaceGL.cpp)
+endif ()
 
 set(ZeroGEmbedding_FRAMEWORKS
     JavaScriptCore
@@ -29,6 +39,9 @@ WEBKIT_LIBRARY(ZeroGEmbedding)
 # compile with WebCore's include path after our own.
 function(ZEROG_USE_WEBCORE_INCLUDES _target)
     target_include_directories(${_target} SYSTEM PRIVATE $<TARGET_PROPERTY:WebCore,INCLUDE_DIRECTORIES>)
+    # Skia's public definitions change its ABI (SK_TRIVIAL_ABI for sk_sp, pixel
+    # order); code that calls Skia directly must be built with them.
+    target_link_libraries(${_target} PRIVATE Skia)
 endfunction()
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGEmbedding)
 
@@ -47,3 +60,27 @@ set(ZeroGFirstRender_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUD
 WEBKIT_EXECUTABLE_DECLARE(ZeroGFirstRender)
 WEBKIT_EXECUTABLE(ZeroGFirstRender)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGFirstRender)
+
+# Frame loop: requestAnimationFrame on the application's clock, dirty regions.
+set(ZeroGFrameLoop_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/frame_loop.cpp)
+set(ZeroGFrameLoop_LIBRARIES ZeroGEmbedding)
+set(ZeroGFrameLoop_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGFrameLoop_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGFrameLoop)
+WEBKIT_EXECUTABLE(ZeroGFrameLoop)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGFrameLoop)
+
+# Texture mode: frames shared with the application's GPU device, read on its own
+# render thread.
+if (WIN32)
+    set(ZeroGTexture_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/texture_d3d11.cpp)
+    set(ZeroGTexture_LIBRARIES ZeroGEmbedding d3d11)
+else ()
+    set(ZeroGTexture_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/texture_gl.cpp)
+    set(ZeroGTexture_LIBRARIES ZeroGEmbedding)
+endif ()
+set(ZeroGTexture_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGTexture_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGTexture)
+WEBKIT_EXECUTABLE(ZeroGTexture)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGTexture)

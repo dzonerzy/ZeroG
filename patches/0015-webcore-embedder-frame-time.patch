@@ -1,0 +1,93 @@
+diff --git a/Source/WebCore/page/LocalDOMWindow.cpp b/Source/WebCore/page/LocalDOMWindow.cpp
+index 7ba5a1dc34..9673091e48 100644
+--- a/Source/WebCore/page/LocalDOMWindow.cpp
++++ b/Source/WebCore/page/LocalDOMWindow.cpp
+@@ -858,9 +858,13 @@ ReducedResolutionSeconds LocalDOMWindow::nowTimestamp() const
+     return protect(performance())->nowInReducedResolutionSeconds();
+ }
+ 
+-void LocalDOMWindow::freezeNowTimestamp()
++void LocalDOMWindow::freezeNowTimestamp(std::optional<MonotonicTime> frameTime)
+ {
+-    m_frozenNowTimestamp = nowTimestamp();
++    auto now = nowTimestamp();
++    // A frame time given by the embedder, never later than performance.now().
++    if (frameTime)
++        now = std::min(protect(performance())->relativeTimeFromTimeOriginInReducedResolutionSeconds(*frameTime), now);
++    m_frozenNowTimestamp = now;
+ }
+ 
+ void LocalDOMWindow::unfreezeNowTimestamp()
+diff --git a/Source/WebCore/page/LocalDOMWindow.h b/Source/WebCore/page/LocalDOMWindow.h
+index 0583082ad5..492647acb2 100644
+--- a/Source/WebCore/page/LocalDOMWindow.h
++++ b/Source/WebCore/page/LocalDOMWindow.h
+@@ -328,7 +328,7 @@ public:
+     Performance& performance() const;
+ 
+     WEBCORE_EXPORT ReducedResolutionSeconds nowTimestamp() const;
+-    void freezeNowTimestamp();
++    void freezeNowTimestamp(std::optional<MonotonicTime> frameTime = std::nullopt);
+     void LEGACY_NODELETE unfreezeNowTimestamp();
+     ReducedResolutionSeconds frozenNowTimestamp() const;
+ 
+diff --git a/Source/WebCore/page/Page.cpp b/Source/WebCore/page/Page.cpp
+index 60a9887a1a..fbe88aab0d 100644
+--- a/Source/WebCore/page/Page.cpp
++++ b/Source/WebCore/page/Page.cpp
+@@ -2475,6 +2475,13 @@ void Page::enumerateLocalFrameGeometry(NOESCAPE const Function<void(LocalFrame&,
+ }
+ 
+ // https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering
++void Page::updateRendering(MonotonicTime frameTime)
++{
++    m_embedderFrameTime = std::min(frameTime, MonotonicTime::now());
++    updateRendering();
++    m_embedderFrameTime = std::nullopt;
++}
++
+ void Page::updateRendering()
+ {
+     LOG(EventLoop, "Page %p updateRendering() - re-entering %d", this, !m_renderingUpdateRemainingSteps.isEmpty());
+@@ -2492,7 +2499,7 @@ void Page::updateRendering()
+         return;
+     }
+ 
+-    m_lastRenderingUpdateTimestamp = MonotonicTime::now();
++    m_lastRenderingUpdateTimestamp = m_embedderFrameTime.value_or(MonotonicTime::now());
+     m_renderingUpdateIsScheduled = false;
+ 
+     bool isSVGImagePage = chrome().client().isSVGImageChromeClient();
+@@ -2518,8 +2525,8 @@ void Page::updateRendering()
+ 
+     // Timestamps should not change while serving the rendering update steps.
+     Vector<WeakPtr<Document, WeakPtrImplWithEventTargetData>> initialDocuments;
+-    forEachDocument([&initialDocuments] (Document& document) {
+-        protect(document.window())->freezeNowTimestamp();
++    forEachDocument([&initialDocuments, frameTime = m_embedderFrameTime] (Document& document) {
++        protect(document.window())->freezeNowTimestamp(frameTime);
+         initialDocuments.append(document);
+     });
+ 
+diff --git a/Source/WebCore/page/Page.h b/Source/WebCore/page/Page.h
+index 751267b4b0..e9dbc314ee 100644
+--- a/Source/WebCore/page/Page.h
++++ b/Source/WebCore/page/Page.h
+@@ -877,6 +877,9 @@ public:
+ 
+     WEBCORE_EXPORT void layoutIfNeeded(OptionSet<LayoutOptions> = { });
+     WEBCORE_EXPORT void updateRendering();
++    // An embedder that paces frames itself gives the frame's time, which becomes the
++    // requestAnimationFrame timestamp (never later than now).
++    WEBCORE_EXPORT void updateRendering(MonotonicTime frameTime);
+     // A call to updateRendering() that is not followed by a call to finalizeRenderingUpdate().
+     WEBCORE_EXPORT void isolatedUpdateRendering();
+     // Called when the rendering update steps are complete, but before painting.
+@@ -1854,6 +1857,7 @@ private:
+     bool m_isServiceWorkerPage { false };
+ 
+     MonotonicTime m_lastRenderingUpdateTimestamp;
++    std::optional<MonotonicTime> m_embedderFrameTime;
+     bool m_renderingUpdateIsScheduled { false };
+ #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+     MonotonicTime m_lastAccessibilityObjectRegionsUpdate;

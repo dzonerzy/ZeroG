@@ -13,7 +13,9 @@ namespace WebCore {
 class PlatformDisplayZeroG final : public PlatformDisplay {
 public:
     // Null when no GPU display is available; rendering then stays on the CPU.
-    WEBCORE_EXPORT static std::unique_ptr<PlatformDisplayZeroG> create();
+    // `hostDisplay`: an EGLDisplay of the application to render on, so textures
+    // can be handed to it as EGLImages (Linux texture mode).
+    WEBCORE_EXPORT static std::unique_ptr<PlatformDisplayZeroG> create(void* hostDisplay = nullptr);
 
     ~PlatformDisplayZeroG();
 

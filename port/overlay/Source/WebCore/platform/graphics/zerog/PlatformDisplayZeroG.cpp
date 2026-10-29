@@ -58,9 +58,11 @@ static RefPtr<GLDisplay> createGLDisplay()
 
 #endif
 
-std::unique_ptr<PlatformDisplayZeroG> PlatformDisplayZeroG::create()
+std::unique_ptr<PlatformDisplayZeroG> PlatformDisplayZeroG::create(void* hostDisplay)
 {
-    auto glDisplay = createGLDisplay();
+    // eglInitialize on a display the application already initialized only
+    // returns its version; it is never terminated by the engine.
+    auto glDisplay = hostDisplay ? GLDisplay::create(static_cast<EGLDisplay>(hostDisplay)) : createGLDisplay();
     if (!glDisplay) {
         RELEASE_LOG_INFO(Compositing, "No GPU display available, rendering on the CPU: %s", GLContext::lastErrorString());
         return nullptr;
