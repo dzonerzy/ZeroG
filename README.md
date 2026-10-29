@@ -35,13 +35,18 @@ python tools/webkit.py prepare   # reset, apply patches/series, copy port/overla
 python tools/webkit.py status
 ```
 
-## Building (phase 0: static WTF + JavaScriptCore via the upstream JSCOnly port)
+## Building (ZeroG port, stage 1: static WTF + JavaScriptCore)
 
 ```sh
-python tools/build.py deps        # static ICU into third_party/sysroot (vcpkg)
-python tools/build.py configure   # build/jsconly-minimal
+python tools/build.py deps        # static ICU 79.1 + filtered ICU data (vcpkg, deps/icu-data.json)
+python tools/build.py configure   # PORT=ZeroG into build/zerog-minimal
 python tools/build.py build
+python tools/build.py bundle      # one engine archive: lib/zerog-engine.{lib,a}
+python tools/build.py linktest    # C program linked against that archive
 ```
+
+`--profile minimal|standard|dev` selects the build profile and its ICU data;
+`--port JSCOnly` builds the upstream reference port.
 
 Windows requirements:
 
@@ -60,8 +65,7 @@ Linux builds run in the pinned Docker image:
 ```sh
 docker build -t zerog-linux-builder -f tools/docker/linux-builder.Dockerfile tools/docker
 docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builder \
-    sh -c 'python3 tools/build.py configure --build-dir /build/jsconly-minimal &&
-           python3 tools/build.py build --build-dir /build/jsconly-minimal'
+    python3 tools/build.py all --build-dir /build/zerog-minimal
 ```
 
 ## License
