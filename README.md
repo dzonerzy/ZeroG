@@ -9,7 +9,8 @@ The full design is in [ZeroG.md](ZeroG.md) (Italian). Verification of the
 design against the pinned WebKit revision lives in [docs/verification](docs/verification).
 
 > Status: phase 1 — WebCore renders HTML, CSS, JavaScript and text to a PNG on
-> Windows and Linux (`tests/render/first_render.cpp`). No public API yet.
+> Windows and Linux, on the CPU or the GPU (`tests/render/first_render.cpp`).
+> No public API yet.
 
 ## Layout
 
@@ -49,11 +50,13 @@ python tools/build.py linktest    # C programs against the bundle, incl. a host 
 ```
 
 The phase 1 render test lays out and paints a page on the CPU, writes a PNG and
-checks its pixels:
+checks its pixels; `--gpu` also paints it with Skia's GPU backend (ANGLE over
+D3D11 on Windows, the system EGL driver on Linux; the Docker image has Mesa's
+llvmpipe) and compares the two images:
 
 ```sh
 python tools/build.py build -t ZeroGFirstRender
-build/zerog-minimal/bin/ZeroGFirstRender first_render.png
+build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 ```
 
 `--profile minimal|standard|dev` selects the build profile and its ICU data;

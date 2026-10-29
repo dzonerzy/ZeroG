@@ -42,10 +42,11 @@ ENV ZEROG_VCPKG_ROOT=/opt/vcpkg \
     VCPKG_KEEP_ENV_VARS=ZEROG_ZIG_TARGET;ZIG_GLOBAL_CACHE_DIR \
     ZEROG_SYSROOT=/build/sysroot
 
-# Fonts for the render tests only: the engine reads whatever the host has under
-# /usr/share/fonts and does not depend on these.
+# For the render tests only, the engine depends on neither: fonts (it reads
+# whatever the host has under /usr/share/fonts) and Mesa's EGL with llvmpipe, a
+# software GPU driver for `first_render --gpu` (port/gl loads the system driver).
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        fonts-dejavu-core \
+        fonts-dejavu-core libegl1 libegl-mesa0 libgles2 mesa-libgallium \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

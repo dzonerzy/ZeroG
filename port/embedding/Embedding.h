@@ -34,8 +34,20 @@ void loadHTML(WebCore::Page&, const String& html);
 // string, or a null string when scripts are disabled or the script throws.
 String evaluateScript(WebCore::Page&, const String& script);
 
-// Updates style and layout, then paints the main frame into a new BGRA image.
-RefPtr<WebCore::ImageBuffer> paint(WebCore::Page&, float deviceScaleFactor = 1);
+// Opens the GPU display Skia renders through (ANGLE on Windows, the system EGL
+// driver on Linux). Call after initializeProcess(), once; returns whether a GPU is
+// available. Without it every paint happens on the CPU.
+bool initializeGPU();
+
+// The GL_RENDERER string of Skia's GPU context, or a null string without a GPU.
+String gpuRenderer();
+
+enum class Rendering : bool { CPU, GPU };
+
+// Updates style and layout, then paints the main frame into a new image. A GPU
+// paint falls back to the CPU when no GPU is available; the image's
+// renderingMode() tells which one was used.
+RefPtr<WebCore::ImageBuffer> paint(WebCore::Page&, Rendering = Rendering::CPU, float deviceScaleFactor = 1);
 
 Vector<uint8_t> encodePNG(WebCore::ImageBuffer&);
 

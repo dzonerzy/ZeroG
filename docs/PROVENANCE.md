@@ -36,6 +36,8 @@ under `patches/` is listed here when it is created.
 | `port/overlay/Source/WebCore/platform/graphics/zerog/FontManagerZeroG.*`, `port/overlay/Source/WebCore/platform/zerog/UserAgentZeroG.cpp`, `port/overlay/Source/WebCore/platform/network/zerog/CurlSSLHandleZeroG.cpp`, `port/overlay/Source/WebCore/accessibility/zerog/AXObjectCacheZeroG.cpp` | Original | BSD-2-Clause |
 | `port/overlay/Source/PlatformZeroG.cmake`, `port/embedding/CMakeLists.txt`, `port/embedding/config.h`, `port/embedding/Embedding.*`, `port/embedding/PlatformStrategiesZeroG.h`, `tests/render/first_render.cpp` | Original (page setup follows `Source/WebCore/testing/TestPage.cpp`) | BSD-2-Clause |
 | `port/overlay/Source/WebCore/platform/graphics/zerog/GraphicsLayerZeroG.cpp`, `port/overlay/Source/WebCore/platform/zerog/PasteboardZeroG.cpp`, `port/overlay/Source/WebCore/platform/zerog/PlatformKeyboardEventZeroG.cpp` | Original (keyboard disambiguation follows the GTK and WPE ports) | BSD-2-Clause |
+| `port/overlay/Source/WebCore/platform/graphics/zerog/PlatformDisplayZeroG.*` | Original (display selection follows `PlatformDisplayWin.cpp` and `PlatformDisplaySurfaceless.cpp`) | BSD-2-Clause |
+| `patches/0014-skia-gl-context-for-zerog.patch` | Original, one condition in `PlatformDisplaySkia.cpp` | Same as the modified file |
 | `port/gl/*` | Original; the generated entry points are derived from the Khronos EGL/GLES headers (Apache-2.0 / MIT) | BSD-2-Clause |
 | `patches/0012-webcore-generic-timer-keyboard-and-editor-for-zerog.patch` | Original, guard changes in WebCore files | Same as the modified files |
 | `patches/0013-wtf-keep-main-thread-data-at-exit-on-windows.patch` | Original, modifies `ThreadingWin.cpp` (BSD) | BSD-2-Clause; upstream candidate |

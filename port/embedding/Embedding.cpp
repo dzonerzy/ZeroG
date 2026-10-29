@@ -22,6 +22,10 @@
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
+#include <GLES2/gl2.h>
+#include <WebCore/GLContext.h>
+#include <WebCore/PlatformDisplay.h>
+#include <WebCore/PlatformDisplayZeroG.h>
 #include <WebCore/PageConfiguration.h>
 #include <WebCore/ProcessWarming.h>
 #include <WebCore/Settings.h>
@@ -100,7 +104,29 @@ String evaluateScript(Page& page, const String& script)
     return result.toWTFString(globalObject);
 }
 
-RefPtr<ImageBuffer> paint(Page& page, float deviceScaleFactor)
+bool initializeGPU()
+{
+    ASSERT(isMainThread());
+    if (auto* display = PlatformDisplay::sharedDisplayIfExists())
+        return display->skiaGLContext();
+    auto display = PlatformDisplayZeroG::create();
+    if (!display)
+        return false;
+    PlatformDisplay::setSharedDisplay(WTF::move(display));
+    // Skia's GL context for this thread, created now so a failure shows here.
+    return PlatformDisplay::sharedDisplay().skiaGLContext();
+}
+
+String gpuRenderer()
+{
+    auto* display = PlatformDisplay::sharedDisplayIfExists();
+    auto* context = display ? display->skiaGLContext() : nullptr;
+    if (!context || !context->makeContextCurrent())
+        return { };
+    return String::fromLatin1(reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
+}
+
+RefPtr<ImageBuffer> paint(Page& page, Rendering rendering, float deviceScaleFactor)
 {
     RefPtr frame = page.localMainFrame();
     RELEASE_ASSERT(frame);
@@ -110,7 +136,8 @@ RefPtr<ImageBuffer> paint(Page& page, float deviceScaleFactor)
     view->updateLayoutAndStyleIfNeededRecursive();
 
     IntRect rect { { }, view->frameRect().size() };
-    RefPtr buffer = ImageBuffer::create(rect.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, deviceScaleFactor, ColorSpace::SRGB(), ImageBufferFormat { PixelFormat::BGRA8 });
+    auto mode = rendering == Rendering::GPU ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
+    RefPtr buffer = ImageBuffer::create(rect.size(), mode, RenderingPurpose::Unspecified, deviceScaleFactor, ColorSpace::SRGB(), ImageBufferFormat { PixelFormat::BGRA8 });
     if (!buffer)
         return nullptr;
 

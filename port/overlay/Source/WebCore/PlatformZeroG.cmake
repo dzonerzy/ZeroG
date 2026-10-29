@@ -32,6 +32,7 @@ list(APPEND WebCore_SOURCES
 
     platform/graphics/zerog/FontManagerZeroG.cpp
     platform/graphics/zerog/GraphicsLayerZeroG.cpp
+    platform/graphics/zerog/PlatformDisplayZeroG.cpp
     platform/zerog/PasteboardZeroG.cpp
     platform/zerog/PlatformKeyboardEventZeroG.cpp
     platform/zerog/UserAgentZeroG.cpp
@@ -91,4 +92,5 @@ endif ()
 
 list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/zerog/FontManagerZeroG.h
+    platform/graphics/zerog/PlatformDisplayZeroG.h
 )
