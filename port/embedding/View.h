@@ -41,7 +41,8 @@ public:
     virtual void cursorChanged(WebCore::PlatformCursorType) { }
     virtual void tooltipChanged(const String&) { }
     virtual void titleChanged(const String&) { }
-    virtual void loadFinished(const URL&, bool /* failed */) { }
+    // The main frame's load ended; a null error means it succeeded.
+    virtual void loadFinished(const URL&, const WebCore::ResourceError&) { }
     // A navigation of the main frame or an iframe; false blocks it.
     virtual bool allowNavigation(const URL&, bool /* isMainFrame */) { return true; }
     // Links and window.open targeting a new window.

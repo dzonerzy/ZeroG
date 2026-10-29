@@ -443,6 +443,7 @@ typedef struct zg_view_callbacks {
     void (*cursor_changed)(zg_view *view, zg_cursor cursor, void *user);
     void (*tooltip_changed)(zg_view *view, const char *text, size_t len, void *user);
     void (*title_changed)(zg_view *view, const char *title, size_t len, void *user);
+    /* When `failed`, zg_last_error() gives the reason during the call. */
     void (*load_finished)(zg_view *view, const char *url, int failed, void *user);
     /* Navigation outside the allowed origins. Return nonzero to allow it in
        the view; by default it is blocked and passed to open_external. */

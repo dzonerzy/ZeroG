@@ -270,12 +270,15 @@ private:
         callbacks().title_changed(&m_view, byteCast<char>(utf8.data()), utf8.length(), callbacks().user);
     }
 
-    void loadFinished(const URL& url, bool failed) final
+    void loadFinished(const URL& url, const ResourceError& error) final
     {
         if (!callbacks().load_finished)
             return;
+        // The reason is zg_last_error() during the callback.
+        if (!error.isNull())
+            fail(ZG_ERROR_NOT_FOUND, error.localizedDescription().isEmpty() ? makeString("load failed ("_s, error.domain(), ' ', error.errorCode(), ')') : error.localizedDescription());
         auto utf8 = url.string().utf8();
-        callbacks().load_finished(&m_view, byteCast<char>(utf8.data()), failed, callbacks().user);
+        callbacks().load_finished(&m_view, byteCast<char>(utf8.data()), !error.isNull(), callbacks().user);
     }
 
     bool allowNavigation(const URL& url, bool isMainFrame) final

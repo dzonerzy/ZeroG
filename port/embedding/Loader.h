@@ -143,7 +143,7 @@ Session& sessionForFrame(WebCore::LocalFrame*);
 
 // http and https over curl (LoaderCurl.cpp).
 Ref<LoadTask> createNetworkTask(WebCore::ResourceLoader&);
-bool loadNetworkResourceSynchronously(const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);
+bool loadNetworkResourceSynchronously(Session&, const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);
 
 // Errors handed to WebCore, in WebKit's domains so its loader classifies them.
 WebCore::ResourceError cancelledError(const URL&);

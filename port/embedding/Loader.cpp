@@ -524,7 +524,7 @@ private:
             return;
         }
         if (url.protocolIsInHTTPFamily()) {
-            loadNetworkResourceSynchronously(request, error, response, data);
+            loadNetworkResourceSynchronously(sessionForFrame(&frameLoader.frame()), request, error, response, data);
             return;
         }
         error = ZeroG::cannotShowURLError(url);

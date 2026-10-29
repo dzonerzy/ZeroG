@@ -1,0 +1,42 @@
+diff --git a/Source/WebCore/loader/DocumentThreadableLoader.cpp b/Source/WebCore/loader/DocumentThreadableLoader.cpp
+index bf3d53714a..cbd2a206f5 100644
+--- a/Source/WebCore/loader/DocumentThreadableLoader.cpp
++++ b/Source/WebCore/loader/DocumentThreadableLoader.cpp
+@@ -317,6 +317,8 @@ void DocumentThreadableLoader::redirectReceived(CachedResource& resource, Resour
+     --m_options.maxRedirectCount;
+ 
+     m_responseURL = request.url();
++    if (!redirectResponse.isNull())
++        m_didRedirect = true;
+ 
+     // FIXME: We restrict this check to Fetch API for the moment, as this might disrupt WorkerScriptLoader.
+     // Reassess this check based on https://github.com/whatwg/fetch/issues/393 discussions.
+@@ -396,6 +398,14 @@ void DocumentThreadableLoader::responseReceived(const CachedResource& resource,
+         responseWithCorrectFragmentIdentifier = response;
+         responseWithCorrectFragmentIdentifier.setURL(URL { m_responseURL });
+     }
++    // Without a network process doing the security checks, a cross-origin
++    // redirect restarts the load (redirectReceived), and the final resource does
++    // not record it: Response.redirected must still be true.
++    if (m_didRedirect && !response.isRedirected() && response.source() != ResourceResponse::Source::ServiceWorker) {
++        if (responseWithCorrectFragmentIdentifier.isNull())
++            responseWithCorrectFragmentIdentifier = response;
++        responseWithCorrectFragmentIdentifier.setRedirected(true);
++    }
+ 
+     if (!m_responsesCanBeOpaque) {
+         ResourceResponse responseWithoutTainting = responseWithCorrectFragmentIdentifier.isNull() ? response : WTF::move(responseWithCorrectFragmentIdentifier);
+diff --git a/Source/WebCore/loader/DocumentThreadableLoader.h b/Source/WebCore/loader/DocumentThreadableLoader.h
+index d071b4a006..f8a1272ac3 100644
+--- a/Source/WebCore/loader/DocumentThreadableLoader.h
++++ b/Source/WebCore/loader/DocumentThreadableLoader.h
+@@ -141,6 +141,9 @@ class CachedRawResource;
+         std::optional<ResourceRequest> m_bypassingPreflightForServiceWorkerRequest;
+ 
+         bool m_responsesCanBeOpaque { true };
++        // A redirect was followed. A cross-origin one restarts the load at its
++        // target, whose response then no longer knows it was redirected.
++        bool m_didRedirect { false };
+         bool m_sameOriginRequest;
+         bool m_simpleRequest;
+         bool m_async;

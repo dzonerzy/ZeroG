@@ -181,6 +181,18 @@ private:
                     break;
                 request.append(buffer, received);
             }
+            // The body, if any.
+            auto headerEnd = request.find("\r\n\r\n");
+            auto lengthHeader = request.find("\r\nContent-Length: ");
+            if (headerEnd != std::string::npos && lengthHeader != std::string::npos && lengthHeader < headerEnd) {
+                size_t length = std::stoul(request.substr(lengthHeader + 18));
+                while (request.size() < headerEnd + 4 + length) {
+                    auto received = recv(client, buffer, sizeof(buffer), 0);
+                    if (received <= 0)
+                        break;
+                    request.append(buffer, received);
+                }
+            }
             ++m_requests;
             auto pathStart = request.find(' ') + 1;
             auto path = request.substr(pathStart, request.find(' ', pathStart) - pathStart);
@@ -198,6 +210,10 @@ private:
 
     std::string respond(const std::string& path, const std::string& request)
     {
+        if (path == "/echo-body") {
+            auto headerEnd = request.find("\r\n\r\n");
+            return response("200 OK", "text/plain", headerEnd == std::string::npos ? "" : request.substr(headerEnd + 4));
+        }
         if (path == "/set-cookie")
             return response("200 OK", "text/plain", "set", "Set-Cookie: visible=1; Path=/\r\nSet-Cookie: hidden=2; Path=/; HttpOnly\r\n");
         if (path == "/echo-cookie") {
@@ -233,10 +249,12 @@ private:
 
 class Client final : public ZeroG::ViewClient {
 public:
-    void loadFinished(const URL& url, bool failed) final
+    void loadFinished(const URL& url, const ResourceError& error) final
     {
         finishedURL = url;
-        loadFailed = failed;
+        loadFailed = !error.isNull();
+        if (loadFailed)
+            std::printf("     load of %s failed: %s (%s %d)\n", url.string().utf8().data(), error.localizedDescription().utf8().data(), error.domain().utf8().data(), error.errorCode());
         ++loads;
     }
 
@@ -267,7 +285,11 @@ bool load(ZeroG::View& view, Client& client, const String& url)
 {
     int loads = client.loads;
     view.loadURL(URL { url });
-    return runUntil([&] { return client.loads > loads; }) && !client.loadFailed;
+    if (!runUntil([&] { return client.loads > loads; }, std::chrono::seconds(30))) {
+        std::printf("     load of %s timed out\n", url.utf8().data());
+        return false;
+    }
+    return !client.loadFailed;
 }
 
 // Evaluates an async expression and waits for its value as a string.
@@ -382,10 +404,12 @@ int main()
         // http over curl, from the app's page.
         auto remote = await(*view, makeString("fetch('"_s, http, "/api.json').then(r => r.json()).then(j => j.remote)"_s));
         passed &= check(remote == "true"_s, "fetch over http with CORS: %s", remote.utf8().data());
-        // Cross-origin, WebCore restarts the request at the redirect's target, so
-        // Response.redirected (set by WebKit's network process) stays false.
-        auto redirected = await(*view, makeString("fetch('"_s, http, "/redirect').then(async r => `${new URL(r.url).pathname} ${(await r.json()).remote}`)"_s));
-        passed &= check(redirected == "/api.json true"_s, "http redirect: %s", redirected.utf8().data());
+        // Cross-origin, WebCore restarts the request at the redirect's target;
+        // patch 0017 keeps Response.redirected true.
+        auto redirected = await(*view, makeString("fetch('"_s, http, "/redirect').then(async r => `${r.redirected} ${new URL(r.url).pathname} ${(await r.json()).remote}`)"_s));
+        passed &= check(redirected == "true /api.json true"_s, "http redirect: %s", redirected.utf8().data());
+        auto direct = await(*view, makeString("fetch('"_s, http, "/api.json').then(r => r.redirected)"_s));
+        passed &= check(direct == "false"_s, "no redirect, not redirected: %s", direct.utf8().data());
         auto blocked = await(*view, makeString("fetch('"_s, http, "/private.json').then(r => r.status)"_s));
         passed &= check(blocked.startsWith("error:"_s), "no CORS header, no read: %s", blocked.utf8().data());
         auto intoApp = await(*view, makeString("fetch('"_s, http, "/to-app').then(r => r.status)"_s));
@@ -414,6 +438,18 @@ int main()
         view->evaluateScript("document.cookie = 'script=3; path=/'"_s);
         auto sent = await(*view, "fetch('/echo-cookie').then(r => r.text())"_s);
         passed &= check(sent.contains("visible=1"_s) && sent.contains("hidden=2"_s) && sent.contains("script=3"_s), "cookies sent with requests: '%s'", sent.utf8().data());
+
+        // Synchronous XMLHttpRequest over http: on its own curl handle.
+        constexpr auto syncXHR = "(method, url, body) => { const x = new XMLHttpRequest(); x.open(method, url, false); x.send(body); "
+            "return `${x.status} ${new URL(x.responseURL).pathname} ${x.responseText}`; }"_s;
+        auto syncGet = view->evaluateScript(makeString('(', syncXHR, ")('GET', '/api.json')"_s));
+        passed &= check(syncGet == "200 /api.json {\"remote\":true}"_s, "synchronous XHR over http: %s", syncGet.utf8().data());
+        auto syncRedirect = view->evaluateScript(makeString('(', syncXHR, ")('GET', '/redirect')"_s));
+        passed &= check(syncRedirect == "200 /api.json {\"remote\":true}"_s, "follows redirects: %s", syncRedirect.utf8().data());
+        auto syncPost = view->evaluateScript(makeString('(', syncXHR, ")('POST', '/echo-body', 'posted body')"_s));
+        passed &= check(syncPost == "200 /echo-body posted body"_s, "sends a body: %s", syncPost.utf8().data());
+        auto syncCookies = view->evaluateScript(makeString('(', syncXHR, ")('GET', '/echo-cookie')"_s));
+        passed &= check(syncCookies.contains("hidden=2"_s), "and cookies: %s", syncCookies.utf8().data());
 
         int loads = client.loads;
         view->loadURL(URL { makeString(http, "/nothing-here"_s) });

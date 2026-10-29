@@ -17,3 +17,4 @@
 0014-skia-gl-context-for-zerog.patch
 0015-webcore-embedder-frame-time.patch
 0016-wtf-generic-run-loop-next-wake-up-time.patch
+0017-webcore-threadable-loader-redirected-after-restart.patch

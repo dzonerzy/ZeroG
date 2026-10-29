@@ -154,13 +154,13 @@ private:
     void dispatchDidFailProvisionalLoad(const ResourceError& error, WillContinueLoading, WillInternallyHandleFailure) final
     {
         if (m_view && isMainFrame())
-            m_view->client().loadFinished(error.failingURL(), true);
+            m_view->client().loadFinished(error.failingURL(), error);
     }
 
     void dispatchDidFailLoad(const ResourceError& error) final
     {
         if (m_view && isMainFrame())
-            m_view->client().loadFinished(error.failingURL(), true);
+            m_view->client().loadFinished(error.failingURL(), error);
     }
 
     void dispatchDidFinishDocumentLoad() final { }
@@ -168,7 +168,7 @@ private:
     void dispatchDidFinishLoad() final
     {
         if (m_view && isMainFrame())
-            m_view->client().loadFinished(frame().document() ? frame().document()->url() : URL { }, false);
+            m_view->client().loadFinished(frame().document() ? frame().document()->url() : URL { }, { });
     }
 
     void dispatchDidReachLayoutMilestone(OptionSet<LayoutMilestone>) final { }
