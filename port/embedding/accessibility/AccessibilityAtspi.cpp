@@ -9,7 +9,9 @@
 // Threading: the connection to the accessibility bus has a thread of its own,
 // which reads calls and sends their replies; each call is answered on the
 // engine thread, which owns WebCore's tree. Events are sent from the engine
-// thread (libdbus connections may be used from several threads).
+// thread (libdbus connections may be used from several threads). The bus
+// thread sleeps in poll() on the connection's descriptors (libdbus's watches)
+// and an eventfd that wakes it when they change: no wake-ups while idle.
 
 #include "config.h"
 
@@ -22,6 +24,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <poll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
 #include <wtf/MainThread.h>
@@ -261,13 +266,6 @@ bool hasText(const Object& object)
     }
 }
 
-String textOf(const Object& object)
-{
-    if (states(object).contains(State::Editable))
-        return value(object);
-    return name(object);
-}
-
 // The application's name for screen readers: the program's, as GTK's g_get_prgname.
 String programName()
 {
@@ -331,6 +329,15 @@ private:
     void run();
     bool connect();
     void answer(Message*);
+    // libdbus's watches: the descriptors the bus thread polls.
+    static DBus::Bool addWatch(DBus::Watch*, void* service);
+    static void removeWatch(DBus::Watch*, void* service);
+    static void watchToggled(DBus::Watch*, void* service);
+    void wakeUp();
+
+    Lock m_watchLock;
+    Vector<DBus::Watch*> m_watches WTF_GUARDED_BY_LOCK(m_watchLock);
+    int m_wakeUpFD { -1 };
 
     // Engine thread.
     Message* handle(Message*);
@@ -531,7 +538,8 @@ void Service::emit(const String& path, ASCIILiteral interface, ASCIILiteral memb
     writer.int32(detail2);
     writer.container(DBus::TypeVariant, dataSignature, data);
     writer.container(DBus::TypeArray, "{sv}", [](Writer&) { });
-    // Written by the bus thread's next iteration.
+    // Written now, or by the bus thread once the socket takes it (its write
+    // watch turns on).
     dbus().connection_send(connection, signal, nullptr);
     dbus().message_unref(signal);
 }
@@ -613,9 +621,44 @@ bool Service::connect()
     return true;
 }
 
+DBus::Bool Service::addWatch(DBus::Watch* watch, void* data)
+{
+    auto& service = *static_cast<Service*>(data);
+    {
+        Locker locker { service.m_watchLock };
+        service.m_watches.append(watch);
+    }
+    service.wakeUp();
+    return true;
+}
+
+void Service::removeWatch(DBus::Watch* watch, void* data)
+{
+    auto& service = *static_cast<Service*>(data);
+    {
+        Locker locker { service.m_watchLock };
+        service.m_watches.removeFirst(watch);
+    }
+    service.wakeUp();
+}
+
+void Service::watchToggled(DBus::Watch*, void* data)
+{
+    // A watch turned on or off (writing, when messages wait in the queue): the
+    // bus thread polls again with it.
+    static_cast<Service*>(data)->wakeUp();
+}
+
+void Service::wakeUp()
+{
+    uint64_t one = 1;
+    [[maybe_unused]] auto written = write(m_wakeUpFD, &one, sizeof(one));
+}
+
 void Service::run()
 {
-    if (!connect())
+    m_wakeUpFD = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (m_wakeUpFD < 0 || !connect())
         return;
     DBus::Connection* connection;
     {
@@ -623,13 +666,55 @@ void Service::run()
         connection = m_connection;
     }
     auto& library = dbus();
-    // Short waits: signals the engine thread sends are written at the next one.
-    while (library.connection_read_write(connection, 20)) {
+    library.connection_set_watch_functions(connection, addWatch, removeWatch, watchToggled, this, nullptr);
+
+    auto answerQueued = [&] {
         while (auto* message = library.connection_pop_message(connection)) {
             if (library.message_get_type(message) == DBus::MethodCall)
                 answer(message);
             library.message_unref(message);
         }
+    };
+    // Calls that came while the registry embedded the application.
+    answerQueued();
+
+    while (library.connection_get_is_connected(connection)) {
+        // The enabled watches, and the wake-up descriptor last.
+        Vector<pollfd> descriptors;
+        Vector<DBus::Watch*> polled;
+        {
+            Locker locker { m_watchLock };
+            for (auto* watch : m_watches) {
+                if (!library.watch_get_enabled(watch))
+                    continue;
+                unsigned flags = library.watch_get_flags(watch);
+                short events = (flags & DBus::WatchReadable ? POLLIN : 0) | (flags & DBus::WatchWritable ? POLLOUT : 0);
+                descriptors.append({ library.watch_get_unix_fd(watch), events, 0 });
+                polled.append(watch);
+            }
+        }
+        descriptors.append({ m_wakeUpFD, POLLIN, 0 });
+        if (poll(descriptors.mutableSpan().data(), descriptors.size(), -1) < 0)
+            continue; // a signal
+        if (descriptors.last().revents & POLLIN) {
+            uint64_t count;
+            [[maybe_unused]] auto readBytes = read(m_wakeUpFD, &count, sizeof(count));
+        }
+        for (size_t i = 0; i < polled.size(); ++i) {
+            auto revents = descriptors[i].revents;
+            if (!revents)
+                continue;
+            {
+                // Removed meanwhile (the connection closing): not to be handled.
+                Locker locker { m_watchLock };
+                if (!m_watches.contains(polled[i]))
+                    continue;
+            }
+            unsigned flags = (revents & POLLIN ? DBus::WatchReadable : 0) | (revents & POLLOUT ? DBus::WatchWritable : 0)
+                | (revents & POLLERR ? DBus::WatchError : 0) | (revents & POLLHUP ? DBus::WatchHangup : 0);
+            library.watch_handle(polled[i], flags);
+        }
+        answerQueued();
     }
 }
 
@@ -902,9 +987,11 @@ std::optional<PropertyValue> Service::property(const Target& target, const Strin
     }
     if (interface == textInterface) {
         if (property == "CharacterCount"_s)
-            return int32(textOf(*object).length());
-        if (property == "CaretOffset"_s)
-            return int32(states(*object).contains(State::Focused) ? textOf(*object).length() : -1);
+            return int32(Accessibility::text(*object).length());
+        if (property == "CaretOffset"_s) {
+            auto selection = textSelection(*object);
+            return int32(selection && states(*object).contains(State::Focused) ? static_cast<int>(selection->end) : -1);
+        }
         return std::nullopt;
     }
     return std::nullopt;
@@ -1102,7 +1189,7 @@ bool Service::invoke(const Target& target, const String& interface, const String
     }
 
     if (interface == textInterface) {
-        auto text = textOf(*object);
+        auto text = Accessibility::text(*object);
         if (member == "GetText"_s) {
             int start = arguments.int32();
             arguments.next();
@@ -1120,7 +1207,8 @@ bool Service::invoke(const Target& target, const String& interface, const String
             return true;
         }
         if (member == "SetCaretOffset"_s) {
-            writer.boolean(false);
+            unsigned offset = std::max(0, arguments.int32());
+            writer.boolean(setTextSelection(*object, { offset, offset }));
             return true;
         }
         return false;

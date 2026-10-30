@@ -390,10 +390,17 @@ typedef struct zg_surface_config {
          already acquired through its keyed mutex.
        ZG_SURFACE_GL: the application's EGLDisplay (required); frames carry an
          EGLImage for glEGLImageTargetTexture2DOES and an EGLSync to eglWaitSync on.
-         Release frames with the context that used them current. Pages have no
-         WebGL on it (0.3): its ANGLE would have to open the same native display. */
+         Release frames with the context that used them current. */
     void *device;
     unsigned buffer_count; /* 2 or 3, 0 = 2 */
+    /* ZG_SURFACE_GL (0.3): how the application opened its EGLDisplay, the
+       platform and native display it gave eglGetPlatformDisplay (for example
+       EGL_PLATFORM_WAYLAND_KHR and its wl_display*, EGL_PLATFORM_GBM_KHR and its
+       gbm_device*, EGL_PLATFORM_SURFACELESS_MESA and EGL_DEFAULT_DISPLAY).
+       WebGL's ANGLE opens the same display with them; with a zero platform pages
+       have no WebGL there. Ignored by the other kinds. */
+    int egl_platform;
+    void *egl_native_display;
 } zg_surface_config;
 
 typedef struct zg_frame {
@@ -456,18 +463,19 @@ ZG_API void zg_view_set_focus(zg_view *view, int focused);
    and layout. A CPU view repaints dirty regions into the surface before
    returning. A GPU view (D3D11, GL; since 0.3) composites its layers on the
    engine's compositor thread: the frame reaches zg_surface_acquire shortly after
-   this returns, and while the frame of the previous call is still being
-   composited this call does nothing. CSS animations of transform, opacity and
-   filters keep producing frames there without further calls (zg_runtime_wakeup_
-   handle is signaled for each). The engine does not pace these views itself:
-   call it once per app frame.
+   this returns (zg_runtime_wakeup_handle is signaled), and while the frame of
+   the previous call is still being composited no new rendering update starts.
+   CSS animations of transform, opacity and filters are composited there with
+   no rendering update at all: one frame per call, at `frame_time_ms`, so they
+   move with the app's frames (and pause with its clock); without calls they
+   stop. The engine does not pace these views itself: call it once per app frame.
    Window mode: the engine paces rendering from the display's vsync; do not call. */
 ZG_API zg_result zg_view_render(zg_view *view, double frame_time_ms);
-/* Texture mode (0.3): the refresh rate of the display the app shows the view on,
-   in frames per second (default 60). A GPU view's compositor produces the
-   frames of animations it runs by itself (see zg_view_render) at most at this
-   rate; a CPU view has none and ignores it. ZG_ERROR_INVALID_ARGUMENT for a rate
-   that is not positive, or for a window's view, which follows its display. */
+/* Texture mode (0.3): at most this many composited animation frames per second
+   for a GPU view, whatever the app's frame rate (a game running at 144 fps may
+   keep its UI at 30, for instance); 0, the default, is one per zg_view_render.
+   A CPU view ignores it. ZG_ERROR_INVALID_ARGUMENT for a negative rate, or for
+   a window's view, which follows its display. */
 ZG_API zg_result zg_view_set_frame_rate(zg_view *view, double frames_per_second);
 
 /* Evaluate a script in the main frame. `result` may be NULL; otherwise the

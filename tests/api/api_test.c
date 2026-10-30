@@ -498,8 +498,9 @@ int main(int argc, char **argv)
     viewConfig.height = 200;
     view = zg_view_create(context, &viewConfig);
     CHECK(view != NULL && zg_view_surface(view) != NULL, "CPU view with a surface");
-    CHECK(zg_view_set_frame_rate(view, 144) == ZG_OK, "a texture-mode view takes the host's frame rate");
-    CHECK(zg_view_set_frame_rate(view, 0) == ZG_ERROR_INVALID_ARGUMENT, "a frame rate must be positive");
+    CHECK(zg_view_set_frame_rate(view, 30) == ZG_OK, "a texture-mode view takes a frame rate cap");
+    CHECK(zg_view_set_frame_rate(view, 0) == ZG_OK, "0: no cap, one frame per zg_view_render");
+    CHECK(zg_view_set_frame_rate(view, -1) == ZG_ERROR_INVALID_ARGUMENT, "a frame rate must not be negative");
 
     callbacks.console = onConsole;
     callbacks.js_error = onJSError;

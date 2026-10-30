@@ -1,0 +1,33 @@
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
+index 88643416fd..de23ea5d96 100644
+--- a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.cpp
+@@ -567,10 +567,10 @@ bool SkiaCompositingLayer::computeTransformsAndAnimations(const TransformationMa
+     return hasRunningAnimations;
+ }
+ 
+-bool SkiaCompositingLayer::paint(SkCanvas& canvas, std::optional<Damage>& frameDamage, const std::optional<Damage>& priorTargetDamage, std::optional<SkColor> clearColor)
++bool SkiaCompositingLayer::paint(SkCanvas& canvas, std::optional<Damage>& frameDamage, const std::optional<Damage>& priorTargetDamage, std::optional<SkColor> clearColor, std::optional<MonotonicTime> time)
+ {
+     // Both walks below assume the animations have been applied and the transforms computed.
+-    bool hasRunningAnimations = computeTransformsAndAnimations({ }, { }, MonotonicTime::now());
++    bool hasRunningAnimations = computeTransformsAndAnimations({ }, { }, time.value_or(MonotonicTime::now()));
+ 
+ #if ENABLE(DAMAGE_TRACKING)
+     // Collect the damage in a walk of its own first, so it is complete before the walk that draws. Each
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
+index 01f30a6c9d..a0c4c84840 100644
+--- a/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
++++ b/Source/WebCore/platform/graphics/skia/SkiaCompositingLayer.h
+@@ -128,8 +128,9 @@ public:
+     // Applies the animations, computes the transforms, then walks the tree. When a frame damage is passed,
+     // it is collected first in a walk that draws nothing, before the walk that draws. The draw is limited
+     // to the region the target must redraw - the target's prior owed damage combined with this frame's - and
+-    // no prior damage repaints the whole target. Returns whether any animation is still running.
+-    bool paint(SkCanvas&, std::optional<Damage>& frameDamage, const std::optional<Damage>& priorTargetDamage = std::nullopt, std::optional<SkColor> clearColor = std::nullopt);
++    // no prior damage repaints the whole target. Animations are applied at `time`: the embedder's frame
++    // clock, or now. Returns whether any animation is still running.
++    bool paint(SkCanvas&, std::optional<Damage>& frameDamage, const std::optional<Damage>& priorTargetDamage = std::nullopt, std::optional<SkColor> clearColor = std::nullopt, std::optional<MonotonicTime> time = std::nullopt);
+ 
+ private:
+     using ScopedFlush = SkiaCompositingLayerImageSetBatch::ScopedFlush;

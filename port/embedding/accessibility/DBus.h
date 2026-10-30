@@ -21,8 +21,22 @@ inline const char* data(const UTF8CString& string)
 
 struct Connection;
 struct Message;
+struct Watch;
 
 using Bool = uint32_t;
+
+// DBusWatchFlags
+enum WatchFlags : unsigned {
+    WatchReadable = 1 << 0,
+    WatchWritable = 1 << 1,
+    WatchError = 1 << 2,
+    WatchHangup = 1 << 3,
+};
+
+using AddWatchFunction = Bool (*)(Watch*, void* data);
+using RemoveWatchFunction = void (*)(Watch*, void* data);
+using WatchToggledFunction = void (*)(Watch*, void* data);
+using FreeFunction = void (*)(void* data);
 
 // DBusError
 struct Error {
@@ -94,6 +108,12 @@ struct Library {
     Bool (*connection_read_write)(Connection*, int timeoutMilliseconds);
     Message* (*connection_pop_message)(Connection*);
     void (*connection_flush)(Connection*);
+    Bool (*connection_get_is_connected)(Connection*);
+    Bool (*connection_set_watch_functions)(Connection*, AddWatchFunction, RemoveWatchFunction, WatchToggledFunction, void* data, FreeFunction);
+    int (*watch_get_unix_fd)(Watch*);
+    unsigned (*watch_get_flags)(Watch*);
+    Bool (*watch_get_enabled)(Watch*);
+    Bool (*watch_handle)(Watch*, unsigned flags);
     Message* (*message_new_method_call)(const char* destination, const char* path, const char* interface, const char* method);
     Message* (*message_new_method_return)(Message*);
     Message* (*message_new_error)(Message*, const char* name, const char* message);

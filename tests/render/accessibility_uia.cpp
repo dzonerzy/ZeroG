@@ -26,7 +26,7 @@ namespace {
 constexpr auto page = R"HTML(<!DOCTYPE html>
 <html><body>
   <button id="button" onclick="window.clicks = (window.clicks || 0) + 1">Press me</button>
-  <input id="field" aria-label="Your name" value="abc">
+  <input id="field" aria-label="Your name" value="abc" oninput="window.inputs = (window.inputs || 0) + 1">
   <input id="box" type="checkbox" aria-label="Agree">
   <input id="volume" type="range" min="0" max="10" value="3" aria-label="Volume">
 </body></html>)HTML";
@@ -103,6 +103,9 @@ struct Results {
     bool invoked { false };
     std::string fieldValue;
     bool setField { false };
+    std::string documentText;
+    std::string firstCharacter;
+    bool selectedRange { false };
     bool toggled { false };
     double volume { -1 };
     double volumeMaximum { -1 };
@@ -166,6 +169,26 @@ void runClient(HWND window, Results& results)
                     results.setField = SUCCEEDED(valuePattern->SetValue(newValue));
                     SysFreeString(newValue);
                 }
+
+                // The Text pattern: the whole text, then its first character,
+                // selected in the page.
+                ComPtr<IUIAutomationTextPattern> textPattern;
+                field->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&textPattern));
+                ComPtr<IUIAutomationTextRange> document;
+                if (textPattern)
+                    textPattern->get_DocumentRange(&document);
+                if (document) {
+                    BSTR text = nullptr;
+                    document->GetText(-1, &text);
+                    results.documentText = narrow(text);
+                    SysFreeString(text);
+                    int moved = 0;
+                    document->MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, -2, &moved);
+                    document->GetText(-1, &text);
+                    results.firstCharacter = narrow(text);
+                    SysFreeString(text);
+                    results.selectedRange = SUCCEEDED(document->Select());
+                }
             }
             if (auto box = findByName(*automation.Get(), *root.Get(), L"Agree")) {
                 ComPtr<IUIAutomationTogglePattern> toggle;
@@ -220,6 +243,11 @@ int main()
     ok &= check(results.fieldValue == "abc", "the text field's value: '%s'", results.fieldValue.c_str());
     auto field = window->view().evaluateScript("document.getElementById('field').value"_s);
     ok &= check(results.setField && field == "xyz"_s, "a value set through UI Automation reaches the page: '%s'", field.utf8().data());
+    auto inputs = window->view().evaluateScript("String(window.inputs)"_s);
+    ok &= check(inputs == "1"_s, "with an input event, as an edit: %s", inputs.utf8().data());
+    ok &= check(results.documentText == "xyz" && results.firstCharacter == "x", "the Text pattern reads the field ('%s') and by character ('%s')", results.documentText.c_str(), results.firstCharacter.c_str());
+    auto selection = window->view().evaluateScript("(() => { const f = document.getElementById('field'); return f.selectionStart + ',' + f.selectionEnd; })()"_s);
+    ok &= check(results.selectedRange && selection == "0,1"_s, "selecting a text range selects in the field: %s", selection.utf8().data());
     ok &= check(results.focusEvent, "focusing the field raises a focus event for it");
     auto checked = window->view().evaluateScript("String(document.getElementById('box').checked)"_s);
     ok &= check(results.toggled && checked == "true"_s, "the check box toggled on: %s", checked.utf8().data());

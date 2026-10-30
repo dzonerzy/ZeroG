@@ -29,7 +29,7 @@ namespace {
 constexpr auto page = R"HTML(<!DOCTYPE html>
 <html><body>
   <button id="button" onclick="window.clicks = (window.clicks || 0) + 1">Press me</button>
-  <input id="field" aria-label="Your name" value="abc">
+  <input id="field" aria-label="Your name" value="abc" oninput="window.inputs = (window.inputs || 0) + 1">
   <input id="box" type="checkbox" aria-label="Agree">
   <input id="volume" type="range" min="0" max="10" value="3" aria-label="Volume">
 </body></html>)HTML";
@@ -380,6 +380,8 @@ int main()
     ok &= check(results.fieldText == "abc"_s, "the text field's text: '%s'", results.fieldText.utf8().data());
     auto field = window->view().evaluateScript("document.getElementById('field').value"_s);
     ok &= check(results.setField && field == "xyz"_s, "text set through AT-SPI reaches the page: '%s'", field.utf8().data());
+    auto inputs = window->view().evaluateScript("String(window.inputs)"_s);
+    ok &= check(inputs == "1"_s, "with an input event, as an edit: %s", inputs.utf8().data());
     ok &= check(results.focusEvent, "grabbing the focus sends the field's focused event");
     auto checked = window->view().evaluateScript("String(document.getElementById('box').checked)"_s);
     ok &= check(results.toggled && checked == "true"_s, "the check box is checked: %s", checked.utf8().data());

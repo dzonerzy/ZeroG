@@ -79,6 +79,7 @@ under `patches/` is listed here when it is created.
 | `port/embedding/accessibility/Accessibility.*` | Original; the name and description follow upstream's `accessibility/atspi/AccessibilityObjectAtspi.cpp` (the first text alternative that is not help or summary text) | BSD-2-Clause |
 | `port/embedding/inspector/InspectorZeroG.*`, `tests/render/inspector.cpp` | Original; the local frontend follows WebKitLegacy's `mac/WebCoreSupport/WebInspectorClient.mm` | BSD-2-Clause |
 | `port/overlay/Source/WebCore/platform/graphics/zerog/GraphicsContextGLZeroG.cpp` | Upstream, derived from `platform/graphics/coordinated/GraphicsContextGLCoordinatedEpoxy.cpp` (the engine's GL entry points instead of libepoxy) | BSD-2-Clause (Igalia header kept) |
+| `patches/0028-webcore-skia-compositing-layer-paint-time.patch` | Original, modifies `SkiaCompositingLayer.{h,cpp}` (animations applied at the embedder's frame time, now by default) | Same as the modified files; upstream candidate |
 | `patches/0027-webcore-angle-webgl-for-zerog-on-windows.patch` | Original, modifies `PlatformDisplayANGLE.cpp`, `GraphicsContextGLEGL.cpp` (ANGLE is the EGL on Windows, as for the Win port; context virtualization only where ANGLE has it) and `GraphicsContextGLANGLE.cpp` | Same as the modified files; upstream candidate |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from

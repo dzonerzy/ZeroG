@@ -75,6 +75,7 @@ struct Readback {
 // The application's side: its display and a context on its render thread.
 struct Host {
     EGLDisplay display { EGL_NO_DISPLAY };
+    int platform { 0 }; // what the display was opened from (0: eglGetDisplay)
     EGLContext context { EGL_NO_CONTEXT };
     EGLSurface surface { EGL_NO_SURFACE };
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC imageTargetTexture { nullptr };
@@ -86,7 +87,9 @@ struct Host {
         auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
         if (getPlatformDisplay)
             display = getPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr);
-        if (display == EGL_NO_DISPLAY)
+        if (display != EGL_NO_DISPLAY)
+            platform = EGL_PLATFORM_SURFACELESS_MESA;
+        else
             display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         return display != EGL_NO_DISPLAY && eglInitialize(display, nullptr, nullptr);
     }
@@ -162,7 +165,9 @@ int main()
         return 1;
 
     ZeroG::initializeProcess();
-    ok &= check(ZeroG::initializeGPU(host.display), "GPU on the application's display: %s", ZeroG::gpuRenderer().utf8().data());
+    // With how the display was opened (zg_surface_config.egl_platform), so that
+    // WebGL's ANGLE opens it too.
+    ok &= check(ZeroG::initializeGPU(host.display, host.platform, EGL_DEFAULT_DISPLAY), "GPU on the application's display: %s", ZeroG::gpuRenderer().utf8().data());
     auto surface = ZeroG::createGLSurface(host.display, 3);
     if (!check(!!surface, "GL surface"))
         return 1;
@@ -268,6 +273,14 @@ int main()
         ok &= check(different <= width * height / 100, "last frame matches a CPU render (%u pixels differ)", different);
     } else
         ok &= check(false, "CPU reference");
+
+    // WebGL on the application's display (standard, dev and debug builds).
+    if (view->evaluateScript("typeof WebGLRenderingContext"_s) == "function"_s) {
+        auto pixel = view->evaluateScript("(() => { const gl = document.createElement('canvas').getContext('webgl');"
+            "if (!gl) return 'no context'; gl.clearColor(0, 1, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);"
+            "const p = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, p); return p.join(); })()"_s);
+        ok &= check(pixel == "0,255,0,255"_s, "WebGL draws on the application's display: %s", pixel.utf8().data());
+    }
 
     std::printf(ok ? "PASS\n" : "FAILED\n");
     return ok ? 0 : 1;

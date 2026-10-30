@@ -72,7 +72,7 @@ String evaluateScript(WebCore::Page&, const String& script);
 // available. Without it every paint happens on the CPU. On Linux `hostDisplay`
 // may be the application's EGLDisplay, needed for GL texture-mode surfaces, and
 // `hostPlatform` with `hostNativeDisplay` how it was opened (eglGetPlatformDisplay's
-// first two arguments), which WebGL needs there; null when unknown.
+// first two arguments), which WebGL needs there; a zero platform: unknown.
 bool initializeGPU(void* hostDisplay = nullptr, int hostPlatform = 0, void* hostNativeDisplay = nullptr);
 
 // The GL_RENDERER string of Skia's GPU context, or a null string without a GPU.

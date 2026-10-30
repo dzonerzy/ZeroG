@@ -132,6 +132,18 @@ Object* parent(const Object&, View&);
 // "toggle", "select", "jump"); empty: nothing.
 String defaultActionName(const Object&);
 bool doDefaultAction(Object&);
+// The text assistive technologies read in an object: an editable field's
+// value, otherwise its name.
+String text(const Object&);
+// A text field's or text area's selection (UTF-16 offsets into text(); the
+// caret when empty), and selecting in it. nullopt / false elsewhere.
+struct TextSelection {
+    unsigned start { 0 };
+    unsigned end { 0 };
+};
+std::optional<TextSelection> textSelection(const Object&);
+bool setTextSelection(Object&, TextSelection);
+
 // Text fields and combo boxes take text; ranges take numbers.
 bool canSetValue(const Object&);
 bool setValue(Object&, const String&);

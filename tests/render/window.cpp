@@ -15,11 +15,17 @@
 #include <WebCore/PixelBuffer.h>
 #include <WebCore/PixelBufferFormat.h>
 #include <SDL3/SDL.h>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
+
+#if OS(WINDOWS)
+#include <windows.h>
+#include <powrprof.h>
+#endif
 
 using namespace WebCore;
 
@@ -77,10 +83,36 @@ SDL_Window* sdlWindow()
     return window;
 }
 
+// Whether the display is off (the system's power saving, or a locked session):
+// windows then get no vsync either. Windows says so through the console display
+// state, whose current value comes as soon as one subscribes to it.
+bool displayOff()
+{
+#if OS(WINDOWS)
+    std::atomic<DWORD> state { 1 };
+    DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS parameters { };
+    parameters.Callback = [](PVOID context, ULONG type, PVOID setting) -> ULONG {
+        auto* broadcast = static_cast<POWERBROADCAST_SETTING*>(setting);
+        if (type == PBT_POWERSETTINGCHANGE && broadcast && broadcast->DataLength >= sizeof(DWORD))
+            static_cast<std::atomic<DWORD>*>(context)->store(*reinterpret_cast<const DWORD*>(broadcast->Data));
+        return 0;
+    };
+    parameters.Context = &state;
+    HPOWERNOTIFY registration = nullptr;
+    if (PowerSettingRegisterNotification(&GUID_CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_CALLBACK, &parameters, &registration) != ERROR_SUCCESS)
+        return false;
+    Sleep(50);
+    PowerSettingUnregisterNotification(registration);
+    return !state; // 0: off, 1: on, 2: dimmed
+#else
+    return false; // Xvfb and Weston's headless backend have no power saving
+#endif
+}
+
 bool hiddenByDesktop()
 {
     auto* window = sdlWindow();
-    return window && (SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED));
+    return displayOff() || (window && (SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED)));
 }
 
 } // namespace
@@ -107,7 +139,7 @@ int main()
     double refresh = 1 / window->refreshInterval().seconds();
     if (hiddenByDesktop()) {
         // No vsync for a hidden window: the rate says nothing about the engine.
-        std::printf("     skipped: the desktop minimized or covered the window (rAF %.0f per second, %u frames)\n", rate, window->presentedFrames());
+        std::printf("     skipped: the display is off, or the desktop minimized or covered the window (rAF %.0f per second, %u frames)\n", rate, window->presentedFrames());
     } else {
         ok &= check(rate <= refresh * 1.1 && rate >= refresh * 0.4, "rAF at the display's rate: %.0f per second at %.0f Hz", rate, refresh);
         ok &= check(window->presentedFrames() >= 30 && window->presentedFrames() <= callbacks, "presented %u frames for the animation's changes", window->presentedFrames());

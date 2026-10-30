@@ -2,7 +2,9 @@
 // provider per accessibility object (Accessibility.h), a fragment root for the
 // window that answers WM_GETOBJECT, and the patterns screen readers use most:
 // Invoke (buttons, links), Toggle (check boxes, switches), Value (text fields,
-// combo boxes) and RangeValue (sliders, progress bars).
+// combo boxes), RangeValue (sliders, progress bars) and a basic Text pattern
+// for text fields and text areas (reading by character, word, line; the
+// selection and the caret).
 //
 // Threading: the providers are created on the engine thread, which is a COM
 // single-threaded apartment, and say ProviderOptions_UseComThreading: UI
@@ -155,7 +157,8 @@ class Provider final
     , public IInvokeProvider
     , public IToggleProvider
     , public IValueProvider
-    , public IRangeValueProvider {
+    , public IRangeValueProvider
+    , public ITextProvider {
 public:
     Provider(UIABridge& bridge, std::optional<AXID> id)
         : m_bridge(&bridge)
@@ -165,6 +168,9 @@ public:
 
     void disconnect() { m_bridge = nullptr; }
     bool isRoot() const { return !m_id; }
+    UIABridge* bridge() const { return m_bridge; }
+    // The live object (null for the root, or when defunct).
+    Object* object() const;
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID iid, void** result) final
@@ -185,6 +191,8 @@ public:
             *result = static_cast<IValueProvider*>(this);
         else if (iid == __uuidof(IRangeValueProvider) && !isRoot())
             *result = static_cast<IRangeValueProvider*>(this);
+        else if (iid == __uuidof(ITextProvider) && !isRoot())
+            *result = static_cast<ITextProvider*>(this);
         else {
             *result = nullptr;
             return E_NOINTERFACE;
@@ -255,11 +263,17 @@ public:
     IFACEMETHODIMP get_LargeChange(double*) final;
     IFACEMETHODIMP get_SmallChange(double*) final;
 
+    // ITextProvider
+    IFACEMETHODIMP GetSelection(SAFEARRAY**) final;
+    IFACEMETHODIMP GetVisibleRanges(SAFEARRAY**) final;
+    IFACEMETHODIMP RangeFromChild(IRawElementProviderSimple*, ITextRangeProvider**) final;
+    IFACEMETHODIMP RangeFromPoint(UiaPoint, ITextRangeProvider**) final;
+    IFACEMETHODIMP get_DocumentRange(ITextRangeProvider**) final;
+    IFACEMETHODIMP get_SupportedTextSelection(SupportedTextSelection*) final;
+
 private:
     ~Provider() = default;
 
-    // The live object (null for the root, or when defunct).
-    Object* object() const;
     std::optional<RangeValue> range() const
     {
         auto* target = object();
@@ -363,6 +377,8 @@ public:
                 UiaRaiseAutomationPropertyChangedEvent(&target, UIA_ValueValuePropertyId, oldValue, newValue);
                 VariantClear(&newValue);
             }
+            if (textSelection(object))
+                UiaRaiseAutomationEvent(&target, UIA_Text_TextChangedEventId);
             break;
         }
         case Event::NameChanged: {
@@ -470,6 +486,10 @@ IFACEMETHODIMP Provider::GetPatternProvider(PATTERNID pattern, IUnknown** result
     case UIA_RangeValuePatternId:
         if (rangeValue(*target))
             *result = static_cast<IRangeValueProvider*>(this);
+        break;
+    case UIA_TextPatternId:
+        if (textSelection(*target))
+            *result = static_cast<ITextProvider*>(this);
         break;
     default:
         break;
@@ -804,6 +824,406 @@ IFACEMETHODIMP Provider::get_SmallChange(double* result)
     auto current = range();
     RETURN_IF_DEFUNCT(current);
     *result = (current->maximum - current->minimum) / 100;
+    return S_OK;
+}
+
+// ---- Text ----
+
+// Where text units end: the offset `count` units from `offset` (count may be
+// negative), and how many units it moved.
+unsigned unitBoundary(const String& text, TextUnit unit, unsigned offset, int count, int& moved)
+{
+    unsigned length = text.length();
+    auto isSpace = [&](unsigned index) {
+        return text[index] == ' ' || text[index] == '\t' || text[index] == '\n' || text[index] == '\r';
+    };
+    // A unit starts there: any character; a word after spaces; a line after a
+    // line break. Formats, pages and the document are the whole text.
+    auto startsUnit = [&](unsigned index) {
+        if (!index || index >= length)
+            return true;
+        switch (unit) {
+        case TextUnit_Character:
+            return true;
+        case TextUnit_Word:
+            return !isSpace(index) && isSpace(index - 1);
+        case TextUnit_Line:
+        case TextUnit_Paragraph:
+            return text[index - 1] == '\n';
+        default:
+            return false;
+        }
+    };
+    moved = 0;
+    while (count > 0 && offset < length) {
+        do
+            ++offset;
+        while (offset < length && !startsUnit(offset));
+        --count;
+        ++moved;
+    }
+    while (count < 0 && offset > 0) {
+        do
+            --offset;
+        while (offset > 0 && !startsUnit(offset));
+        ++count;
+        --moved;
+    }
+    return offset;
+}
+
+// The start of the unit containing `offset`.
+unsigned unitStart(const String& text, TextUnit unit, unsigned offset)
+{
+    int moved;
+    unsigned length = text.length();
+    if (offset >= length)
+        return length;
+    // One unit forward then back lands on the start of the unit at `offset`.
+    unsigned next = unitBoundary(text, unit, offset, 1, moved);
+    return unitBoundary(text, unit, next, -1, moved);
+}
+
+// A range of an element's text (UTF-16 offsets, read again on each call, so a
+// range of a field being edited stays within its text).
+class TextRange final : public ITextRangeProvider {
+public:
+    TextRange(Provider& owner, unsigned start, unsigned end)
+        : m_owner(&owner)
+        , m_start(start)
+        , m_end(end)
+    {
+    }
+
+    static ITextRangeProvider* create(Provider& owner, unsigned start, unsigned end)
+    {
+        return new TextRange(owner, start, end);
+    }
+
+    IFACEMETHODIMP QueryInterface(REFIID iid, void** result) final
+    {
+        if (!result)
+            return E_POINTER;
+        if (iid == __uuidof(IUnknown) || iid == __uuidof(ITextRangeProvider)) {
+            *result = static_cast<ITextRangeProvider*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *result = nullptr;
+        return E_NOINTERFACE;
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() final { return ++m_refCount; }
+    IFACEMETHODIMP_(ULONG) Release() final
+    {
+        auto count = --m_refCount;
+        if (!count)
+            delete this;
+        return count;
+    }
+
+    IFACEMETHODIMP Clone(ITextRangeProvider** result) final
+    {
+        if (!result)
+            return E_POINTER;
+        *result = create(*m_owner.Get(), m_start, m_end);
+        return S_OK;
+    }
+
+    IFACEMETHODIMP Compare(ITextRangeProvider* other, BOOL* result) final
+    {
+        if (!result)
+            return E_POINTER;
+        auto* range = cast(other);
+        *result = range && range->m_owner.Get() == m_owner.Get() && range->m_start == m_start && range->m_end == m_end;
+        return S_OK;
+    }
+
+    IFACEMETHODIMP CompareEndpoints(TextPatternRangeEndpoint endpoint, ITextRangeProvider* other, TextPatternRangeEndpoint otherEndpoint, int* result) final
+    {
+        auto* range = cast(other);
+        if (!result || !range)
+            return E_INVALIDARG;
+        *result = static_cast<int>(this->endpoint(endpoint)) - static_cast<int>(range->endpoint(otherEndpoint));
+        return S_OK;
+    }
+
+    IFACEMETHODIMP ExpandToEnclosingUnit(TextUnit unit) final
+    {
+        auto contents = text();
+        if (!contents)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        clamp(*contents);
+        if (unit >= TextUnit_Page) {
+            m_start = 0;
+            m_end = contents->length();
+            return S_OK;
+        }
+        int moved;
+        m_start = unitStart(*contents, unit, m_start);
+        m_end = unitBoundary(*contents, unit, m_start, 1, moved);
+        return S_OK;
+    }
+
+    IFACEMETHODIMP FindAttribute(TEXTATTRIBUTEID, VARIANT, BOOL, ITextRangeProvider** result) final
+    {
+        if (!result)
+            return E_POINTER;
+        *result = nullptr; // no text attributes
+        return S_OK;
+    }
+
+    IFACEMETHODIMP FindText(BSTR search, BOOL backward, BOOL ignoreCase, ITextRangeProvider** result) final
+    {
+        if (!result)
+            return E_POINTER;
+        *result = nullptr;
+        auto contents = text();
+        if (!contents)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        clamp(*contents);
+        auto needle = fromWide(search);
+        auto haystack = contents->substring(m_start, m_end - m_start);
+        if (ignoreCase) {
+            needle = needle.convertToASCIILowercase();
+            haystack = haystack.convertToASCIILowercase();
+        }
+        size_t found = backward ? haystack.reverseFind(needle) : haystack.find(needle);
+        if (found != notFound && !needle.isEmpty())
+            *result = create(*m_owner.Get(), m_start + found, m_start + found + needle.length());
+        return S_OK;
+    }
+
+    IFACEMETHODIMP GetAttributeValue(TEXTATTRIBUTEID, VARIANT* result) final
+    {
+        if (!result)
+            return E_POINTER;
+        VariantInit(result);
+        IUnknown* notSupported = nullptr;
+        UiaGetReservedNotSupportedValue(&notSupported);
+        result->vt = VT_UNKNOWN;
+        result->punkVal = notSupported;
+        return S_OK;
+    }
+
+    IFACEMETHODIMP GetBoundingRectangles(SAFEARRAY** result) final
+    {
+        if (!result)
+            return E_POINTER;
+        *result = nullptr;
+        auto* target = m_owner->object();
+        if (!target)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        // The element's box: no per-character geometry in this basic pattern.
+        auto rect = m_owner->bridge()->screenRect(bounds(*target));
+        double values[] = { rect.left, rect.top, rect.width, rect.height };
+        auto* array = SafeArrayCreateVector(VT_R8, 0, std::size(values));
+        if (!array)
+            return E_OUTOFMEMORY;
+        for (LONG i = 0; i < static_cast<LONG>(std::size(values)); ++i)
+            SafeArrayPutElement(array, &i, &values[i]);
+        *result = array;
+        return S_OK;
+    }
+
+    IFACEMETHODIMP GetEnclosingElement(IRawElementProviderSimple** result) final
+    {
+        if (!result)
+            return E_POINTER;
+        auto* owner = static_cast<IRawElementProviderSimple*>(m_owner.Get());
+        owner->AddRef();
+        *result = owner;
+        return S_OK;
+    }
+
+    IFACEMETHODIMP GetText(int maxLength, BSTR* result) final
+    {
+        if (!result)
+            return E_POINTER;
+        auto contents = text();
+        if (!contents)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        clamp(*contents);
+        unsigned length = m_end - m_start;
+        if (maxLength >= 0)
+            length = std::min<unsigned>(length, maxLength);
+        *result = toBSTR(contents->substring(m_start, length));
+        return S_OK;
+    }
+
+    IFACEMETHODIMP Move(TextUnit unit, int count, int* result) final
+    {
+        if (!result)
+            return E_POINTER;
+        auto contents = text();
+        if (!contents)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        clamp(*contents);
+        bool degenerate = m_start == m_end;
+        int moved;
+        // From the start of the unit, `count` units on; a range covers one unit
+        // again, a degenerate range (a caret) stays degenerate.
+        unsigned start = unitStart(*contents, unit >= TextUnit_Page ? TextUnit_Character : unit, m_start);
+        m_start = unitBoundary(*contents, unit, start, count, moved);
+        m_end = m_start;
+        if (!degenerate) {
+            int unitLength;
+            m_end = unitBoundary(*contents, unit, m_start, 1, unitLength);
+        }
+        *result = moved;
+        return S_OK;
+    }
+
+    IFACEMETHODIMP MoveEndpointByUnit(TextPatternRangeEndpoint endpoint, TextUnit unit, int count, int* result) final
+    {
+        if (!result)
+            return E_POINTER;
+        auto contents = text();
+        if (!contents)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        clamp(*contents);
+        unsigned moved = unitBoundary(*contents, unit, this->endpoint(endpoint), count, *result);
+        setEndpoint(endpoint, moved);
+        return S_OK;
+    }
+
+    IFACEMETHODIMP MoveEndpointByRange(TextPatternRangeEndpoint endpoint, ITextRangeProvider* other, TextPatternRangeEndpoint otherEndpoint) final
+    {
+        auto* range = cast(other);
+        if (!range)
+            return E_INVALIDARG;
+        setEndpoint(endpoint, range->endpoint(otherEndpoint));
+        return S_OK;
+    }
+
+    IFACEMETHODIMP Select() final
+    {
+        auto* target = m_owner->object();
+        if (!target)
+            return UIA_E_ELEMENTNOTAVAILABLE;
+        return setTextSelection(*target, { m_start, m_end }) ? S_OK : UIA_E_INVALIDOPERATION;
+    }
+
+    IFACEMETHODIMP AddToSelection() final { return UIA_E_INVALIDOPERATION; }
+    IFACEMETHODIMP RemoveFromSelection() final { return UIA_E_INVALIDOPERATION; }
+    IFACEMETHODIMP ScrollIntoView(BOOL) final { return S_OK; }
+
+    IFACEMETHODIMP GetChildren(SAFEARRAY** result) final
+    {
+        if (!result)
+            return E_POINTER;
+        *result = SafeArrayCreateVector(VT_UNKNOWN, 0, 0);
+        return *result ? S_OK : E_OUTOFMEMORY;
+    }
+
+private:
+    ~TextRange() = default;
+
+    // Ranges given back by UI Automation are this class's, from this module.
+    static TextRange* cast(ITextRangeProvider* range) { return static_cast<TextRange*>(range); }
+
+    std::optional<String> text() const
+    {
+        auto* target = m_owner->object();
+        if (!target)
+            return std::nullopt;
+        return Accessibility::text(*target);
+    }
+
+    void clamp(const String& contents)
+    {
+        m_end = std::min<unsigned>(m_end, contents.length());
+        m_start = std::min(m_start, m_end);
+    }
+
+    unsigned endpoint(TextPatternRangeEndpoint endpoint) const
+    {
+        return endpoint == TextPatternRangeEndpoint_Start ? m_start : m_end;
+    }
+
+    void setEndpoint(TextPatternRangeEndpoint endpoint, unsigned offset)
+    {
+        if (endpoint == TextPatternRangeEndpoint_Start) {
+            m_start = offset;
+            m_end = std::max(m_end, offset);
+        } else {
+            m_end = offset;
+            m_start = std::min(m_start, offset);
+        }
+    }
+
+    std::atomic<ULONG> m_refCount { 1 };
+    ComPtr<Provider> m_owner;
+    unsigned m_start;
+    unsigned m_end;
+};
+
+SAFEARRAY* rangeArray(Provider& owner, std::optional<TextSelection> range)
+{
+    auto* array = SafeArrayCreateVector(VT_UNKNOWN, 0, range ? 1 : 0);
+    if (!array || !range)
+        return array;
+    auto* provider = TextRange::create(owner, range->start, range->end);
+    LONG index = 0;
+    SafeArrayPutElement(array, &index, provider); // the array holds its own reference
+    provider->Release();
+    return array;
+}
+
+IFACEMETHODIMP Provider::GetSelection(SAFEARRAY** result)
+{
+    if (!result)
+        return E_POINTER;
+    auto* target = object();
+    RETURN_IF_DEFUNCT(target);
+    *result = rangeArray(*this, textSelection(*target));
+    return *result ? S_OK : E_OUTOFMEMORY;
+}
+
+IFACEMETHODIMP Provider::GetVisibleRanges(SAFEARRAY** result)
+{
+    if (!result)
+        return E_POINTER;
+    auto* target = object();
+    RETURN_IF_DEFUNCT(target);
+    *result = rangeArray(*this, TextSelection { 0, Accessibility::text(*target).length() });
+    return *result ? S_OK : E_OUTOFMEMORY;
+}
+
+IFACEMETHODIMP Provider::RangeFromChild(IRawElementProviderSimple*, ITextRangeProvider** result)
+{
+    if (!result)
+        return E_POINTER;
+    *result = nullptr;
+    return E_INVALIDARG; // a text field has no children with text of their own
+}
+
+IFACEMETHODIMP Provider::RangeFromPoint(UiaPoint, ITextRangeProvider** result)
+{
+    if (!result)
+        return E_POINTER;
+    *result = nullptr;
+    RETURN_IF_DEFUNCT(object());
+    // No per-character geometry: the start of the text.
+    *result = TextRange::create(*this, 0, 0);
+    return S_OK;
+}
+
+IFACEMETHODIMP Provider::get_DocumentRange(ITextRangeProvider** result)
+{
+    if (!result)
+        return E_POINTER;
+    *result = nullptr;
+    auto* target = object();
+    RETURN_IF_DEFUNCT(target);
+    *result = TextRange::create(*this, 0, Accessibility::text(*target).length());
+    return S_OK;
+}
+
+IFACEMETHODIMP Provider::get_SupportedTextSelection(SupportedTextSelection* result)
+{
+    if (!result)
+        return E_POINTER;
+    *result = SupportedTextSelection_Single;
     return S_OK;
 }
 

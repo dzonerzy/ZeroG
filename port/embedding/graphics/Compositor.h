@@ -39,8 +39,11 @@
 // - The compositor thread has a Skia GL context of its own in the engine's
 //   share group. It applies the committed state, paints the layer tree
 //   (SkiaCompositingLayer) into the view's surface and publishes the frame.
-//   While layers animate (transform, opacity, filters) it goes on producing
-//   frames by itself, one per frame interval, with no work on the engine thread.
+//   While layers animate (transform, opacity, filters) frames need no work on
+//   the engine thread. Their pace is the display's in window mode (one per
+//   refresh, by itself) and the application's in texture mode (one per
+//   View::render, at the application's frame time, so a game's UI moves with
+//   the game's frames and costs no frame the game does not show).
 //
 // A composited view's surface belongs to the compositor thread: only it draws,
 // resizes and destroys it (its GPU resources live in that thread's context).
@@ -108,9 +111,18 @@ public:
     // Engine thread. Logical size and scale; the surface follows on the
     // compositor thread before the next frame.
     void setSize(const WebCore::IntSize&, float scale);
-    // The shortest time between two frames (the display's refresh interval in
-    // window mode). Animations are composited at this rate.
+    // Who paces animation frames: the application, through hostFrame() (texture
+    // mode, the default), or the display (window mode: the compositor goes on by
+    // itself, one frame per frame interval).
+    enum class Pacing : bool { Host, Display };
+    void setPacing(Pacing pacing) { m_pacing = pacing; }
+    // The shortest time between two animation frames: the display's refresh
+    // interval in window mode; in texture mode a cap the application may set
+    // (zero, the default: none).
     void setFrameInterval(Seconds);
+    // Engine thread, each View::render in texture mode: the application's frame,
+    // at its frame time. Running animations get one frame for it.
+    void hostFrame(MonotonicTime frameTime);
     void setTransparent(bool);
     // Window mode: runs on the compositor thread after each frame is published
     // (it presents it, and its swap may wait for vsync there). Null removes it,
@@ -184,8 +196,15 @@ private:
     WebCore::IntSize m_physicalSize WTF_GUARDED_BY_LOCK(m_attributesLock);
     float m_scale WTF_GUARDED_BY_LOCK(m_attributesLock) { 1 };
     std::atomic<bool> m_transparent { false };
-    std::atomic<double> m_frameIntervalSeconds { 1.0 / 60 };
+    std::atomic<Pacing> m_pacing { Pacing::Host };
+    std::atomic<double> m_frameIntervalSeconds { 0 };
     std::atomic<unsigned> m_compositedFrames { 0 };
+    // Texture mode: the application's last frame time (raw seconds; zero before
+    // the first), which animations are applied at, and whether the last frame
+    // had animations running.
+    std::atomic<double> m_hostFrameTime { 0 };
+    std::atomic<bool> m_animationsRunning { false };
+    MonotonicTime m_lastHostAnimationFrame; // engine thread
 
     // Compositor thread.
     Function<void()> m_presenter;

@@ -1426,7 +1426,7 @@ zg_view* zg_view_create(zg_context* context, const zg_view_config* configuration
             fail(ZG_ERROR_INVALID_ARGUMENT, "ZG_SURFACE_GL needs the application's EGLDisplay as its device"_s);
             return nullptr;
         }
-        if (!initializeGPU(surfaceConfig.device)) {
+        if (!initializeGPU(surfaceConfig.device, surfaceConfig.egl_platform, surfaceConfig.egl_native_display)) {
             fail(ZG_ERROR_GPU, "no GPU on the EGLDisplay (or the engine uses another display)"_s);
             return nullptr;
         }
@@ -1552,10 +1552,10 @@ zg_result zg_view_set_frame_rate(zg_view* view, double framesPerSecond)
         return t_lastError.empty() ? ZG_ERROR_INVALID_ARGUMENT : ZG_ERROR_WRONG_THREAD;
     if (view->window)
         return fail(ZG_ERROR_INVALID_ARGUMENT, "a window follows its display's refresh rate"_s);
-    if (!(framesPerSecond > 0) || !std::isfinite(framesPerSecond))
-        return fail(ZG_ERROR_INVALID_ARGUMENT, "the frame rate must be positive"_s);
+    if (!(framesPerSecond >= 0) || !std::isfinite(framesPerSecond))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "the frame rate must not be negative"_s);
     if (auto* compositor = view->view->compositor())
-        compositor->setFrameInterval(1_s / framesPerSecond);
+        compositor->setFrameInterval(framesPerSecond ? 1_s / framesPerSecond : 0_s);
     return ZG_OK;
 }
 

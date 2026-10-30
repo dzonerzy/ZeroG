@@ -7,6 +7,8 @@
 #include <WebCore/AccessibilityObject.h>
 #include <WebCore/Document.h>
 #include <WebCore/DocumentView.h>
+#include <WebCore/HTMLInputElement.h>
+#include <WebCore/HTMLTextAreaElement.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
@@ -374,6 +376,35 @@ bool doDefaultAction(Object& object)
     return object.press();
 }
 
+String text(const Object& object)
+{
+    if (states(object).contains(State::Editable))
+        return value(object);
+    return name(object);
+}
+
+static RefPtr<HTMLTextFormControlElement> textFormControl(const Object& object)
+{
+    RefPtr element = is<AccessibilityObject>(object) ? downcast<AccessibilityObject>(object).element() : nullptr;
+    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element.get()); input && input->isTextField())
+        return input;
+    return dynamicDowncast<HTMLTextAreaElement>(element.get());
+}
+
+std::optional<TextSelection> textSelection(const Object& object)
+{
+    RefPtr control = textFormControl(object);
+    if (!control)
+        return std::nullopt;
+    return TextSelection { control->selectionStart(), control->selectionEnd() };
+}
+
+bool setTextSelection(Object& object, TextSelection selection)
+{
+    RefPtr control = textFormControl(object);
+    return control && control->setSelectionRange(selection.start, std::max(selection.start, selection.end));
+}
+
 bool canSetValue(const Object& object)
 {
     if (!object.canSetValueAttribute())
@@ -395,9 +426,14 @@ bool setValue(Object& object, const String& value)
 {
     if (!canSetValue(object))
         return false;
-    // WebCore sets a text field's value as typing (the editor replaces the
-    // selection's text), which needs the field focused, as for whoever types.
-    if ((object.isTextControl() || object.isNonNativeTextControl()) && !object.isFocused() && object.canSetFocusAttribute())
+    // A text field's or text area's value is set on the element, as a script
+    // would with the events of an edit (input, change), and the focus stays
+    // where it is. WebCore's own setValue types through the editor instead,
+    // which reaches only a focused field.
+    if (RefPtr control = textFormControl(object))
+        return !control->setValue(value, DispatchInputAndChangeEvent).hasException();
+    // Other editable content (contenteditable) is typed into, focused first.
+    if (object.isNonNativeTextControl() && !object.isFocused() && object.canSetFocusAttribute())
         object.setFocused(true);
     return object.setValue(value);
 }

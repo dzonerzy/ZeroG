@@ -304,6 +304,9 @@ bool View::renderComposited(MonotonicTime frameTime)
     // Repaints go to the layers, which track their own damage.
     m_damage = { };
     m_lastPaintedArea = 0;
+    // Texture mode: this is the application's frame, which running animations
+    // get a composited frame for (window mode's display paces those itself).
+    m_compositor->hostFrame(frameTime);
     // One rendering update per composited frame.
     if (m_compositor->isWaitingForFrame())
         return false;

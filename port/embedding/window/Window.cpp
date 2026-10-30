@@ -197,9 +197,11 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
     windows().set(m_window, this);
     if (auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window)); mode && mode->refresh_rate > 0)
         m_refreshInterval = 1_s / mode->refresh_rate;
-    // Animations are composited at the display's rate.
-    if (auto* compositor = m_view->compositor())
+    // Animations are composited at the display's rate, by the compositor itself.
+    if (auto* compositor = m_view->compositor()) {
+        compositor->setPacing(Compositor::Pacing::Display);
         compositor->setFrameInterval(m_refreshInterval);
+    }
     if (m_presentContext->makeContextCurrent()) {
         // Present at the display's refresh rate. On Wayland a blocking swap waits
         // for the compositor's frame callback, which hidden or minimized windows

@@ -211,6 +211,9 @@ ZEROG_USE_WEBCORE_INCLUDES(ZeroGInspector)
 # Window mode: a native window presented at vsync.
 set(ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window.cpp)
 set(ZeroGWindow_LIBRARIES ZeroGEmbedding SDL3::SDL3-static)
+if (WIN32)
+    list(APPEND ZeroGWindow_LIBRARIES powrprof) # the display's power state
+endif ()
 set(ZeroGWindow_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
 set(ZeroGWindow_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
 WEBKIT_EXECUTABLE_DECLARE(ZeroGWindow)

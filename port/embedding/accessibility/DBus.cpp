@@ -37,6 +37,12 @@ const Library* Library::get()
         load(result.connection_read_write, "dbus_connection_read_write");
         load(result.connection_pop_message, "dbus_connection_pop_message");
         load(result.connection_flush, "dbus_connection_flush");
+        load(result.connection_get_is_connected, "dbus_connection_get_is_connected");
+        load(result.connection_set_watch_functions, "dbus_connection_set_watch_functions");
+        load(result.watch_get_unix_fd, "dbus_watch_get_unix_fd");
+        load(result.watch_get_flags, "dbus_watch_get_flags");
+        load(result.watch_get_enabled, "dbus_watch_get_enabled");
+        load(result.watch_handle, "dbus_watch_handle");
         load(result.message_new_method_call, "dbus_message_new_method_call");
         load(result.message_new_method_return, "dbus_message_new_method_return");
         load(result.message_new_error, "dbus_message_new_error");

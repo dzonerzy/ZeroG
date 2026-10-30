@@ -28,3 +28,4 @@
 0025-webcore-coordinated-scrolling-only-with-async-scrolling.patch
 0026-webcore-skia-executor-per-context.patch
 0027-webcore-angle-webgl-for-zerog-on-windows.patch
+0028-webcore-skia-compositing-layer-paint-time.patch

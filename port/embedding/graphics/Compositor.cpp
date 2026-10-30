@@ -28,9 +28,11 @@
 
 // The scheduling follows WebKit2's ThreadedCompositor: a composition is
 // Scheduled, InProgress, or ScheduledWhileInProgress when asked for again while
-// one runs; a rendering update's frame waits for its tiles. The frame timer stands
-// in for the UI process's "frame done" message: a frame completes one frame
-// interval after it started, which paces animations.
+// one runs; a rendering update's frame waits for its tiles. In window mode the
+// frame timer stands in for the UI process's "frame done" message: a frame
+// completes one frame interval after it started, which paces animations. In
+// texture mode the application's frames pace them (hostFrame), and a frame
+// completes as soon as it is published.
 
 #include "config.h"
 #include "graphics/Compositor.h"
@@ -231,6 +233,22 @@ void Compositor::setFrameInterval(Seconds interval)
     m_frameIntervalSeconds = interval.seconds();
 }
 
+void Compositor::hostFrame(MonotonicTime frameTime)
+{
+    if (m_pacing == Pacing::Display)
+        return;
+    m_hostFrameTime = frameTime.secondsSinceEpoch().seconds();
+    if (!m_animationsRunning)
+        return;
+    // At most one frame per frame interval, when the application set one (a
+    // little early is still the same frame: application clocks jitter).
+    auto interval = Seconds(m_frameIntervalSeconds.load());
+    if (interval > 0_s && frameTime - m_lastHostAnimationFrame < interval * 0.9)
+        return;
+    m_lastHostAnimationFrame = frameTime;
+    requestComposition(CompositionReason::Animation);
+}
+
 void Compositor::setTransparent(bool transparent)
 {
     m_transparent = transparent;
@@ -389,6 +407,12 @@ void Compositor::renderLayerTree()
     }
 
     m_lastFrameStart = MonotonicTime::now();
+    bool hostPaced = m_pacing == Pacing::Host;
+    // Texture mode: animations at the application's frame time, as the page's
+    // own (View::render); window mode: now, the display's.
+    std::optional<MonotonicTime> animationTime;
+    if (double hostFrameTime = m_hostFrameTime; hostPaced && hostFrameTime)
+        animationTime = MonotonicTime::fromRawSeconds(hostFrameTime);
     if (reasons && !size.isEmpty()) {
         if (m_surface->size() != size)
             m_surface->resize(size);
@@ -404,7 +428,7 @@ void Compositor::renderLayerTree()
             rootLayer.setTransform(viewportTransform);
             std::optional<Damage> frameDamage;
             target->canvas.save();
-            hasRunningAnimations = rootLayer.paint(target->canvas, frameDamage, std::nullopt, m_transparent ? SK_ColorTRANSPARENT : SK_ColorWHITE);
+            hasRunningAnimations = rootLayer.paint(target->canvas, frameDamage, std::nullopt, m_transparent ? SK_ColorTRANSPARENT : SK_ColorWHITE, animationTime);
             target->canvas.restore();
             m_surface->endFrame();
             ++m_compositedFrames;
@@ -415,7 +439,11 @@ void Compositor::renderLayerTree()
                     context->makeContextCurrent();
             }
         }
-        if (hasRunningAnimations)
+        // The next animation frame: now in window mode, at the application's
+        // next frame in texture mode.
+        if (hostPaced)
+            m_animationsRunning = hasRunningAnimations;
+        else if (hasRunningAnimations)
             requestComposition(CompositionReason::Animation);
     }
 
@@ -426,8 +454,10 @@ void Compositor::renderLayerTree()
         m_waitingForFrame = false;
     RunLoop::mainSingleton().dispatch([] { });
 
-    // The frame completes one frame interval after it started.
-    auto remaining = Seconds(m_frameIntervalSeconds.load()) - (MonotonicTime::now() - m_lastFrameStart);
+    // The frame completes one frame interval after it started in window mode,
+    // at once in texture mode (the application's next frame is the clock).
+    auto interval = hostPaced ? 0_s : Seconds(m_frameIntervalSeconds.load());
+    auto remaining = interval - (MonotonicTime::now() - m_lastFrameStart);
     m_framePending = true;
     auto generation = m_frameGeneration = ++s_frameGenerations;
     runOnCompositorThread([this, generation] {

@@ -205,7 +205,7 @@ bool initializeGPU(void* hostDisplay, int hostPlatform, void* hostNativeDisplay)
     if (auto* display = PlatformDisplay::sharedDisplayIfExists())
         return (!hostDisplay || display->eglDisplay() == hostDisplay) && display->skiaGLContext();
     std::optional<PlatformDisplayZeroG::NativePlatform> hostNativePlatform;
-    if (hostNativeDisplay)
+    if (hostPlatform)
         hostNativePlatform = PlatformDisplayZeroG::NativePlatform { hostPlatform, hostNativeDisplay };
     auto display = PlatformDisplayZeroG::create(hostDisplay, hostNativePlatform);
     if (!display) {

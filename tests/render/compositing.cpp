@@ -1,8 +1,9 @@
 // GPU compositing (ZeroG.md, "Compositing", version 2): a GPU view's layers are
 // composited on the compositor thread. CSS animations of transform and opacity
-// go on producing frames there with no rendering update at all (render() is not
-// called); a still frame matches the CPU render of the same page, its layers
-// flattened.
+// produce frames there with no rendering update at all, one per application
+// frame (render()), none without, and at most as many as a cap allows;
+// will-change makes a layer; a still frame matches the CPU render of the same
+// page, its layers flattened.
 //
 // Usage: compositing   (a GPU without a window: ANGLE on Windows, EGL on Linux)
 
@@ -14,7 +15,14 @@
 
 #include <GLES2/gl2.h>
 #include <WebCore/ColorSpace.h>
+#include <WebCore/Document.h>
+#include <WebCore/Element.h>
 #include <WebCore/GLContext.h>
+#include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
+#include <WebCore/Page.h>
+#include <WebCore/RenderLayer.h>
+#include <WebCore/RenderLayerModelObject.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/PixelBuffer.h>
 #include <WebCore/PixelBufferFormat.h>
@@ -42,8 +50,10 @@ constexpr auto page = R"HTML(<!DOCTYPE html>
            animation: fade 1s linear infinite alternate; }
   #layer { position: absolute; left: 200px; top: 110px; width: 80px; height: 60px; background: rgb(20, 160, 60);
            will-change: transform; }
+  /* Clear of the animations' paths: an element they may overlap gets a layer too. */
+  #still { position: absolute; left: 100px; top: 180px; width: 80px; height: 15px; background: rgb(120, 60, 160); }
   .still #slider, .still #fader { animation: none; }
-</style></head><body><div id="slider"></div><div id="fader"></div><div id="layer"></div></body></html>)HTML";
+</style></head><body><div id="slider"></div><div id="fader"></div><div id="layer"></div><div id="still"></div></body></html>)HTML";
 
 #define check(condition, ...) [&] {                    \
         bool result = (condition);                     \
@@ -72,6 +82,16 @@ bool readFrame(const ZeroG::Frame& frame, Vector<uint8_t>& pixels)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &framebuffer);
     return complete;
+}
+
+// Whether an element of the page has a composited layer of its own.
+bool isComposited(ZeroG::View& view, ASCIILiteral id)
+{
+    RefPtr frame = view.page().localMainFrame();
+    RefPtr document = frame ? frame->document() : nullptr;
+    RefPtr element = document ? document->getElementById(AtomString(id)) : nullptr;
+    auto* renderer = element ? dynamicDowncast<RenderLayerModelObject>(element->renderer()) : nullptr;
+    return renderer && renderer->hasLayer() && renderer->layer()->isComposited();
 }
 
 bool acquireAndRead(ZeroG::View& view, Vector<uint8_t>& pixels)
@@ -119,24 +139,44 @@ int main()
     unsigned framesBefore = view->compositor()->compositedFrames();
     ok &= check(framesBefore > 0, "frames composited for the rendering updates: %u", framesBefore);
 
-    // No render() for half a second: the animations run on the compositor thread.
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    unsigned animationFrames = view->compositor()->compositedFrames() - framesBefore;
-    ok &= check(animationFrames >= 15, "CSS animations go on with no rendering update: %u frames in 500 ms", animationFrames);
+    // will-change makes a layer of its own (composited, not painted with the page).
+    ok &= check(isComposited(*view, "layer"), "will-change: transform makes a composited layer");
+    ok &= check(!isComposited(*view, "still"), "a plain element is painted with its container");
 
-    // At the host display's rate (zg_view_set_frame_rate): 20 frames a second.
+    // The animations' frames come from the application's: one composited frame
+    // per render(), with no rendering update needed.
+    auto composited = [&] {
+        return view->compositor()->compositedFrames();
+    };
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    unsigned animationBefore = composited();
+    for (int i = 0; i < 30; ++i)
+        frame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    unsigned animationFrames = composited() - animationBefore;
+    ok &= check(animationFrames >= 24 && animationFrames <= 31, "CSS animations: one frame per application frame (%u for 30)", animationFrames);
+
+    // No application frames, no animation frames: a paused game's UI stops too.
+    unsigned idleBefore = composited();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    ok &= check(composited() - idleBefore <= 1, "no frames without the application's (%u in 300 ms)", composited() - idleBefore);
+
+    // A cap below the application's rate (zg_view_set_frame_rate): 20 a second
+    // for an application at 60.
     view->compositor()->setFrameInterval(1_s / 20);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    unsigned slowBefore = view->compositor()->compositedFrames();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    unsigned slowFrames = view->compositor()->compositedFrames() - slowBefore;
-    ok &= check(slowFrames >= 5 && slowFrames <= 12, "at 20 frames a second: %u frames in 500 ms", slowFrames);
-    view->compositor()->setFrameInterval(1_s / 60);
+    unsigned cappedBefore = composited();
+    for (int i = 0; i < 30; ++i)
+        frame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    unsigned cappedFrames = composited() - cappedBefore;
+    ok &= check(cappedFrames >= 7 && cappedFrames <= 12, "capped at 20 a second: %u frames for 30 application frames at 60", cappedFrames);
+    view->compositor()->setFrameInterval(0_s);
 
     // And they move: two frames apart differ where the slider is.
     Vector<uint8_t> first, second;
     bool readFirst = acquireAndRead(*view, first);
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    for (int i = 0; i < 9; ++i)
+        frame();
     bool readSecond = acquireAndRead(*view, second);
     ok &= check(readFirst && readSecond, "frames read back");
     if (readFirst && readSecond && first.size() == second.size()) {
@@ -151,9 +191,10 @@ int main()
     for (int i = 0; i < 60 && (i < 5 || view->hasPendingRenderingUpdate()); ++i)
         frame();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    unsigned stillFrames = view->compositor()->compositedFrames();
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    ok &= check(view->compositor()->compositedFrames() - stillFrames <= 1, "a still page composites no more frames (%u in 300 ms)", view->compositor()->compositedFrames() - stillFrames);
+    unsigned stillFrames = composited();
+    for (int i = 0; i < 18; ++i)
+        frame();
+    ok &= check(composited() - stillFrames <= 1, "a still page composites no frames for the application's (%u for 18)", composited() - stillFrames);
     view->repaint();
     view->render(frameTime);
     Vector<uint8_t> still;

@@ -40,24 +40,28 @@ Engine features of roadmap phases 3 and 4:
   `zg_view_render` returns, rather than before; while the previous frame is
   still being composited the call does nothing. Window mode presents on the
   compositor thread: the engine thread no longer waits for vsync. CPU views are
-  unchanged. `zg_view_set_frame_rate` gives a texture-mode view the refresh
-  rate of the application's display (default 60), the rate at which these
-  animations produce frames; a window follows its display's.
+  unchanged. In texture mode these animations are paced by the application:
+  one composited frame per `zg_view_render`, at its `frame_time_ms` (they stop
+  without calls), and `zg_view_set_frame_rate` caps them (a game at 144 fps
+  may keep its UI at 30); a window follows its display.
 - Accessibility: window mode exposes the page to screen readers, through UI
   Automation on Windows and AT-SPI on Linux (libdbus is loaded at run time;
   nothing without a session bus, or with `NO_AT_BRIDGE=1`). Controls have
   their names, roles, states and bounds; buttons and links can be pressed, text
-  fields read and set, check boxes toggled, ranges read and set, and focus,
+  fields read (by character, word and line too: UI Automation's Text pattern,
+  AT-SPI's Text) and set without moving the focus, check boxes toggled, ranges
+  read and set, and focus,
   value, name, state and structure changes are announced. No new function;
   texture-mode views have no bridge yet.
 - Window mode with several windows: each window gets its own events. Before,
   whichever window polled first took every window's events.
 - WebGL (standard, dev and debug profiles): WebGL and WebGL 2 in GPU views,
   their canvases composited as layers; CPU views have none. On Linux ANGLE runs
-  over the system's EGL driver, on the display the engine opened or the
-  window's; a GL texture-mode view on the application's own EGLDisplay has no
-  WebGL, since the engine cannot tell how that display was opened. Before,
-  these profiles did not link on Windows nor configure on Linux.
+  over the system's EGL driver, on the display the engine opened, the window's,
+  or the application's in GL texture mode, which then says how it opened it
+  (`zg_surface_config.egl_platform` and `egl_native_display`; without them
+  pages have no WebGL there). Before, these profiles did not link on Windows
+  nor configure on Linux.
 
 ## 0.2.0
 
