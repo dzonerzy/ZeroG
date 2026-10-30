@@ -10,6 +10,7 @@ set(ZeroGEmbedding_SOURCES
     Embedding.cpp
     Fonts.cpp
     FrameLoaderClientZeroG.cpp
+    HTTPCache.cpp
     KeyboardSDL.cpp
     Loader.cpp
     LoaderBlob.cpp

@@ -6,6 +6,16 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## 0.3.0 (in progress)
+
+Engine features of roadmap phases 3 and 4:
+
+- Storage: localStorage, sessionStorage and IndexedDB work, kept in `data_dir`
+  (`LocalStorage/`, `IndexedDB/`), in memory for ephemeral contexts. No new
+  function: before, `window.localStorage` was null and IndexedDB never answered.
+- HTTP disk cache: `zg_context_config.http_cache_limit` (0 = 64 MB, negative =
+  none), in `data_dir/HTTPCache/`.
+
 ## 0.2.0
 
 Additions for frameworks built on the API (one in Zig, for instance):

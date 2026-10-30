@@ -33,8 +33,10 @@
 #include "Loader.h"
 
 #include "Embedding.h"
+#include "HTTPCache.h"
 #include "View.h"
 #include <WebCore/AuthenticationChallenge.h>
+#include <WebCore/CacheValidation.h>
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/CredentialStorage.h>
 #include <WebCore/DocumentPage.h>
@@ -47,7 +49,9 @@
 #include <WebCore/HTTPHeaderNames.h>
 #include <WebCore/NetworkLoadMetrics.h>
 #include <WebCore/ResourceLoader.h>
+#include <WebCore/SharedBuffer.h>
 #include <wtf/FileSystem.h>
+#include <wtf/RunLoop.h>
 
 namespace ZeroG {
 
@@ -192,7 +196,34 @@ private:
 
     void send()
     {
-        m_curlRequest = CurlRequest::create(withCookies(m_session, m_request), *this);
+        // The session's disk cache answers first when it can, or turns the
+        // request into a conditional one (HTTPCache.h).
+        m_revalidating = std::nullopt;
+        m_storeResponse = false;
+        auto request = m_request;
+        RefPtr cache = m_session->httpCache();
+        if (cache && HTTPCache::canUse(m_request) && m_request.cachePolicy() != ResourceRequestCachePolicy::ReloadIgnoringCacheData) {
+            auto policy = m_request.cachePolicy();
+            if (auto entry = cache->lookup(m_request)) {
+                bool staleAllowed = policy == ResourceRequestCachePolicy::ReturnCacheDataElseLoad || policy == ResourceRequestCachePolicy::ReturnCacheDataDontLoad;
+                if (staleAllowed || HTTPCache::isFresh(*entry, m_request)) {
+                    serveFromCache(WTF::move(*entry));
+                    return;
+                }
+                if (auto conditional = HTTPCache::conditionalRequest(m_request, *entry)) {
+                    request = WTF::move(*conditional);
+                    m_revalidating = WTF::move(entry);
+                }
+            } else if (policy == ResourceRequestCachePolicy::ReturnCacheDataDontLoad) {
+                // fetch(..., { cache: 'only-if-cached' }) with nothing stored.
+                RunLoop::mainSingleton().dispatch([this, protectedThis = Ref { *this }] {
+                    fail(failedError(m_request.url(), "Not in the cache"_s));
+                });
+                return;
+            }
+        }
+
+        m_curlRequest = CurlRequest::create(withCookies(m_session, request), *this);
         if (!m_credential.isEmpty()) {
             m_curlRequest->setAuthenticationScheme(m_authenticationScheme);
             m_curlRequest->setUserPass(m_credential.user(), m_credential.password());
@@ -271,6 +302,32 @@ private:
         });
     }
 
+    // A stored response, delivered as a network one is: the response (with the
+    // page's policy decision), the body, the end. Never from within start().
+    void serveFromCache(HTTPCache::Entry&& entry)
+    {
+        m_response = WTF::move(entry.response);
+        RunLoop::mainSingleton().dispatch([this, protectedThis = Ref { *this }, body = WTF::move(entry.body)] mutable {
+            if (!m_target.isActive())
+                return;
+            m_waitingForResponsePolicy = true;
+            m_target.didReceiveResponse(ResourceResponse { m_response }, [this, protectedThis = Ref { *this }, body = WTF::move(body)](bool accepted) mutable {
+                if (!std::exchange(m_waitingForResponsePolicy, false))
+                    return;
+                if (!accepted) {
+                    stop();
+                    return;
+                }
+                if (m_target.isActive() && body->size())
+                    m_target.didReceiveData(WTF::move(body));
+                if (m_target.isActive()) {
+                    NetworkLoadMetrics metrics;
+                    m_target.didFinish(metrics);
+                }
+            });
+        });
+    }
+
     void cancelRequest()
     {
         if (RefPtr request = std::exchange(m_curlRequest, nullptr)) {
@@ -306,11 +363,38 @@ private:
             authenticate(AuthenticationChallenge { curlResponse, m_authenticationFailures++, m_response });
             return;
         }
+
+        RefPtr cache = m_session->httpCache();
+        if (auto entry = std::exchange(m_revalidating, std::nullopt)) {
+            // Still valid: the stored body, with the headers the server sent now.
+            if (m_response.httpStatusCode() == 304 && cache) {
+                updateResponseHeadersAfterRevalidation(entry->response, m_response);
+                entry->responseTime = WallTime::now();
+                cache->update(m_request, *entry);
+                cancelRequest();
+                serveFromCache(WTF::move(*entry));
+                return;
+            }
+        }
+        m_storeResponse = cache && HTTPCache::canStore(m_request, m_response);
+        if (m_storeResponse) {
+            m_responseTime = WallTime::now();
+            m_cacheBody.reset();
+        }
         deliverResponse();
     }
 
     void curlDidReceiveData(CurlRequest&, Ref<SharedBuffer>&& buffer) final
     {
+        if (m_storeResponse) {
+            RefPtr cache = m_session->httpCache();
+            // Too large for an entry: not kept.
+            if (!cache || m_cacheBody.size() + buffer->size() > cache->capacity() / 8) {
+                m_storeResponse = false;
+                m_cacheBody.reset();
+            } else
+                m_cacheBody.append(buffer.get());
+        }
         m_target.didReceiveData(WTF::move(buffer));
     }
 
@@ -318,6 +402,10 @@ private:
     {
         Ref protectedThis { *this };
         m_curlRequest = nullptr;
+        if (std::exchange(m_storeResponse, false)) {
+            if (RefPtr cache = m_session->httpCache())
+                cache->store(m_request, m_response, m_cacheBody.takeBufferAsContiguous(), m_responseTime);
+        }
         m_target.didFinish(metrics);
     }
 
@@ -369,6 +457,12 @@ private:
     unsigned m_redirectCount { 0 };
     unsigned m_authenticationFailures { 0 };
     bool m_waitingForResponsePolicy { false };
+    // The disk cache: the entry a conditional request revalidates, and the body
+    // of a response being kept.
+    std::optional<HTTPCache::Entry> m_revalidating;
+    bool m_storeResponse { false };
+    SharedBufferBuilder m_cacheBody;
+    WallTime m_responseTime;
     Credential m_credential;
     ProtectionSpace::AuthenticationScheme m_authenticationScheme { ProtectionSpace::AuthenticationScheme::Default };
 };
@@ -480,6 +574,16 @@ bool loadNetworkResourceSynchronously(Session& session, const ResourceRequest& o
             error = failedError(request.url(), "Too many redirects"_s);
             return false;
         }
+        // A fresh stored response answers without the network (no revalidation:
+        // a synchronous load is the rare case).
+        RefPtr cache = session.httpCache();
+        if (cache && HTTPCache::canUse(request) && request.cachePolicy() != ResourceRequestCachePolicy::ReloadIgnoringCacheData) {
+            if (auto entry = cache->lookup(request); entry && HTTPCache::isFresh(*entry, request)) {
+                response = WTF::move(entry->response);
+                data = Vector<uint8_t> { entry->body->span() };
+                return true;
+            }
+        }
         SynchronousTransfer transfer;
         auto result = transferSynchronously(withCookies(session, request), transfer);
         if (!result) {
@@ -489,6 +593,8 @@ bool loadNetworkResourceSynchronously(Session& session, const ResourceRequest& o
         if (request.allowCookies())
             session.storeCookies(request.firstPartyForCookies(), request.url(), transfer.headers);
         if (!isRedirection(*result)) {
+            if (cache && HTTPCache::canStore(request, *result))
+                cache->store(request, *result, SharedBuffer::create(transfer.body.span()), WallTime::now());
             response = WTF::move(*result);
             data = WTF::move(transfer.body);
             return true;

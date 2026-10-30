@@ -1,9 +1,10 @@
 /*
  * ZeroG — public C API.
  *
- * Version 0.2: the API of ZeroG.md ("API pubblica C"), frozen at the end of
+ * Version 0.3: the API of ZeroG.md ("API pubblica C"), frozen at the end of
  * roadmap phase 2 (0.1), with binary values, references to JavaScript values,
- * classes and page scripts added. Within 0.x a minor version may add functions, enum values
+ * classes and page scripts added (0.2), and the engine features of phases 3
+ * and 4 (0.3). Within 0.x a minor version may add functions, enum values
  * and fields at the end of config structs; nothing is renamed or removed and no
  * meaning changes without a new minor version and a note in docs/api-changes.md.
  *
@@ -57,7 +58,7 @@ extern "C" {
 #endif
 
 #define ZG_VERSION_MAJOR 0
-#define ZG_VERSION_MINOR 2
+#define ZG_VERSION_MINOR 3
 #define ZG_VERSION_PATCH 0
 
 /* ------------------------------------------------------------------------ */
@@ -249,6 +250,12 @@ typedef struct zg_context_config {
        follows zg_runtime_config.jit, which is not changed by this flag. Untrusted
        origins never receive bindings. */
     int allow_external_content;
+
+    /* HTTP disk cache in data_dir (HTTPCache/), in bytes: 0 = 64 MB, negative =
+       none. Responses are kept and revalidated as HTTP caching says (max-age,
+       Expires, no-store, no-cache, Vary, ETag and Last-Modified). Ephemeral
+       contexts and those without a directory have none. Since 0.3. */
+    int64_t http_cache_limit;
 } zg_context_config;
 
 ZG_API zg_context *zg_context_create(zg_runtime *rt, const zg_context_config *config);

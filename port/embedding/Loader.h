@@ -41,6 +41,7 @@ class UserContentProvider;
 namespace ZeroG {
 
 class Download;
+class HTTPCache;
 class SchemeHandler;
 class View;
 
@@ -144,12 +145,14 @@ public:
 // different sessions may answer the same scheme differently) and cookies.
 class Session : public RefCounted<Session> {
 public:
-    // Cookies persist in an SQLite file at `cookieDatabasePath`; local storage
-    // and IndexedDB under `storageDirectory` (LocalStorage/, IndexedDB/). Empty
-    // keeps them in memory for the session's lifetime.
-    static Ref<Session> create(const String& cookieDatabasePath = { }, const String& storageDirectory = { })
+    // Cookies persist in an SQLite file at `cookieDatabasePath`; local storage,
+    // IndexedDB and the HTTP cache under `storageDirectory` (LocalStorage/,
+    // IndexedDB/, HTTPCache/). Empty keeps them in memory for the session's
+    // lifetime, with no HTTP cache. A zero capacity turns the HTTP cache off.
+    static constexpr uint64_t defaultHTTPCacheCapacity = 64 * 1024 * 1024;
+    static Ref<Session> create(const String& cookieDatabasePath = { }, const String& storageDirectory = { }, uint64_t httpCacheCapacity = defaultHTTPCacheCapacity)
     {
-        return adoptRef(*new Session(cookieDatabasePath, storageDirectory));
+        return adoptRef(*new Session(cookieDatabasePath, storageDirectory, httpCacheCapacity));
     }
     static Session& defaultSession();
     // Its resources leave WebCore's memory cache with it.
@@ -191,11 +194,14 @@ public:
     // Web storage and IndexedDB of the session's pages (port/embedding/storage).
     WebCore::StorageNamespaceProvider& storageNamespaceProvider();
     WebCore::DatabaseProvider& databaseProvider();
+    // The HTTP disk cache (HTTPCache.h); null without a directory.
+    HTTPCache* httpCache() const { return m_httpCache.get(); }
 
 private:
-    Session(const String& cookieDatabasePath, const String& storageDirectory);
+    Session(const String& cookieDatabasePath, const String& storageDirectory, uint64_t httpCacheCapacity);
     const PAL::SessionID m_sessionID;
     const String m_storageDirectory;
+    const RefPtr<HTTPCache> m_httpCache;
     RefPtr<WebCore::StorageNamespaceProvider> m_storageNamespaceProvider;
     RefPtr<WebCore::DatabaseProvider> m_databaseProvider;
     HashMap<String, Ref<SchemeHandler>> m_schemeHandlers;

@@ -19,6 +19,7 @@
 #include "config.h"
 #include "Download.h"
 #include "Embedding.h"
+#include "HTTPCache.h"
 #include "MemoryFS.h"
 #include "View.h"
 #include <wtf/FileSystem.h>
@@ -26,6 +27,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <mutex>
 #include <vector>
 #include <wtf/SHA1.h>
@@ -189,6 +191,13 @@ public:
 
     int port() const { return m_port; }
     int requestCount() const { return m_requests; }
+    // Requests for one path (with its query), and conditional ones answered 304.
+    int hits(const std::string& path)
+    {
+        std::lock_guard lock { m_lock };
+        return m_hits[path];
+    }
+    int notModified() const { return m_notModified; }
 
 private:
     void run()
@@ -244,6 +253,10 @@ private:
             ++m_requests;
             auto pathStart = request.find(' ') + 1;
             auto path = request.substr(pathStart, request.find(' ', pathStart) - pathStart);
+            {
+                std::lock_guard lock { m_lock };
+                ++m_hits[path];
+            }
             auto response = respond(path, request);
             send(client, response.data(), static_cast<int>(response.size()), 0);
         }
@@ -367,6 +380,26 @@ private:
 
     std::string respond(const std::string& path, const std::string& request)
     {
+        // The HTTP disk cache: each body tells how many requests reached the server.
+        auto count = [&] {
+            std::lock_guard lock { m_lock };
+            return std::to_string(m_hits[path]);
+        };
+        if (path == "/cache/fresh")
+            return response("200 OK", "text/plain", "fresh " + count(), "Cache-Control: max-age=600\r\n");
+        if (path == "/cache/nostore")
+            return response("200 OK", "text/plain", "nostore " + count(), "Cache-Control: no-store\r\n");
+        if (path == "/cache/etag") {
+            if (header(request, "If-None-Match") == "\"v1\"") {
+                ++m_notModified;
+                return response("304 Not Modified", "text/plain", "", "ETag: \"v1\"\r\nCache-Control: no-cache\r\nX-Revalidated: yes\r\n");
+            }
+            return response("200 OK", "text/plain", "etag body", "ETag: \"v1\"\r\nCache-Control: no-cache\r\n");
+        }
+        if (path == "/cache/vary")
+            return response("200 OK", "text/plain", "vary " + header(request, "X-Mode") + " " + count(), "Cache-Control: max-age=600\r\nVary: X-Mode\r\n");
+        if (path.starts_with("/cache/big?"))
+            return response("200 OK", "application/octet-stream", std::string(100 * 1024, 'b'), "Cache-Control: max-age=600\r\n");
         if (path == "/echo-body") {
             auto headerEnd = request.find("\r\n\r\n");
             return response("200 OK", "text/plain", headerEnd == std::string::npos ? "" : request.substr(headerEnd + 4));
@@ -414,6 +447,8 @@ private:
     std::vector<std::thread> m_connections;
     std::atomic<bool> m_stopping { false };
     std::atomic<int> m_requests { 0 };
+    std::atomic<int> m_notModified { 0 };
+    std::map<std::string, int> m_hits;
 };
 
 // ---- The page ----
@@ -830,6 +865,72 @@ int main()
         load(*otherView, otherClient, "app://localhost/fonts.html"_s);
         auto otherWidth = await(*otherView, "document.fonts.load('20px Ahem').then(() => Math.round(document.getElementById('a').getBoundingClientRect().width))"_s);
         passed &= check(otherWidth != "60"_s, "another session's page does not: %s px", otherWidth.utf8().data());
+    }
+
+    // The HTTP disk cache: a session on the same directory finds what an earlier
+    // one stored (WebCore's memory cache is per session, so it does not answer).
+    {
+        auto* temporary = std::getenv("TEMP") ? std::getenv("TEMP") : std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp";
+        auto directory = FileSystem::pathByAppendingComponent(String::fromUTF8(temporary), "zerog-http-cache-test"_s);
+        FileSystem::deleteNonEmptyDirectory(directory);
+        auto withSession = [&](uint64_t capacity, auto&& body) {
+            auto cacheSession = ZeroG::Session::create({ }, directory, capacity);
+            ZeroG::View::Configuration configuration;
+            configuration.session = cacheSession.copyRef();
+            auto view = ZeroG::View::create(WTF::move(configuration));
+            Client client;
+            view->setClient(&client);
+            load(*view, client, makeString(http, "/page.html"_s));
+            body(*view);
+            cacheSession->httpCache()->flush();
+        };
+        auto fetchText = [](ZeroG::View& view, const String& path, ASCIILiteral options = "{}"_s) {
+            return await(view, makeString("fetch('"_s, path, "', "_s, options, ").then(r => r.text())"_s));
+        };
+
+        withSession(ZeroG::Session::defaultHTTPCacheCapacity, [&](ZeroG::View& view) {
+            passed &= check(fetchText(view, "/cache/fresh"_s) == "fresh 1"_s, "a cacheable response from the server");
+            fetchText(view, "/cache/nostore"_s);
+            fetchText(view, "/cache/etag"_s);
+            fetchText(view, "/cache/vary"_s, "{ headers: { 'X-Mode': 'a' } }"_s);
+        });
+        withSession(ZeroG::Session::defaultHTTPCacheCapacity, [&](ZeroG::View& view) {
+            auto fresh = fetchText(view, "/cache/fresh"_s);
+            passed &= check(fresh == "fresh 1"_s && server.hits("/cache/fresh") == 1, "a new session gets it from the disk: %s, %d request(s)", fresh.utf8().data(), server.hits("/cache/fresh"));
+            auto nostore = fetchText(view, "/cache/nostore"_s);
+            passed &= check(nostore == "nostore 2"_s, "no-store is not kept: %s", nostore.utf8().data());
+            int revalidations = server.notModified();
+            auto etag = fetchText(view, "/cache/etag"_s);
+            passed &= check(etag == "etag body"_s && server.notModified() == revalidations + 1, "no-cache with an ETag is revalidated (304) and the stored body served: %s", etag.utf8().data());
+            auto merged = await(view, "fetch('/cache/etag').then(r => r.headers.get('X-Revalidated'))"_s);
+            passed &= check(merged == "yes"_s, "with the 304's headers: %s", merged.utf8().data());
+            auto sameVary = fetchText(view, "/cache/vary"_s, "{ headers: { 'X-Mode': 'a' } }"_s);
+            auto otherVary = fetchText(view, "/cache/vary"_s, "{ headers: { 'X-Mode': 'b' } }"_s);
+            passed &= check(sameVary == "vary a 1"_s && otherVary == "vary b 2"_s, "Vary: the same header value is stored, another one is not: %s, %s", sameVary.utf8().data(), otherVary.utf8().data());
+            auto reload = fetchText(view, "/cache/fresh"_s, "{ cache: 'reload' }"_s);
+            passed &= check(reload == "fresh 2"_s, "cache: 'reload' goes to the server: %s", reload.utf8().data());
+            auto onlyIfCached = await(view, "fetch('/cache/never-stored', { cache: 'only-if-cached', mode: 'same-origin' }).then(r => r.status, e => 'failed')"_s);
+            passed &= check(onlyIfCached == "failed"_s, "only-if-cached without an entry fails: %s", onlyIfCached.utf8().data());
+        });
+
+        // A small cache evicts the least recently used entries.
+        FileSystem::deleteNonEmptyDirectory(directory);
+        constexpr uint64_t capacity = 1024 * 1024;
+        withSession(capacity, [&](ZeroG::View& view) {
+            for (int i = 1; i <= 12; ++i)
+                fetchText(view, makeString("/cache/big?"_s, i));
+        });
+        uint64_t stored = 0;
+        for (auto& name : FileSystem::listDirectory(FileSystem::pathByAppendingComponent(directory, "HTTPCache"_s)))
+            stored += FileSystem::fileSize(FileSystem::pathByAppendingComponent(FileSystem::pathByAppendingComponent(directory, "HTTPCache"_s), name)).value_or(0);
+        passed &= check(stored <= capacity, "the cache stays under its capacity: %llu bytes", static_cast<unsigned long long>(stored));
+        withSession(capacity, [&](ZeroG::View& view) {
+            fetchText(view, "/cache/big?12"_s);
+            fetchText(view, "/cache/big?1"_s);
+        });
+        passed &= check(server.hits("/cache/big?12") == 1 && server.hits("/cache/big?1") == 2, "the newest entry stays, the oldest went: %d, %d requests",
+            server.hits("/cache/big?12"), server.hits("/cache/big?1"));
+        FileSystem::deleteNonEmptyDirectory(directory);
     }
 
     passed &= check(!released, "an external file stays while the file system lives");

@@ -715,7 +715,9 @@ zg_context* zg_context_create(zg_runtime* rt, const zg_context_config* configura
             storageDirectory = directory;
         }
     }
-    context->session = Session::create(cookieDatabase, storageDirectory);
+    uint64_t httpCacheCapacity = config.http_cache_limit < 0 ? 0
+        : config.http_cache_limit ? static_cast<uint64_t>(config.http_cache_limit) : Session::defaultHTTPCacheCapacity;
+    context->session = Session::create(cookieDatabase, storageDirectory, httpCacheCapacity);
     rt->contexts.push_back(context);
     return context;
 }

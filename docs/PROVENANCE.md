@@ -60,6 +60,7 @@ under `patches/` is listed here when it is created.
 | `tests/fuzz/*` (targets, seeds and corpus) | Original | BSD-2-Clause |
 | `port/embedding/storage/{StorageAreaImpl,StorageAreaSync,StorageNamespaceImpl,StorageSyncManager,StorageThread,WebStorageNamespaceProvider,InProcessIDBServer}.*` | WebKitLegacy, copied from `Source/WebKitLegacy/Storage` (namespace kept). Changes: `config.h` and explicit includes, local storage in memory for ephemeral sessions | BSD-2-Clause (Apple headers kept) |
 | `port/embedding/storage/StorageTracker.h`, `DatabaseProviderZeroG.*` | Original: an inactive stand-in for WebKitLegacy's tracker; IndexedDB per session | BSD-2-Clause |
+| `port/embedding/HTTPCache.*` | Original; freshness and validation through WebCore's `CacheValidation` | BSD-2-Clause |
 | `port/embedding/WebSocketChannelZeroG.*` | Upstream, derived from `Source/WebKit/WebProcess/Network/WebSocketChannel.cpp` (Apple) and `Source/WebKit/NetworkProcess/curl/WebSocketTaskCurl.cpp` (Sony) | BSD-2-Clause (Apple and Sony headers kept) |
 | `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |
 

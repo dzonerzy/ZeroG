@@ -33,6 +33,7 @@
 #include "Loader.h"
 
 #include "Download.h"
+#include "HTTPCache.h"
 #include "View.h"
 #include "storage/DatabaseProviderZeroG.h"
 #include "storage/WebStorageNamespaceProvider.h"
@@ -401,9 +402,11 @@ static PAL::SessionID newSessionID()
     return PAL::SessionID::generatePersistentSessionID();
 }
 
-Session::Session(const String& cookieDatabasePath, const String& storageDirectory)
+Session::Session(const String& cookieDatabasePath, const String& storageDirectory, uint64_t httpCacheCapacity)
     : m_sessionID(newSessionID())
     , m_storageDirectory(storageDirectory)
+    , m_httpCache(storageDirectory.isEmpty() || !httpCacheCapacity ? nullptr
+        : RefPtr { HTTPCache::create(FileSystem::pathByAppendingComponent(storageDirectory, "HTTPCache"_s), httpCacheCapacity) })
     // ":memory:" is SQLite's in-memory database, as WebKit's ephemeral sessions use.
     , m_cookieDatabase(makeUnique<CookieJarDB>(cookieDatabasePath.isEmpty() ? ":memory:"_s : cookieDatabasePath))
 {
