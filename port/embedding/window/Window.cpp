@@ -3,6 +3,8 @@
 
 #include "ClipboardSDL.h"
 #include "Embedding.h"
+#include "graphics/Compositor.h"
+#include "graphics/Surface.h"
 #include "KeyboardSDL.h"
 #include <WebCore/FileChooser.h>
 #include <WebCore/MIMETypeRegistry.h>
@@ -191,6 +193,9 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
     windows().set(m_window, this);
     if (auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window)); mode && mode->refresh_rate > 0)
         m_refreshInterval = 1_s / mode->refresh_rate;
+    // Animations are composited at the display's rate.
+    if (auto* compositor = m_view->compositor())
+        compositor->setFrameInterval(m_refreshInterval);
     if (m_presentContext->makeContextCurrent()) {
         // Present at the display's refresh rate. On Wayland a blocking swap waits
         // for the compositor's frame callback, which hidden or minimized windows
@@ -566,11 +571,17 @@ bool Window::runOnce(std::optional<Seconds> maxWait)
     // frame that changed nothing on screen waits a whole refresh interval. The
     // interval also bounds the rate where swaps do not block (no vblank, as on
     // Xvfb).
+    // A composited view's frames come from the compositor thread, after
+    // render() and also without it (animations): each one is presented as it
+    // arrives.
     auto now = MonotonicTime::now();
     bool hasWork = m_view->hasPendingRenderingUpdate() || m_view->hasDamage();
-    if (hasWork && now >= m_nextFrameTime) {
-        bool presented = m_view->render(now) && present();
-        m_nextFrameTime = now + (presented ? m_refreshInterval * 0.9 : m_refreshInterval);
+    bool composited = m_view->compositor();
+    if ((hasWork && now >= m_nextFrameTime) || (composited && m_view->surface().hasNewFrame())) {
+        bool rendered = hasWork && now >= m_nextFrameTime && m_view->render(now);
+        bool presented = (rendered || composited) && present();
+        if (hasWork || presented)
+            m_nextFrameTime = now + (presented ? m_refreshInterval * 0.9 : m_refreshInterval);
         if (presented)
             return !m_closed;
     }

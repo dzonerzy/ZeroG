@@ -32,6 +32,13 @@ Engine features of roadmap phases 3 and 4:
   window of its own (F12 and Ctrl+Shift+I in window mode);
   `zg_runtime_config.inspector_port` starts the remote inspector's server on
   127.0.0.1. `ZG_ERROR_UNSUPPORTED` in the other profiles.
+- GPU compositing: GPU views (D3D11 and GL surfaces, window mode) composite
+  their layers on a compositor thread, with upstream's coordinated graphics over
+  Skia. CSS animations of transform, opacity and filters run there without
+  rendering updates. In texture mode a GPU view's frame now reaches
+  `zg_surface_acquire` shortly after `zg_view_render` returns, rather than
+  before; while the previous frame is still being composited the call does
+  nothing. CPU views are unchanged.
 - Window mode with several windows: each window gets its own events. Before,
   whichever window polled first took every window's events.
 - WebGL (standard, dev and debug profiles): `getContext('webgl')` returns null

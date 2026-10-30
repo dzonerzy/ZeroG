@@ -1,7 +1,8 @@
 #pragma once
 
 // Rendering targets of a view (ZeroG.md, "Modalità" and "Render thread separato").
-// A surface owns 2 or 3 buffers. The engine thread renders into a free buffer and
+// A surface owns 2 or 3 buffers. The rendering thread (the engine thread, or the
+// compositor thread for a composited view) renders into a free buffer and
 // publishes it as the newest frame; the application, on any thread, acquires the
 // newest frame and releases it when done. An unacquired frame is replaced by a
 // newer one (latest wins), so the engine never waits for the application.
@@ -89,6 +90,8 @@ public:
     // Any thread: the newest published frame, or false when there is none newer
     // than the last one acquired. The frame stays valid until release().
     bool acquire(Frame&);
+    // Any thread: whether acquire() would give a frame.
+    bool hasNewFrame();
     void release(const Frame&);
 
     // Engine thread: frees the GPU resources of released buffers from older

@@ -188,6 +188,12 @@ void Surface::endFrame()
     m_dirtySinceAcquire.unite(m_pendingDamage);
 }
 
+bool Surface::hasNewFrame()
+{
+    Locker locker { m_lock };
+    return m_hasUnacquiredFrame && m_newest;
+}
+
 bool Surface::acquire(Frame& frame)
 {
     Buffer* buffer;

@@ -1,0 +1,27 @@
+diff --git a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp b/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
+index e5d87ed79f..5f75ad8425 100644
+--- a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
++++ b/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
+@@ -346,8 +346,11 @@ private:
+         // lookup which is a slow-path in certain tiled GPUs (such as Vivante/etnaviv). Since we
+         // don't use any mipmapping, it's safe to disable that, and avoid performance hits.
+         options.fSharpenMipmappedTextures = false;
+-        thread_local std::unique_ptr<SkExecutor> s_executor = SkExecutor::MakeFIFOThreadPool(2);
+-        options.fExecutor = s_executor.get();
++        // The context's own, not the thread's: a thread_local pool is joined by its
++        // thread's TLS destructors, which on Windows run under the loader lock that
++        // the pool's exiting threads need (a deadlock when such a thread exits).
++        m_executor = SkExecutor::MakeFIFOThreadPool(2);
++        options.fExecutor = m_executor.get();
+         if (auto bytes = glyphCacheTextureMaximumBytes())
+             options.fGlyphCacheTextureMaximumBytes = *bytes;
+ 
+@@ -359,6 +362,8 @@ private:
+         }
+     }
+ 
++    // Outlives the GrDirectContext that uses it (released in the destructor).
++    std::unique_ptr<SkExecutor> m_executor;
+     std::unique_ptr<GLContext> m_skiaGLContext WTF_GUARDED_BY_LOCK(m_lock);
+     sk_sp<GrDirectContext> m_skiaGrContext WTF_GUARDED_BY_LOCK(m_lock);
+     mutable Lock m_lock;

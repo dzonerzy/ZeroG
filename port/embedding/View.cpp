@@ -5,6 +5,7 @@
 #include "clients/DragClientZeroG.h"
 #include "clients/EditorClientZeroG.h"
 #include "clients/FrameLoaderClientZeroG.h"
+#include "graphics/Compositor.h"
 #include "inspector/InspectorZeroG.h"
 #include "loader/Download.h"
 #include "loader/WebSocketChannelZeroG.h"
@@ -125,8 +126,20 @@ View::View(Configuration&& configuration)
         settings.setLargeImageAsyncDecodingEnabled(false);
         settings.setAnimatedImageAsyncDecodingEnabled(false);
     }
-    // Compositing version 1 (ZeroG.md, "Compositing"): one surface, dirty regions.
-    settings.setAcceleratedCompositingEnabled(false);
+    // Compositing (ZeroG.md, "Compositing"): GPU views composite layers on the
+    // compositor thread (graphics/Compositor.h), which takes their surface over;
+    // CPU views paint the page into one surface, damage only.
+    if (m_surface->kind() != SurfaceKind::CPU) {
+        m_compositor = Compositor::create(*this, m_surface);
+        if (m_compositor) {
+            m_compositor->setTransparent(m_transparent);
+            m_compositor->setSize(m_size, m_scale);
+        }
+    }
+    settings.setAcceleratedCompositingEnabled(!!m_compositor);
+    // The whole page in layers, as GTK and WPE run coordinated graphics: a
+    // composited view paints nothing outside them.
+    settings.setForceCompositingMode(!!m_compositor);
     page->setDeviceScaleFactor(m_scale);
 
     RefPtr frame = page->localMainFrame();
@@ -150,7 +163,8 @@ View::View(Configuration&& configuration)
     page->setActivityState({ ActivityState::WindowIsActive, ActivityState::IsFocused, ActivityState::IsVisible,
         ActivityState::IsVisibleOrOccluded, ActivityState::IsInWindow, ActivityState::IsConnectedToHardwareConsole });
 
-    m_surface->resize(physicalSize());
+    if (!m_compositor)
+        m_surface->resize(physicalSize());
     invalidateAll();
 }
 
@@ -162,6 +176,9 @@ View::~View()
         willDestroy();
     // Closes the frontend, if open, while the page is whole.
     m_inspector = nullptr;
+    // The compositor thread stops; the page's layers forget it (the page may
+    // outlive the view a little), and the surface goes with its thread's context.
+    m_compositor = nullptr;
     if (auto* inspectorClient = m_page->inspectorController().inspectorBackendClient(); inspectorClient && ViewInspector::isAvailable())
         ViewInspector::detachBackendClient(*inspectorClient);
     for (auto& download : std::exchange(m_downloads, { }))
@@ -230,7 +247,7 @@ void View::resize(const IntSize& size)
         if (RefPtr frameView = frame->view())
             frameView->resize(size);
     }
-    m_surface->resize(physicalSize());
+    resizeSurface();
     invalidateAll();
     m_needsRenderingUpdate = true;
 }
@@ -241,8 +258,32 @@ void View::setScale(float scale)
         return;
     m_scale = scale;
     m_page->setDeviceScaleFactor(scale);
-    m_surface->resize(physicalSize());
+    resizeSurface();
     invalidateAll();
+    m_needsRenderingUpdate = true;
+}
+
+void View::resizeSurface()
+{
+    // A composited view's surface is resized on the compositor thread.
+    if (m_compositor)
+        m_compositor->setSize(m_size, m_scale);
+    else
+        m_surface->resize(physicalSize());
+}
+
+Surface& View::surface()
+{
+    return m_compositor ? m_compositor->surface() : *m_surface;
+}
+
+void View::repaint()
+{
+    if (!m_compositor) {
+        invalidateAll();
+        return;
+    }
+    m_forceRepaint = true;
     m_needsRenderingUpdate = true;
 }
 
@@ -251,8 +292,34 @@ void View::invalidate(const IntRect& rect)
     m_damage.unite(intersection(rect, { { }, m_size }));
 }
 
+// A GPU view: the rendering update here, the painting on the compositor thread.
+// Returns whether a frame was asked for; it is published once composited.
+bool View::renderComposited(MonotonicTime frameTime)
+{
+    // Repaints go to the layers, which track their own damage.
+    m_damage = { };
+    m_lastPaintedArea = 0;
+    // One rendering update per composited frame.
+    if (m_compositor->isWaitingForFrame())
+        return false;
+    Ref page = m_page;
+    if (std::exchange(m_forceRepaint, false)) {
+        page->forceRepaintAllFrames();
+        m_compositor->requestFrame();
+    }
+    if (std::exchange(m_needsRenderingUpdate, false)) {
+        page->updateRendering(frameTime);
+        if (RefPtr frame = page->localMainFrame(); frame && frame->view())
+            m_compositor->flushOverlay({ { }, frame->view()->sizeForVisibleContent(ScrollableArea::VisibleContentRectIncludesScrollbars::Yes) });
+        page->finalizeRenderingUpdate({ FinalizeRenderingUpdateFlags::ApplyScrollingTreeLayerPositions });
+    }
+    return m_compositor->commit();
+}
+
 bool View::render(MonotonicTime frameTime)
 {
+    if (m_compositor)
+        return renderComposited(frameTime);
     Ref page = m_page;
     if (std::exchange(m_needsRenderingUpdate, false)) {
         page->updateRendering(frameTime);

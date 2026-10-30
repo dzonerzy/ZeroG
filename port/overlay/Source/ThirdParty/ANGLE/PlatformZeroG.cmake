@@ -7,6 +7,14 @@ if (WIN32)
     set(EGL_LIBRARY_TYPE STATIC)
     # KHRONOS_STATIC and an empty ANGLE_EXPORT (OptionsZeroG.cmake, for ANGLE and its
     # users) keep the EGL/GLES entry points from being dllimport/dllexport.
+    # Contexts in one share group are used from several threads (the compositor's,
+    # the engine thread's, window presentation). ANGLE locks them, as its own
+    # build does outside Chromium (BUILD.gn, angle_enable_share_context_lock),
+    # and every call checks which context made the previous one: the D3D11
+    # backend keeps one device context and one state cache for all GL contexts,
+    # so calls alternating between threads must re-apply their context's state
+    # (angle_force_context_check_every_call; it replaces the per-context mutex).
+    list(APPEND ANGLE_DEFINITIONS ANGLE_ENABLE_SHARE_CONTEXT_LOCK=1 ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1)
 else ()
     # Linux and macOS build ANGLE only for WebGL in the standard profile (ZeroG.md,
     # "Backend GPU per piattaforma"); its backends are not wired yet.

@@ -242,7 +242,12 @@ RefPtr<ImageBuffer> paint(Page& page, Rendering rendering, float deviceScaleFact
     if (!buffer)
         return nullptr;
 
+    // Composited layers too, painted into the one buffer (a GPU view's page has
+    // them; the CPU reference must show the same thing).
+    auto behavior = view->paintBehavior();
+    view->setPaintBehavior(behavior | PaintBehavior::FlattenCompositingLayers);
     view->paint(buffer->context(), rect);
+    view->setPaintBehavior(behavior);
     return buffer;
 }
 

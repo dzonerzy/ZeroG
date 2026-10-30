@@ -452,8 +452,14 @@ ZG_API void zg_view_set_focus(zg_view *view, int focused);
 /* Texture and CPU modes: render one frame of the app's own loop. Runs pending work
    for this view, advances requestAnimationFrame and animations to
    `frame_time_ms` (the app's frame clock, monotonic milliseconds), updates style
-   and layout and repaints dirty regions into the surface. The engine does not
-   pace these views itself: call it once per app frame.
+   and layout. A CPU view repaints dirty regions into the surface before
+   returning. A GPU view (D3D11, GL; since 0.3) composites its layers on the
+   engine's compositor thread: the frame reaches zg_surface_acquire shortly after
+   this returns, and while the frame of the previous call is still being
+   composited this call does nothing. CSS animations of transform, opacity and
+   filters keep producing frames there without further calls (zg_runtime_wakeup_
+   handle is signaled for each). The engine does not pace these views itself:
+   call it once per app frame.
    Window mode: the engine paces rendering from the display's vsync; do not call. */
 ZG_API zg_result zg_view_render(zg_view *view, double frame_time_ms);
 

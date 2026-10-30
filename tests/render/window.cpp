@@ -116,7 +116,7 @@ int main()
     // The presented image against a CPU render, with the animation stopped.
     window->view().evaluateScript("step = () => { }; 0"_s);
     runUntil(*window, 1_s, [&] { return false; });
-    window->view().invalidate({ { }, window->view().size() });
+    window->view().repaint();
     window->captureNextFrame();
     Vector<uint8_t> pixels;
     IntSize size;

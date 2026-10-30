@@ -13,6 +13,7 @@ include(platform/ImageDecoders.cmake)
 include(platform/OpenSSL.cmake)
 include(platform/Skia.cmake)
 include(platform/Adwaita.cmake) # theme drawn by WebCore, the same on every OS
+include(platform/CoordinatedGraphics.cmake) # layers composited with Skia
 
 list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
     ${WEBCORE_DIR}/platform
@@ -34,7 +35,6 @@ list(APPEND WebCore_SOURCES
 
     platform/graphics/zerog/FontManagerZeroG.cpp
     platform/graphics/zerog/GraphicsContextGLZeroG.cpp
-    platform/graphics/zerog/GraphicsLayerZeroG.cpp
     platform/graphics/zerog/PlatformDisplayZeroG.cpp
     platform/zerog/DragDataZeroG.cpp
     platform/zerog/PasteboardZeroG.cpp

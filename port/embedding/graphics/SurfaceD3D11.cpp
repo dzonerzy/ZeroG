@@ -139,11 +139,6 @@ private:
             return false;
         auto destroy = makeScopeExit([&] { destroyTexture(*texture); });
 
-        // Opening on the host device needs the same adapter.
-        if (FAILED(m_host->OpenSharedResource1(texture->sharedHandle, IID_PPV_ARGS(&texture->hostTexture)))
-            || FAILED(texture->hostTexture.As(&texture->hostMutex)))
-            return false;
-
         const EGLint attributes[] = { EGL_NONE };
         texture->image = eglCreateImageKHR(m_display, EGL_NO_CONTEXT, EGL_D3D11_TEXTURE_ANGLE, reinterpret_cast<EGLClientBuffer>(texture->engineTexture.Get()), attributes);
         if (texture->image == EGL_NO_IMAGE_KHR)
@@ -189,7 +184,38 @@ private:
         }
         if (texture.sharedHandle)
             CloseHandle(texture.sharedHandle);
+        // The host device's objects are released on the application's thread
+        // (the next acquire or release), which may be the only one allowed to
+        // touch that device.
+        if (texture.hostTexture || texture.hostMutex) {
+            Locker locker { m_hostObjectsLock };
+            if (texture.hostTexture)
+                m_releasedHostObjects.append(WTF::move(texture.hostTexture));
+            if (texture.hostMutex)
+                m_releasedHostObjects.append(WTF::move(texture.hostMutex));
+        }
         texture = { };
+    }
+
+    // Application thread: the host device's side of a texture, opened on first
+    // use (the device may be single-threaded: only the application's threads
+    // touch it). Opening needs the same adapter as ANGLE's device.
+    bool openOnHost(Texture& texture)
+    {
+        releaseHostObjects();
+        if (texture.hostMutex)
+            return true;
+        return SUCCEEDED(m_host->OpenSharedResource1(texture.sharedHandle, IID_PPV_ARGS(&texture.hostTexture)))
+            && SUCCEEDED(texture.hostTexture.As(&texture.hostMutex));
+    }
+
+    void releaseHostObjects()
+    {
+        Vector<ComPtr<IUnknown>> objects;
+        {
+            Locker locker { m_hostObjectsLock };
+            objects = std::exchange(m_releasedHostObjects, { });
+        }
     }
 
     void destroyBuffer(Buffer& buffer) final
@@ -228,15 +254,22 @@ private:
 
     void willAcquire(Buffer& buffer) final
     {
-        static_cast<Texture*>(buffer.backend)->hostMutex->AcquireSync(1, INFINITE);
+        auto& texture = *static_cast<Texture*>(buffer.backend);
+        if (openOnHost(texture))
+            texture.hostMutex->AcquireSync(1, INFINITE);
     }
 
     void didRelease(Buffer& buffer) final
     {
-        static_cast<Texture*>(buffer.backend)->hostMutex->ReleaseSync(0);
+        auto& texture = *static_cast<Texture*>(buffer.backend);
+        if (texture.hostMutex)
+            texture.hostMutex->ReleaseSync(0);
+        releaseHostObjects();
     }
 
     ComPtr<ID3D11Device1> m_host;
+    Lock m_hostObjectsLock;
+    Vector<ComPtr<IUnknown>> m_releasedHostObjects WTF_GUARDED_BY_LOCK(m_hostObjectsLock);
     ComPtr<ID3D11Device> m_engine;
     EGLDisplay m_display;
 };

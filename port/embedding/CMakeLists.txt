@@ -15,7 +15,9 @@ set(ZeroGEmbedding_SOURCES
     clients/EditorClientZeroG.cpp
     clients/FrameLoaderClientZeroG.cpp
 
-    # Surfaces the view renders into.
+    # Surfaces the view renders into, and the compositor of GPU views.
+    graphics/Compositor.cpp
+    graphics/CoordinatedSceneState.cpp
     graphics/Surface.cpp
     graphics/SurfaceGL.cpp
 
@@ -171,6 +173,15 @@ WEBKIT_EXECUTABLE(ZeroGLoader)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGLoader)
 # Test fonts from the WebKit checkout's Skia (Ahem: public domain; Roboto: Apache 2.0).
 target_compile_definitions(ZeroGLoader PRIVATE ZEROG_TEST_FONTS="${CMAKE_SOURCE_DIR}/Source/ThirdParty/skia")
+
+# GPU compositing: animations on the compositor thread, frames against the CPU render.
+set(ZeroGCompositing_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/compositing.cpp)
+set(ZeroGCompositing_LIBRARIES ZeroGEmbedding)
+set(ZeroGCompositing_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGCompositing_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGCompositing)
+WEBKIT_EXECUTABLE(ZeroGCompositing)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGCompositing)
 
 # The Web Inspector: local frontend, closing, the remote inspector's target list.
 set(ZeroGInspector_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/inspector.cpp)

@@ -38,6 +38,7 @@ struct FileChooserSettings;
 
 namespace ZeroG {
 
+class Compositor;
 class Download;
 
 // What a view reports to its embedder (the C API maps it onto zg_view_callbacks).
@@ -103,7 +104,11 @@ public:
     static View* fromPage(const WebCore::Page&);
 
     WebCore::Page& page() { return m_page.get(); }
-    Surface& surface() { return *m_surface; }
+    // A composited view's is the compositor's (graphics/Compositor.h).
+    Surface& surface();
+    // GPU views composite their layers on the compositor thread; null for CPU
+    // views (and GPU views whose compositor got no GL context).
+    Compositor* compositor() const { return m_compositor.get(); }
     Session& session() { return m_session.get(); }
     WebCore::IntSize size() const { return m_size; }
     float scale() const { return m_scale; }
@@ -190,7 +195,11 @@ public:
     // the inspector it is going).
     void setWillDestroyCallback(Function<void()>&& callback) { m_willDestroy = WTF::move(callback); }
 
-    // From ChromeClientZeroG.
+    // The whole view is painted again at the next render(), a composited view's
+    // layers too (WebKit2's forced repaint).
+    void repaint();
+
+    // From ChromeClientZeroG: damage, for views that are not composited.
     void invalidate(const WebCore::IntRect& rootViewRect);
     void setNeedsRenderingUpdate() { m_needsRenderingUpdate = true; }
     // An animation or requestAnimationFrame callback waits for the next frame.
@@ -201,6 +210,8 @@ private:
     explicit View(Configuration&&);
     void invalidateAll() { invalidate({ { }, m_size }); }
     WebCore::IntSize physicalSize() const;
+    void resizeSurface();
+    bool renderComposited(MonotonicTime frameTime);
     // The drag controller's answer for the items at a point; nullopt: no drop.
     std::optional<WebCore::DragOperation> dragUpdated(WebCore::PasteboardItemsZeroG&, const WebCore::IntPoint&);
     void finishInternalDrag(const WebCore::IntPoint&, bool drop);
@@ -212,11 +223,13 @@ private:
 
     const Ref<Session> m_session;
     const Ref<WebCore::Page> m_page;
-    std::unique_ptr<Surface> m_surface;
+    std::unique_ptr<Surface> m_surface; // null once the compositor has it
+    std::unique_ptr<Compositor> m_compositor;
     WebCore::IntSize m_size;
     float m_scale { 1 };
     bool m_transparent { false };
     bool m_needsRenderingUpdate { true };
+    bool m_forceRepaint { false };
     WebCore::Region m_damage; // logical pixels
     uint64_t m_lastPaintedArea { 0 };
     ViewClient* m_client { nullptr };

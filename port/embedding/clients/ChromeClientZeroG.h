@@ -137,8 +137,10 @@ private:
     void scrollContainingScrollViewsToRevealRect(const WebCore::IntRect&) const final { }
     void scrollMainFrameToRevealRect(const WebCore::IntRect&) const final { }
 
-    void attachRootGraphicsLayer(WebCore::LocalFrame&, WebCore::GraphicsLayer*) final { }
-    void attachViewOverlayGraphicsLayer(WebCore::GraphicsLayer*) final { }
+    // GPU views composite (graphics/Compositor.h); CPU views have no layer factory.
+    WebCore::GraphicsLayerFactory* graphicsLayerFactory() const final;
+    void attachRootGraphicsLayer(WebCore::LocalFrame&, WebCore::GraphicsLayer*) final;
+    void attachViewOverlayGraphicsLayer(WebCore::GraphicsLayer*) final;
     void setNeedsOneShotDrawingSynchronization() final { }
     void triggerRenderingUpdate() final;
     bool scheduleRenderingUpdate() final;

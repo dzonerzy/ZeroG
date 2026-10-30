@@ -1,0 +1,28 @@
+diff --git a/Source/WebCore/platform/graphics/coordinated/CoordinatedPlatformLayerBufferSkiaImage.cpp b/Source/WebCore/platform/graphics/coordinated/CoordinatedPlatformLayerBufferSkiaImage.cpp
+index 8f7beeffd0..fe9155b45b 100644
+--- a/Source/WebCore/platform/graphics/coordinated/CoordinatedPlatformLayerBufferSkiaImage.cpp
++++ b/Source/WebCore/platform/graphics/coordinated/CoordinatedPlatformLayerBufferSkiaImage.cpp
+@@ -34,7 +34,11 @@
+ #include "GLFence.h"
+ #include "GraphicsContextGLCoordinated.h"
+ #include "PlatformDisplay.h"
++#if USE(LIBEPOXY)
+ #include <epoxy/egl.h>
++#else
++#include <GLES3/gl3.h>
++#endif
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ #include <skia/core/SkColorSpace.h>
+ #include <skia/core/SkImage.h>
+diff --git a/Source/WebCore/platform/graphics/skia/SkiaBackingStore.cpp b/Source/WebCore/platform/graphics/skia/SkiaBackingStore.cpp
+index 21ed14f4f2..7a554fd783 100644
+--- a/Source/WebCore/platform/graphics/skia/SkiaBackingStore.cpp
++++ b/Source/WebCore/platform/graphics/skia/SkiaBackingStore.cpp
+@@ -49,6 +49,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+ #else
+ #include <GLES2/gl2.h>
+ #include <GLES2/gl2ext.h>
++#include <GLES3/gl3.h> // GL_RGBA8
+ #endif
+ 
+ namespace WebCore {

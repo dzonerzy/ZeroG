@@ -30,6 +30,7 @@
 #include "ChromeClientZeroG.h"
 
 #include "View.h"
+#include "graphics/Compositor.h"
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/text/StringBuilder.h>
@@ -213,6 +214,23 @@ bool ChromeClientZeroG::scheduleRenderingUpdate()
     if (m_view)
         m_view->setNeedsRenderingUpdate();
     return true;
+}
+
+GraphicsLayerFactory* ChromeClientZeroG::graphicsLayerFactory() const
+{
+    return m_view ? m_view->compositor() : nullptr;
+}
+
+void ChromeClientZeroG::attachRootGraphicsLayer(LocalFrame& frame, GraphicsLayer* layer)
+{
+    if (auto* compositor = m_view && frame.isMainFrame() ? m_view->compositor() : nullptr)
+        compositor->setRootLayer(layer);
+}
+
+void ChromeClientZeroG::attachViewOverlayGraphicsLayer(GraphicsLayer* layer)
+{
+    if (auto* compositor = m_view ? m_view->compositor() : nullptr)
+        compositor->setOverlayLayer(layer);
 }
 
 } // namespace ZeroG

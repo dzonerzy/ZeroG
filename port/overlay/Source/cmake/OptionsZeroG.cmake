@@ -268,3 +268,8 @@ else ()
     endif ()
 endif ()
 SET_AND_EXPOSE_TO_BUILD(USE_EGL ON)
+
+# Compositing version 2 (ZeroG.md, "Compositing"): upstream's coordinated graphics
+# with Skia, as GTK and WPE build it (no TextureMapper). GPU views composite their
+# layers on the compositor thread (port/embedding/graphics/Compositor.*).
+SET_AND_EXPOSE_TO_BUILD(USE_COORDINATED_GRAPHICS ON)

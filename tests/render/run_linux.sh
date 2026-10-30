@@ -29,6 +29,7 @@ done
 run "default EGL display (X11)" env ZEROG_EGL_PLATFORM=default xvfb-run -a "$bin/ZeroGFirstRender" --gpu first_render.png
 run "frame loop" "$bin/ZeroGFrameLoop"
 run "texture mode" "$bin/ZeroGTexture"
+run "GPU compositing" "$bin/ZeroGCompositing"
 run "input" "$bin/ZeroGInput"
 run "resource loader" "$bin/ZeroGLoader"
 run "window on X11" xvfb-run -a "$bin/ZeroGWindow"
