@@ -557,8 +557,12 @@ int main(int argc, char **argv)
     CHECK(zg_surface_acquire(zg_view_surface(view), &frameData) == ZG_OK, "acquire a frame");
     {
         const unsigned char *pixel = (const unsigned char *)frameData.pixels + 150 * frameData.stride + 250 * 4;
+        zg_dmabuf dmabuf;
         CHECK(frameData.width == 300 && frameData.height == 200 && pixel[0] == 255 && pixel[1] == 128 && pixel[2] == 0,
             "frame pixels are the page's background (BGRA %d,%d,%d)", pixel[0], pixel[1], pixel[2]);
+        memset(&dmabuf, 0, sizeof dmabuf);
+        dmabuf.size = sizeof dmabuf;
+        CHECK(zg_surface_dmabuf(zg_view_surface(view), &frameData, &dmabuf) == ZG_ERROR_UNSUPPORTED, "a CPU frame has no dma-buf");
         zg_surface_release(zg_view_surface(view), &frameData);
     }
     CHECK(zg_surface_acquire(zg_view_surface(view), &frameData) == ZG_ERROR_NOT_FOUND, "no newer frame");
@@ -779,6 +783,45 @@ int main(int argc, char **argv)
             zg_window_destroy(window);
         }
     }
+
+#ifndef _WIN32
+    {
+        /* dma-buf frames (ZG_SURFACE_VULKAN): where the system can make them,
+           frames with planes; elsewhere ZG_ERROR_UNSUPPORTED. After the window:
+           on Linux the first window decides the GPU display, so GPU views come
+           after it. */
+        zg_surface_config vulkanSurface;
+        zg_view_config vulkanConfig;
+        zg_view *vulkanView;
+        memset(&vulkanSurface, 0, sizeof vulkanSurface);
+        vulkanSurface.size = sizeof vulkanSurface;
+        vulkanSurface.kind = ZG_SURFACE_VULKAN;
+        vulkanConfig = viewConfig;
+        vulkanConfig.surface = &vulkanSurface;
+        vulkanView = zg_view_create(context, &vulkanConfig);
+        if (vulkanView) {
+            static const char vulkanPage[] = "<body style='background: teal'>";
+            zg_dmabuf dmabuf;
+            int got = 0, attempt;
+            memset(&dmabuf, 0, sizeof dmabuf);
+            dmabuf.size = sizeof dmabuf;
+            zg_view_load_html(vulkanView, vulkanPage, sizeof vulkanPage - 1, NULL);
+            for (attempt = 0; attempt < 200 && !got; ++attempt) {
+                frame(vulkanView);
+                if (zg_surface_acquire(zg_view_surface(vulkanView), &frameData) == ZG_OK) {
+                    got = 1;
+                    CHECK(zg_surface_dmabuf(zg_view_surface(vulkanView), &frameData, &dmabuf) == ZG_OK && dmabuf.plane_count >= 1 && dmabuf.fd[0] >= 0 && dmabuf.fourcc,
+                        "a ZG_SURFACE_VULKAN frame is a dma-buf (%u plane(s), stride %u)", dmabuf.plane_count, dmabuf.stride[0]);
+                    zg_surface_release_with_fence(zg_view_surface(vulkanView), &frameData, -1);
+                } else
+                    sleepMilliseconds(5);
+            }
+            CHECK(got, "a ZG_SURFACE_VULKAN view produces frames");
+            zg_view_destroy(vulkanView);
+        } else
+            CHECK(strstr(zg_last_error(), "dma-buf") || strstr(zg_last_error(), "GPU"), "no dma-buf frames on this system, said so: %s", zg_last_error());
+    }
+#endif
 
     CHECK(!released, "a file used in place stays while its context lives");
     zg_context_destroy(context);

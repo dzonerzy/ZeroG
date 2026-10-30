@@ -1360,11 +1360,53 @@ zg_result zg_surface_acquire(zg_surface* surface, zg_frame* out)
 
 void zg_surface_release(zg_surface* surface, const zg_frame* frame)
 {
-    if (!surface || !surface->surface || !frame || !frame->internal)
+    zg_surface_release_with_fence(surface, frame, -1);
+}
+
+void zg_surface_release_with_fence(zg_surface* surface, const zg_frame* frame, int releaseFence)
+{
+    if (!surface || !surface->surface) {
+        // Nothing to give it to: the descriptor is closed all the same.
+#if !OS(WINDOWS)
+        if (releaseFence >= 0)
+            close(releaseFence);
+#endif
         return;
+    }
+    // Without a frame the surface closes the descriptor.
+    ZeroG::Frame internal;
+    if (frame)
+        internal.handle = frame->internal;
+    surface->surface->release(internal, releaseFence);
+}
+
+zg_result zg_surface_dmabuf(zg_surface* surface, const zg_frame* frame, zg_dmabuf* out)
+{
+    clearError();
+    if (!surface || !surface->surface || !frame || !frame->internal || !out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no surface, frame or output"_s);
     ZeroG::Frame internal;
     internal.handle = frame->internal;
-    surface->surface->release(internal);
+    ZeroG::DMABufFrame dmabuf;
+    if (!surface->surface->dmabuf(internal, dmabuf))
+        return fail(ZG_ERROR_UNSUPPORTED, "frames of this surface are not dma-bufs"_s);
+    zg_dmabuf result { };
+    result.size = sizeof(zg_dmabuf);
+    result.fourcc = dmabuf.fourcc;
+    result.modifier = dmabuf.modifier;
+    result.plane_count = dmabuf.planeCount;
+    for (unsigned i = 0; i < 4; ++i) {
+        result.fd[i] = i < dmabuf.planeCount ? dmabuf.fds[i] : -1;
+        result.offset[i] = dmabuf.offsets[i];
+        result.stride[i] = dmabuf.strides[i];
+    }
+    result.ready_fence_fd = dmabuf.readyFence;
+    result.buffer_id = dmabuf.bufferID;
+    // As much as the caller's struct holds (an older one is shorter).
+    size_t size = std::min(out->size ? out->size : sizeof(zg_dmabuf), sizeof(zg_dmabuf));
+    memcpy(out, &result, size);
+    out->size = size;
+    return ZG_OK;
 }
 
 void* zg_surface_device(zg_surface* surface)
@@ -1433,6 +1475,18 @@ zg_view* zg_view_create(zg_context* context, const zg_view_config* configuration
         surface = createGLSurface(surfaceConfig.device, buffers);
         if (!surface) {
             fail(ZG_ERROR_GPU, "cannot create GL textures on the EGLDisplay"_s);
+            return nullptr;
+        }
+        break;
+    case ZG_SURFACE_VULKAN:
+        // The engine's own display (a GL surface's, if one was made first).
+        if (!initializeGPU()) {
+            fail(ZG_ERROR_GPU, "no GPU"_s);
+            return nullptr;
+        }
+        surface = createDMABufSurface(buffers);
+        if (!surface) {
+            fail(ZG_ERROR_UNSUPPORTED, "no dma-buf frames: the GPU driver exports none, and neither GBM nor a DRM device gives one it imports"_s);
             return nullptr;
         }
         break;

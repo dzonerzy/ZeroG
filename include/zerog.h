@@ -390,7 +390,11 @@ typedef struct zg_surface_config {
          already acquired through its keyed mutex.
        ZG_SURFACE_GL: the application's EGLDisplay (required); frames carry an
          EGLImage for glEGLImageTargetTexture2DOES and an EGLSync to eglWaitSync on.
-         Release frames with the context that used them current. */
+         Release frames with the context that used them current.
+       ZG_SURFACE_VULKAN (0.3; Linux): NULL. Frames are dma-bufs, on the engine's
+         own GPU, for Vulkan (VK_EXT_external_memory_dma_buf) or any API that
+         imports them: see zg_surface_dmabuf. ZG_ERROR_UNSUPPORTED when the
+         driver exports none and no DRM device allocates one it imports. */
     void *device;
     unsigned buffer_count; /* 2 or 3, 0 = 2 */
     /* ZG_SURFACE_GL (0.3): how the application opened its EGLDisplay, the
@@ -423,6 +427,35 @@ typedef struct zg_frame {
    The frame stays valid until zg_surface_release. */
 ZG_API zg_result zg_surface_acquire(zg_surface *surface, zg_frame *out);
 ZG_API void zg_surface_release(zg_surface *surface, const zg_frame *frame);
+
+/* A ZG_SURFACE_VULKAN frame's dma-buf (0.3; Linux): its format and planes, as
+   DRM describes them (VkImageDrmFormatModifierExplicitCreateInfoEXT takes them
+   as they are; DRM_FORMAT_ABGR8888 is VK_FORMAT_R8G8B8A8_UNORM), and the
+   sync_file to wait on before reading it (VkImportSemaphoreFdInfoKHR with
+   VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT, or poll()), -1 when the frame
+   is complete already. The descriptors stay the engine's until the frame is
+   released: dup them to import (Vulkan takes ownership of what it imports).
+   A buffer keeps its descriptors and its buffer_id until the view is resized,
+   so an application may keep its imports by buffer_id. Rows run top to bottom. */
+typedef struct zg_dmabuf {
+    size_t size;                 /* set by the caller */
+    uint32_t fourcc;             /* DRM_FORMAT_* */
+    uint64_t modifier;           /* DRM_FORMAT_MOD_* (0: linear) */
+    unsigned plane_count;        /* 1 to 4 */
+    int fd[4];
+    uint32_t offset[4];
+    uint32_t stride[4];
+    int ready_fence_fd;
+    uint64_t buffer_id;
+} zg_dmabuf;
+
+/* ZG_ERROR_UNSUPPORTED for frames of other kinds. */
+ZG_API zg_result zg_surface_dmabuf(zg_surface *surface, const zg_frame *frame, zg_dmabuf *out);
+/* zg_surface_release, with a sync_file (Linux, ZG_SURFACE_VULKAN) signaled when
+   the application's reads of the frame are done: the engine waits on it before
+   drawing into that buffer again. The engine owns the descriptor from then on
+   (closing it for other kinds); -1 is zg_surface_release. */
+ZG_API void zg_surface_release_with_fence(zg_surface *surface, const zg_frame *frame, int release_fence_fd);
 /* The device frames are given for (ZG_SURFACE_D3D11: ID3D11Device*), NULL otherwise. */
 ZG_API void *zg_surface_device(zg_surface *surface);
 

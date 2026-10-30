@@ -37,6 +37,21 @@ enum class SurfaceKind : uint8_t {
     D3D11, // Windows: a texture shared with the host's ID3D11Device
     GL, // Linux: an EGLImage on the host's EGLDisplay
     GPU, // a GL texture in the engine's share group (window mode)
+    DMABuf, // Linux: a dma-buf, for any API that imports them (Vulkan)
+};
+
+// A DMABuf surface's frame: the buffer's planes, as DRM describes them, and
+// the sync_file to wait on before reading. The descriptors stay the surface's;
+// importing (which takes ownership in Vulkan) needs a dup.
+struct DMABufFrame {
+    uint32_t fourcc { 0 }; // DRM_FORMAT_*
+    uint64_t modifier { 0 }; // DRM_FORMAT_MOD_*
+    unsigned planeCount { 0 };
+    int fds[4] { -1, -1, -1, -1 };
+    uint32_t offsets[4] { };
+    uint32_t strides[4] { };
+    int readyFence { -1 }; // -1: the frame is complete already
+    uint64_t bufferID { 0 }; // the same buffer, with the same descriptors, until a resize
 };
 
 // One acquired frame. Rows go from top to bottom.
@@ -92,7 +107,12 @@ public:
     bool acquire(Frame&);
     // Any thread: whether acquire() would give a frame.
     bool hasNewFrame();
-    void release(const Frame&);
+    // `releaseFence` (Linux, DMABuf surfaces): a sync_file signaled when the
+    // application's reads of the frame are done, which the engine waits on
+    // before drawing into that buffer again; the surface owns it from here.
+    void release(const Frame&, int releaseFence = -1);
+    // Any thread, an acquired frame of a DMABuf surface: its dma-buf.
+    virtual bool dmabuf(const Frame&, DMABufFrame&) const { return false; }
 
     // Engine thread: frees the GPU resources of released buffers from older
     // generations. Called by beginFrame() and resize().
@@ -130,6 +150,9 @@ protected:
     virtual void fillFrame(Buffer&, Frame&) = 0;
     virtual void willAcquire(Buffer&) { }
     virtual void didRelease(Buffer&) { }
+    // Application thread, inside release(): the application's release fence,
+    // which the surface now owns. Kinds without dma-bufs close it.
+    virtual void takeReleaseFence(Buffer&, int fence);
 
 private:
     Buffer* pickBuffer() WTF_REQUIRES_LOCK(m_lock);
@@ -164,6 +187,10 @@ std::unique_ptr<Surface> createD3D11Surface(void* hostDevice, unsigned bufferCou
 // `hostDisplay` is the application's EGLDisplay, which must be the display the
 // engine's GPU was initialized with (initializeGPU).
 std::unique_ptr<Surface> createGLSurface(void* hostDisplay, unsigned bufferCount);
+// Frames are dma-bufs (Surface::dmabuf), on the engine's own GPU display. Null
+// when no buffer can be made one: the driver exports none, and neither GBM nor
+// a DRM device (dumb buffers) gives one the driver imports.
+std::unique_ptr<Surface> createDMABufSurface(unsigned bufferCount);
 #endif
 
 } // namespace ZeroG

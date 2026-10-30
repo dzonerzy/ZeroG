@@ -69,6 +69,7 @@ else ()
     list(APPEND ZeroGEmbedding_SOURCES
         accessibility/AccessibilityAtspi.cpp
         accessibility/DBus.cpp
+        graphics/SurfaceDMABuf.cpp
     )
     list(APPEND ZeroGEmbedding_LIBRARIES ${CMAKE_DL_LIBS})
 endif ()
@@ -162,6 +163,17 @@ set(ZeroGTexture_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DI
 WEBKIT_EXECUTABLE_DECLARE(ZeroGTexture)
 WEBKIT_EXECUTABLE(ZeroGTexture)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGTexture)
+
+# Texture mode with dma-bufs (Linux): the frames a Vulkan application imports.
+if (NOT WIN32)
+    set(ZeroGTextureDMABuf_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/texture_dmabuf.cpp)
+    set(ZeroGTextureDMABuf_LIBRARIES ZeroGEmbedding)
+    set(ZeroGTextureDMABuf_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+    set(ZeroGTextureDMABuf_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+    WEBKIT_EXECUTABLE_DECLARE(ZeroGTextureDMABuf)
+    WEBKIT_EXECUTABLE(ZeroGTextureDMABuf)
+    ZEROG_USE_WEBCORE_INCLUDES(ZeroGTextureDMABuf)
+endif ()
 
 # Input: mouse, keyboard, text, wheel.
 set(ZeroGInput_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/input.cpp)

@@ -63,4 +63,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         dbus dbus-daemon at-spi2-core libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
+# For the dma-buf test only: Vulkan's loader and Mesa's lavapipe, which imports
+# the engine's dma-bufs (VK_EXT_external_memory_dma_buf).
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libvulkan1 mesa-vulkan-drivers \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src

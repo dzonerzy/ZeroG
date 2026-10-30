@@ -53,6 +53,14 @@ Engine features of roadmap phases 3 and 4:
   read and set, and focus,
   value, name, state and structure changes are announced. No new function;
   texture-mode views have no bridge yet.
+- dma-buf frames (Linux): `ZG_SURFACE_VULKAN` views render on the engine's own
+  GPU into dma-bufs, for Vulkan (VK_EXT_external_memory_dma_buf) or any API
+  that imports them. `zg_surface_dmabuf` gives a frame's format, modifier and
+  planes (descriptors, offsets, strides), its sync_file and a buffer ID that
+  stays with the buffer; `zg_surface_release_with_fence` hands back the
+  application's own sync_file. The buffers come from the driver (EGL export),
+  GBM, or a DRM device's dumb buffers, whichever the system has first;
+  `ZG_ERROR_UNSUPPORTED` with none. Before, the kind was declared and refused.
 - Window mode with several windows: each window gets its own events. Before,
   whichever window polled first took every window's events.
 - WebGL (standard, dev and debug profiles): WebGL and WebGL 2 in GPU views,

@@ -4,6 +4,10 @@
 #include <WebCore/FontRenderOptions.h>
 #include <wtf/StdLibExtras.h>
 
+#if !OS(WINDOWS)
+#include <unistd.h>
+#endif
+
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkColorSpace.h>
@@ -217,11 +221,30 @@ bool Surface::acquire(Frame& frame)
     return true;
 }
 
-void Surface::release(const Frame& frame)
+static void closeFence(int fence)
+{
+#if !OS(WINDOWS)
+    if (fence >= 0)
+        close(fence);
+#else
+    UNUSED_PARAM(fence);
+#endif
+}
+
+void Surface::takeReleaseFence(Buffer&, int fence)
+{
+    closeFence(fence);
+}
+
+void Surface::release(const Frame& frame, int releaseFence)
 {
     auto* buffer = static_cast<Buffer*>(frame.handle);
-    if (!buffer)
+    if (!buffer) {
+        closeFence(releaseFence);
         return;
+    }
+    if (releaseFence >= 0)
+        takeReleaseFence(*buffer, releaseFence);
     didRelease(*buffer);
     Locker locker { m_lock };
     RELEASE_ASSERT(buffer->state == BufferState::Acquired);

@@ -5,8 +5,10 @@
 # covered: Xvfb for X11, Weston's headless backend for Wayland. The accessibility
 # test runs under dbus-run-session, with at-spi2-core's bus and registry.
 #
-#   docker run --rm -v zerog-linux-build:/build zerog-linux-builder \
+#   docker run --rm --device /dev/dri -v zerog-linux-build:/build zerog-linux-builder \
 #       sh /src/tests/render/run_linux.sh [build dir, default /build/zerog-minimal]
+#
+# (--device /dev/dri for the dma-buf test; without it that test is skipped.)
 
 bin=${1:-/build/zerog-minimal}/bin
 failed=0
@@ -30,6 +32,13 @@ done
 run "default EGL display (X11)" env ZEROG_EGL_PLATFORM=default xvfb-run -a "$bin/ZeroGFirstRender" --gpu first_render.png
 run "frame loop" "$bin/ZeroGFrameLoop"
 run "texture mode" "$bin/ZeroGTexture"
+# dma-bufs need a GPU that exports them, GBM, or a DRM device for dumb buffers
+# (llvmpipe exports none): docker run --device /dev/dri gives the VM's.
+if [ -e /dev/dri ]; then
+    run "texture mode with dma-bufs (Vulkan)" "$bin/ZeroGTextureDMABuf"
+else
+    echo "SKIP texture mode with dma-bufs: no /dev/dri (docker run --device /dev/dri)"
+fi
 run "GPU compositing" "$bin/ZeroGCompositing"
 run "input" "$bin/ZeroGInput"
 run "resource loader" "$bin/ZeroGLoader"

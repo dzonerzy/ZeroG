@@ -73,7 +73,8 @@ build/zerog-minimal/bin/ZeroGFirstRender --gpu first_render.png
 | `ZeroGFrameLoop` | `requestAnimationFrame` on the application's frame clock; each frame repaints only the damage; buffers match a full repaint |
 | `ZeroGInput` | mouse (clicks, click count, `:hover`), focus, typing and editing commands (Backspace, arrows, Ctrl+A/Z/Shift+Z), key event properties, smooth wheel scrolling |
 | `ZeroGWindow` | window mode (SDL3 window, GPU presentation at vsync): rAF at the display's rate, presented image matches a CPU render, cursor and typing from window events, resizing reaches the page. On Linux: `xvfb-run -a ZeroGWindow` |
-| `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render |
+| `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render; on Linux, WebGL on the application's display |
+| `ZeroGTextureDMABuf` | Linux, texture mode with dma-buf frames (`ZG_SURFACE_VULKAN`): the render thread imports each frame's planes (EGL_EXT_image_dma_buf_import) after its fence and reads it while the engine renders; no torn frames, a buffer keeps its descriptors, the last frame matches a CPU render; one frame imported into Vulkan memory (lavapipe's VK_EXT_external_memory_dma_buf) has the same bytes. In Docker it needs `--device /dev/dri` (vgem's dumb buffers: llvmpipe exports no dma-buf) |
 | `ZeroGLoader` | the resource loader: an `app://` page from memory (stylesheet, module scripts, fetch, range requests, compressed archive entries, percent-encoded paths, directory redirects, synchronous XHR, iframes), write-once files, `data:`, http over curl against a server in the test (CORS, redirects and `Response.redirected`, cookies, synchronous XHR, a main-frame navigation), WebSockets against the same server (subprotocol, handshake cookies, text, binary, a 100 KB message, the close handshake, refused and unreachable servers), registered fonts (TrueType and WOFF2, used by a page of their session only, also when registered while it is open), the HTTP disk cache (a new session served from disk, no-store, revalidation with ETag and 304, Vary, `cache: 'reload'` and `'only-if-cached'`, eviction of the least recently used under the capacity), https and `wss://` against a TLS server in the test whose CA is generated at run time (refused with "certificate not trusted" before the CA is added, loaded after). `ZEROG_ONLINE_TESTS=1` adds https to example.com and `wss://` to a public echo server |
 | `ZeroGAccessibility` | accessibility in window mode, from a client on its own thread as a screen reader: on Windows UI Automation, on Linux AT-SPI over D-Bus (through the registry). The page's button is found by name and pressed, a text field read (on Windows also through the Text pattern, by character, and selected) and set with an input event, a check box toggled, a slider's value read, and focusing the field raises its focus event. On Linux: `dbus-run-session -- xvfb-run -a ZeroGAccessibility` (at-spi2-core) |
 | `ZeroGCompositing` | GPU compositing on the compositor thread: frames for the page's rendering updates, CSS transform and opacity animations producing frames with no rendering update at all, one per application frame, none without, and at most as many as a frame rate cap allows, `will-change` making a layer, a still page producing none, a still composited frame matching the CPU render; with WebGL (standard, dev and debug builds) a WebGL canvas composited, in the minimal build no context |
@@ -150,10 +151,12 @@ docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builde
 
 The tests run in the same image, on Mesa's llvmpipe, covering every EGL display
 path (surfaceless, EGL device as on NVIDIA's headless driver, default) and both
-window systems (Xvfb for X11, Weston's headless backend for Wayland):
+window systems (Xvfb for X11, Weston's headless backend for Wayland).
+`--device /dev/dri` gives the dma-buf test a DRM device (vgem under WSL 2);
+without it that test is skipped:
 
 ```sh
-docker run --rm -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builder \
+docker run --rm --device /dev/dri -v "$PWD:/src:ro" -v zerog-linux-build:/build zerog-linux-builder \
     sh /src/tests/render/run_linux.sh
 ```
 
