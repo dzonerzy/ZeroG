@@ -223,7 +223,11 @@ typedef int (*zg_trust_fn)(const char *origin, zg_trust_request request, int mai
 typedef struct zg_context_config {
     size_t size;
     const char *app_id;     /* reverse-DNS id, used for the per-app data directory */
-    const char *data_dir;   /* NULL = OS default from app_id */
+    /* Where the context keeps cookies (Cookies.sqlite), localStorage
+       (LocalStorage/) and IndexedDB (IndexedDB/). NULL = OS default from app_id
+       (%LOCALAPPDATA%\<app_id>, $XDG_DATA_HOME/<app_id>); with neither, all of it
+       lives in memory. Contexts on the same directory share what is in it. */
+    const char *data_dir;
     int ephemeral;          /* nonzero: never write cookies or storage to disk */
 
     /* Trusted origins. By default only the app's own assets are trusted: the schemes

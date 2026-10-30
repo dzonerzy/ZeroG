@@ -703,15 +703,19 @@ zg_context* zg_context_create(zg_runtime* rt, const zg_context_config* configura
     context->trust = config.trust;
     context->trustUser = config.trust_user;
 
-    // Cookies persist in the data directory unless the context is ephemeral or
-    // has none (no data_dir and no app_id): then they live in memory.
+    // Cookies, local storage and IndexedDB persist in the data directory unless
+    // the context is ephemeral or has none (no data_dir and no app_id): then they
+    // live in memory.
     String cookieDatabase;
+    String storageDirectory;
     if (!context->ephemeral && !context->dataDirectory.empty()) {
         auto directory = String::fromUTF8(context->dataDirectory.c_str());
-        if (FileSystem::makeAllDirectories(directory))
+        if (FileSystem::makeAllDirectories(directory)) {
             cookieDatabase = FileSystem::pathByAppendingComponent(directory, "Cookies.sqlite"_s);
+            storageDirectory = directory;
+        }
     }
-    context->session = Session::create(cookieDatabase);
+    context->session = Session::create(cookieDatabase, storageDirectory);
     rt->contexts.push_back(context);
     return context;
 }

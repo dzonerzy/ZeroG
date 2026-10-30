@@ -29,7 +29,9 @@ class BlobRegistry;
 class CookieJar;
 class CookieJarDB;
 class CredentialStorage;
+class DatabaseProvider;
 class LoaderStrategy;
+class StorageNamespaceProvider;
 class LocalFrame;
 class NetworkLoadMetrics;
 class ResourceLoader;
@@ -142,9 +144,13 @@ public:
 // different sessions may answer the same scheme differently) and cookies.
 class Session : public RefCounted<Session> {
 public:
-    // Cookies persist in an SQLite file at `cookieDatabasePath`; empty keeps them
-    // in memory for the session's lifetime.
-    static Ref<Session> create(const String& cookieDatabasePath = { }) { return adoptRef(*new Session(cookieDatabasePath)); }
+    // Cookies persist in an SQLite file at `cookieDatabasePath`; local storage
+    // and IndexedDB under `storageDirectory` (LocalStorage/, IndexedDB/). Empty
+    // keeps them in memory for the session's lifetime.
+    static Ref<Session> create(const String& cookieDatabasePath = { }, const String& storageDirectory = { })
+    {
+        return adoptRef(*new Session(cookieDatabasePath, storageDirectory));
+    }
     static Session& defaultSession();
     // Its resources leave WebCore's memory cache with it.
     ~Session();
@@ -182,9 +188,16 @@ public:
     String cookieHeader(const URL& firstParty, const URL&);
     void storeCookies(const URL& firstParty, const URL&, const Vector<String>& headerLines);
 
+    // Web storage and IndexedDB of the session's pages (port/embedding/storage).
+    WebCore::StorageNamespaceProvider& storageNamespaceProvider();
+    WebCore::DatabaseProvider& databaseProvider();
+
 private:
-    explicit Session(const String& cookieDatabasePath);
+    Session(const String& cookieDatabasePath, const String& storageDirectory);
     const PAL::SessionID m_sessionID;
+    const String m_storageDirectory;
+    RefPtr<WebCore::StorageNamespaceProvider> m_storageNamespaceProvider;
+    RefPtr<WebCore::DatabaseProvider> m_databaseProvider;
     HashMap<String, Ref<SchemeHandler>> m_schemeHandlers;
     std::unique_ptr<WebCore::CookieJarDB> m_cookieDatabase;
     RefPtr<WebCore::UserContentProvider> m_userContentProvider;

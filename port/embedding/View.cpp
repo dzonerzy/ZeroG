@@ -21,6 +21,8 @@
 #include <WebCore/ActivityState.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/CookieJar.h>
+#include <WebCore/DatabaseProvider.h>
+#include <WebCore/StorageNamespaceProvider.h>
 #include <WebCore/UserContentProvider.h>
 #include <WebCore/DocumentView.h>
 #include <WebCore/EmptyClients.h>
@@ -36,6 +38,7 @@
 #include <pal/SessionID.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/MakeString.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkCanvas.h>
@@ -66,6 +69,8 @@ static Ref<Page> createPage(View& view)
     configuration.cookieJar = createCookieJar(view.session());
     configuration.socketProvider = createSocketProvider();
     configuration.userContentProvider = view.session().userContentProvider();
+    configuration.storageNamespaceProvider = view.session().storageNamespaceProvider();
+    configuration.databaseProvider = view.session().databaseProvider();
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     return Page::create(WTF::move(configuration));
@@ -93,10 +98,16 @@ View::View(Configuration&& configuration)
 {
     Ref page = m_page;
     viewsByPage().set(page.ptr(), this);
+    // The views of a session form one page group, as a WebKit browser's windows
+    // do: local storage events reach the session's other views.
+    page->setGroupName(makeString("ZeroG-"_s, m_session->sessionID().toUInt64()));
     auto& settings = page->settings();
     settings.setScriptEnabled(configuration.scriptEnabled);
     // <a download> (WebKit2 turns it on; it is an embedder setting).
     settings.setDownloadAttributeEnabled(true);
+    // Off in WebCore's defaults, on in every WebKit port: the session provides them.
+    settings.setLocalStorageEnabled(true);
+    settings.setSessionStorageEnabled(true);
     if (processOptions().synchronousImageDecoding) {
         settings.setLargeImageAsyncDecodingEnabled(false);
         settings.setAnimatedImageAsyncDecodingEnabled(false);

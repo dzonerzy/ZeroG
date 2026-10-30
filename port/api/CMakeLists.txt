@@ -73,6 +73,14 @@ set(ZeroGBindingsTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGBindingsTest)
 WEBKIT_EXECUTABLE(ZeroGBindingsTest)
 
+# localStorage, sessionStorage and IndexedDB in the data directory.
+set(ZeroGStorageTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/storage_test.c)
+set(ZeroGStorageTest_LIBRARIES ZeroGAPI)
+set(ZeroGStorageTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGStorageTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGStorageTest)
+WEBKIT_EXECUTABLE(ZeroGStorageTest)
+
 # Creating and destroying contexts, views and windows with work in flight.
 set(ZeroGLifecycleTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/lifecycle_test.c)
 set(ZeroGLifecycleTest_LIBRARIES ZeroGAPI)

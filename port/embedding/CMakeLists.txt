@@ -21,6 +21,16 @@ set(ZeroGEmbedding_SOURCES
     View.cpp
     WebSocketChannelZeroG.cpp
     Window.cpp
+
+    # Web storage and IndexedDB, in process (from WebKitLegacy; storage/).
+    storage/DatabaseProviderZeroG.cpp
+    storage/InProcessIDBServer.cpp
+    storage/StorageAreaImpl.cpp
+    storage/StorageAreaSync.cpp
+    storage/StorageNamespaceImpl.cpp
+    storage/StorageSyncManager.cpp
+    storage/StorageThread.cpp
+    storage/WebStorageNamespaceProvider.cpp
 )
 
 # Window mode: SDL3, static; on Linux it loads X11 or Wayland at run time.

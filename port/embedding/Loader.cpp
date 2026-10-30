@@ -34,6 +34,9 @@
 
 #include "Download.h"
 #include "View.h"
+#include "storage/DatabaseProviderZeroG.h"
+#include "storage/WebStorageNamespaceProvider.h"
+#include <wtf/FileSystem.h>
 #include <WebCore/Cookie.h>
 #include <WebCore/CookieJar.h>
 #include <WebCore/CookieJarDB.h>
@@ -398,11 +401,31 @@ static PAL::SessionID newSessionID()
     return PAL::SessionID::generatePersistentSessionID();
 }
 
-Session::Session(const String& cookieDatabasePath)
+Session::Session(const String& cookieDatabasePath, const String& storageDirectory)
     : m_sessionID(newSessionID())
+    , m_storageDirectory(storageDirectory)
     // ":memory:" is SQLite's in-memory database, as WebKit's ephemeral sessions use.
     , m_cookieDatabase(makeUnique<CookieJarDB>(cookieDatabasePath.isEmpty() ? ":memory:"_s : cookieDatabasePath))
 {
+}
+
+// Made on first use: a session whose pages never touch storage opens no files.
+StorageNamespaceProvider& Session::storageNamespaceProvider()
+{
+    if (!m_storageNamespaceProvider) {
+        m_storageNamespaceProvider = WebKit::WebStorageNamespaceProvider::create(m_storageDirectory.isEmpty()
+            ? String() : FileSystem::pathByAppendingComponent(m_storageDirectory, "LocalStorage"_s));
+    }
+    return *m_storageNamespaceProvider;
+}
+
+DatabaseProvider& Session::databaseProvider()
+{
+    if (!m_databaseProvider) {
+        m_databaseProvider = DatabaseProviderZeroG::create(m_storageDirectory.isEmpty()
+            ? String() : FileSystem::pathByAppendingComponent(m_storageDirectory, "IndexedDB"_s));
+    }
+    return *m_databaseProvider;
 }
 
 Session::~Session()
