@@ -57,30 +57,34 @@ namespace ZeroG {
 
 using namespace WebCore;
 
-// BoringSSL does not read the system's trust store by itself. On Windows WebCore
-// asks curl for the native store; elsewhere the engine points curl at the
-// distribution's CA bundle.
+// The system's root certificates: curl's native store on Windows, the
+// distribution's CA bundle elsewhere (CurlSSLHandleZeroG.cpp finds it). The
+// application's own come on top (addTrustedCertificates).
 void initializeCertificates()
 {
 #if !OS(WINDOWS)
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        static constexpr ASCIILiteral bundles[] = {
-            "/etc/ssl/certs/ca-certificates.crt"_s, // Debian, Ubuntu, Arch, Alpine
-            "/etc/pki/tls/certs/ca-bundle.crt"_s, // Fedora, RHEL
-            "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"_s, // RHEL 7+
-            "/etc/ssl/ca-bundle.pem"_s, // openSUSE
-            "/etc/ssl/cert.pem"_s, // others
-        };
-        for (auto bundle : bundles) {
-            if (FileSystem::fileExists(String { bundle })) {
-                CurlContext::singleton().sslHandle().setCACertPath(String { bundle });
-                return;
-            }
-        }
-        log(LogLevel::Warning, "No CA certificate bundle found in the standard locations: https and wss connections will fail certificate verification"_s);
+        if (std::holds_alternative<std::monostate>(CurlContext::singleton().sslHandle().getCACertInfo()))
+            log(LogLevel::Warning, "No CA certificate bundle found in the standard locations: https and wss connections fail certificate verification, except to servers whose root the application added"_s);
     });
 #endif
+}
+
+size_t addTrustedCertificates(std::span<const uint8_t> pem)
+{
+    return CurlContext::singleton().sslHandle().addTrustedCertificates(pem);
+}
+
+// A certificate the engine does not trust, said so (curl's own message is only
+// "SSL peer certificate or SSH remote key was not OK").
+ResourceError describeCertificateError(ResourceError&& error, const CertificateInfo& certificate)
+{
+    if (!error.isCertificationVerificationError())
+        return WTF::move(error);
+    auto reason = certificate.verificationErrorDescription();
+    return ResourceError { error.domain(), error.errorCode(), error.failingURL(),
+        makeString("certificate not trusted"_s, reason.isEmpty() ? ""_s : ": "_s, reason), error.type() };
 }
 
 namespace {
@@ -409,11 +413,11 @@ private:
         m_target.didFinish(metrics);
     }
 
-    void curlDidFailWithError(CurlRequest&, ResourceError&& error, CertificateInfo&&) final
+    void curlDidFailWithError(CurlRequest&, ResourceError&& error, CertificateInfo&& certificate) final
     {
         Ref protectedThis { *this };
         m_curlRequest = nullptr;
-        m_target.didFail(error);
+        m_target.didFail(describeCertificateError(WTF::move(error), certificate));
     }
 
     // ---- Redirects ----

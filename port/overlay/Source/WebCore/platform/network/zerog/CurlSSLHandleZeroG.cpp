@@ -33,8 +33,8 @@ namespace WebCore {
 
 // Root CAs on Unix (ZeroG.md, "Certificati"): BoringSSL does not read the system
 // store by itself, so point it at the distribution's CA bundle. Windows uses
-// CurlSSLHandleWin.cpp (CryptoAPI). An embedded bundle, for systems without one,
-// is set through the API.
+// CurlSSLHandleWin.cpp (CryptoAPI). The application's own roots come on top
+// (zg_runtime_add_ca_certificates, CurlSSLHandle::addTrustedCertificates).
 void CurlSSLHandle::platformInitialize()
 {
     static constexpr ASCIILiteral bundles[] = {

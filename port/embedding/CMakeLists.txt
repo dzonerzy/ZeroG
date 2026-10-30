@@ -30,6 +30,9 @@ set(ZeroGEmbedding_SOURCES
     loader/MemoryFS.cpp
     loader/WebSocketChannelZeroG.cpp
 
+    # The Web Inspector (dev and debug; stubs elsewhere).
+    inspector/InspectorZeroG.cpp
+
     # Window mode (SDL3).
     window/ClipboardSDL.cpp
     window/KeyboardSDL.cpp
@@ -55,6 +58,25 @@ if (WIN32)
     list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi)
 endif ()
 
+# The Web Inspector (dev and debug profiles): WebInspectorUI builds its frontend
+# into a resource directory (Source/WebInspectorUI/CMakeLists.txt); packed with
+# tools/assets.py, it is compiled in and served under inspector://. The
+# controller and the debuggable come from WebKitLegacy (docs/PROVENANCE.md).
+if (ENABLE_WEBINSPECTORUI)
+    set(_zerog_inspector_resources "${WebInspectorUI_DERIVED_SOURCES_DIR}/InspectorResources/WebInspectorUI")
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/inspector_resources.c
+        COMMAND ${Python_EXECUTABLE} ${ZEROG_SOURCE_DIR}/tools/assets.py ${_zerog_inspector_resources}
+            -o ${CMAKE_CURRENT_BINARY_DIR}/inspector_resources.c --c-symbol zerog_inspector_resources
+        DEPENDS ${ZEROG_SOURCE_DIR}/tools/assets.py ${CMAKE_BINARY_DIR}/inspector-resources.stamp
+        VERBATIM)
+    list(APPEND ZeroGEmbedding_SOURCES
+        ${CMAKE_CURRENT_BINARY_DIR}/inspector_resources.c
+        inspector/LegacyWebPageDebuggable.cpp
+        inspector/LegacyWebPageInspectorController.cpp
+    )
+endif ()
+
 set(ZeroGEmbedding_FRAMEWORKS
     JavaScriptCore
     PAL
@@ -70,6 +92,10 @@ set(ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES
 
 WEBKIT_LIBRARY_DECLARE(ZeroGEmbedding)
 WEBKIT_LIBRARY(ZeroGEmbedding)
+if (ENABLE_WEBINSPECTORUI)
+    target_compile_definitions(ZeroGEmbedding PRIVATE ZEROG_INSPECTOR=1)
+    add_dependencies(ZeroGEmbedding WebInspectorUI)
+endif ()
 
 # WebCore's headers include those of its dependencies (ICU, Skia, HarfBuzz, curl...),
 # and WebKit's static frameworks only pass on their own header directories, so
@@ -133,7 +159,8 @@ ZEROG_USE_WEBCORE_INCLUDES(ZeroGInput)
 
 # The resource loader: app:// from memory, data:, http over curl.
 set(ZeroGLoader_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/loader.cpp)
-set(ZeroGLoader_LIBRARIES ZeroGEmbedding ZLIB::ZLIB)
+# BoringSSL for the test's HTTPS server.
+set(ZeroGLoader_LIBRARIES ZeroGEmbedding ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto)
 if (WIN32)
     list(APPEND ZeroGLoader_LIBRARIES ws2_32)
 endif ()
@@ -144,6 +171,18 @@ WEBKIT_EXECUTABLE(ZeroGLoader)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGLoader)
 # Test fonts from the WebKit checkout's Skia (Ahem: public domain; Roboto: Apache 2.0).
 target_compile_definitions(ZeroGLoader PRIVATE ZEROG_TEST_FONTS="${CMAKE_SOURCE_DIR}/Source/ThirdParty/skia")
+
+# The Web Inspector: local frontend, closing, the remote inspector's target list.
+set(ZeroGInspector_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/inspector.cpp)
+set(ZeroGInspector_LIBRARIES ZeroGEmbedding)
+if (WIN32)
+    list(APPEND ZeroGInspector_LIBRARIES ws2_32)
+endif ()
+set(ZeroGInspector_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGInspector_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGInspector)
+WEBKIT_EXECUTABLE(ZeroGInspector)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGInspector)
 
 # Window mode: a native window presented at vsync.
 set(ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window.cpp)

@@ -22,3 +22,4 @@
 0019-jsc-precommit-windows-stack-pages-once.patch
 0020-webcore-pasteboard-items-for-zerog.patch
 0021-webcore-drag-and-drop-for-zerog.patch
+0022-webcore-curl-trusted-certificates.patch

@@ -18,6 +18,8 @@
 #include <WebCore/PlatformDisplay.h>
 #include <atomic>
 #include <cstring>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Scope.h>
 #include <wtf/text/MakeString.h>
@@ -173,12 +175,20 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     return std::unique_ptr<Window> { result.release() };
 }
 
+// The open windows, for their events.
+static HashMap<SDL_Window*, Window*>& windows()
+{
+    static NeverDestroyed<HashMap<SDL_Window*, Window*>> windows;
+    return windows;
+}
+
 Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr<GLContext>&& presentContext, void* nativeWindow)
     : m_window(window)
     , m_view(WTF::move(view))
     , m_presentContext(WTF::move(presentContext))
     , m_nativeWindow(nativeWindow)
 {
+    windows().set(m_window, this);
     if (auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window)); mode && mode->refresh_rate > 0)
         m_refreshInterval = 1_s / mode->refresh_rate;
     if (m_presentContext->makeContextCurrent()) {
@@ -200,6 +210,7 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
 
 Window::~Window()
 {
+    windows().remove(m_window);
     if (m_presentContext->makeContextCurrent() && m_readFramebuffer)
         glDeleteFramebuffers(1, &m_readFramebuffer);
     m_presentContext = nullptr;
@@ -294,6 +305,11 @@ void Window::setTitle(const String& title)
 void Window::setFullscreen(bool fullscreen)
 {
     SDL_SetWindowFullscreen(m_window, fullscreen);
+}
+
+void Window::raise()
+{
+    SDL_RaiseWindow(m_window);
 }
 
 void Window::setSize(const IntSize& size)
@@ -423,6 +439,38 @@ void Window::handleEvents()
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
         case SDL_EVENT_QUIT:
+            for (auto* window : windows().values())
+                window->m_closed = true;
+            break;
+        case SDL_EVENT_CLIPBOARD_UPDATE:
+            sdlClipboardChanged();
+            break;
+        default:
+            if (event.type == s_wakeUpEvent)
+                s_wakeUpPending = false;
+            else if (auto* window = windows().get(SDL_GetWindowFromEvent(&event)))
+                window->handleEvent(event);
+            // Events pushed without a window (SDL_PushEvent with no windowID) go
+            // to the only one, if there is one.
+            else if (windows().size() == 1 && !SDL_GetWindowFromEvent(&event))
+                windows().begin()->value->handleEvent(event);
+            break;
+        }
+    }
+}
+
+// The Web Inspector's shortcuts: F12, Ctrl+Shift+I.
+static bool isInspectorShortcut(const SDL_KeyboardEvent& key)
+{
+    if (key.scancode == SDL_SCANCODE_F12 && !(key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_GUI)))
+        return true;
+    return key.scancode == SDL_SCANCODE_I && (key.mod & SDL_KMOD_CTRL) && (key.mod & SDL_KMOD_SHIFT) && !(key.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI));
+}
+
+void Window::handleEvent(const SDL_Event& event)
+{
+    {
+        switch (event.type) {
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             m_closed = true;
             break;
@@ -462,6 +510,9 @@ void Window::handleEvents()
             break;
         }
         case SDL_EVENT_KEY_DOWN:
+            // Ahead of the page, as in a browser; with no inspector the page gets the key.
+            if (isInspectorShortcut(event.key) && !event.key.repeat && m_view->showInspector())
+                break;
             m_view->keyDown(keyEventFromSDL(event.key.scancode, event.key.mod, event.key.repeat));
             break;
         case SDL_EVENT_KEY_UP:
@@ -469,9 +520,6 @@ void Window::handleEvents()
             break;
         case SDL_EVENT_TEXT_INPUT:
             m_view->insertText(String::fromUTF8(event.text.text), modifiersFromSDL(SDL_GetModState()));
-            break;
-        case SDL_EVENT_CLIPBOARD_UPDATE:
-            sdlClipboardChanged();
             break;
         case SDL_EVENT_DROP_BEGIN:
             m_drop = { };
@@ -497,8 +545,6 @@ void Window::handleEvents()
             m_drop = { };
             break;
         default:
-            if (event.type == s_wakeUpEvent)
-                s_wakeUpPending = false;
             break;
         }
     }

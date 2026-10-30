@@ -7,6 +7,7 @@
 
 #include "Embedding.h"
 #include "graphics/Surface.h"
+#include "inspector/InspectorZeroG.h"
 #include "window/ClipboardSDL.h"
 #include "window/KeyboardSDL.h"
 #include <WebCore/FileChooser.h>
@@ -459,6 +460,48 @@ private:
         completionHandler(std::nullopt);
     }
 
+    // The Web Inspector's frontend: a window of the runtime's, whatever the
+    // inspected view's mode.
+    View* createInspectorView(Session& session) final
+    {
+        auto* rt = runtime();
+        if (!rt)
+            return nullptr;
+        auto window = Window::create({ "Web Inspector"_s, { 1000, 700 }, true, false, true, &session });
+        if (!window) {
+            fail(ZG_ERROR_GPU, makeString("cannot create the inspector's window: "_s, Window::lastError()));
+            return nullptr;
+        }
+        auto* view = &window->view();
+        rt->inspectorWindows.push_back(WTF::move(window));
+        return view;
+    }
+
+    // The loop destroys closed inspector windows.
+    void closeInspectorView(View& view) final
+    {
+        if (auto* window = inspectorWindow(view))
+            window->quit();
+    }
+
+    void bringInspectorViewToFront(View& view) final
+    {
+        if (auto* window = inspectorWindow(view))
+            window->raise();
+    }
+
+    static Window* inspectorWindow(View& view)
+    {
+        auto* rt = runtime();
+        if (!rt)
+            return nullptr;
+        for (auto& window : rt->inspectorWindows) {
+            if (&window->view() == &view)
+                return window.get();
+        }
+        return nullptr;
+    }
+
     zg_view& m_view;
     HashMap<ZeroG::Download*, std::unique_ptr<zg_download>> m_downloads;
 };
@@ -534,6 +577,15 @@ zg_runtime* zg_runtime_create(const zg_runtime_config* configuration)
         });
     }
 
+    // Remote inspection, local to the machine (an SSH tunnel reaches it from
+    // another): dev and debug profiles only.
+    if (config.inspector_port && ViewInspector::isAvailable()) {
+        bool listening = config.inspector_port <= std::numeric_limits<uint16_t>::max()
+            && startRemoteInspectorServer("127.0.0.1"_s, static_cast<uint16_t>(config.inspector_port));
+        if (!listening)
+            ZeroG::log(LogLevel::Warning, makeString("the remote inspector cannot listen on 127.0.0.1:"_s, config.inspector_port));
+    }
+
 #if OS(WINDOWS)
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     s_runtime->wakeUpHandle = reinterpret_cast<zg_native_handle>(event);
@@ -555,6 +607,7 @@ void zg_runtime_destroy(zg_runtime* rt)
 {
     if (!rt || !checkThread())
         return;
+    rt->inspectorWindows.clear();
     while (!rt->windows.empty())
         zg_window_destroy(rt->windows.back());
     while (!rt->contexts.empty())
@@ -576,6 +629,29 @@ static void waitForWork(zg_runtime& rt, int64_t milliseconds)
 #endif
 }
 
+// Due timers, network responses and pending tasks.
+static void runEngineWork(zg_runtime& rt)
+{
+#if !OS(WINDOWS)
+    uint64_t count;
+    while (read(static_cast<int>(rt.wakeUpHandle), &count, sizeof(count)) > 0) { }
+#else
+    UNUSED_PARAM(rt);
+#endif
+    runPendingWork();
+}
+
+// The inspector's windows: closed ones go (their views first tell the inspector),
+// open ones get `maxWait` each for their events and frames.
+static void runInspectorWindows(zg_runtime& rt, std::optional<Seconds> maxWait)
+{
+    std::erase_if(rt.inspectorWindows, [](auto& window) {
+        return window->isClosed();
+    });
+    for (size_t i = 0; i < rt.inspectorWindows.size(); ++i)
+        rt.inspectorWindows[i]->runOnce(maxWait);
+}
+
 zg_result zg_runtime_run(zg_runtime* rt)
 {
     clearError();
@@ -594,17 +670,24 @@ zg_result zg_runtime_run(zg_runtime* rt)
         // The last window was closed: the application is done.
         if (open.empty() && hadWindows)
             break;
+        runInspectorWindows(*rt, 1_ms);
         if (open.empty()) {
             // No window (CPU and texture views): the engine's own work, sleeping
-            // until a timer is due or something wakes the loop.
-            zg_runtime_update(rt);
-            if (!rt->quit)
-                waitForWork(*rt, zg_runtime_next_timeout(rt));
+            // until a timer is due or something wakes the loop; with an
+            // inspector window, its events are polled.
+            runEngineWork(*rt);
+            if (!rt->quit) {
+                auto timeout = zg_runtime_next_timeout(rt);
+                if (!rt->inspectorWindows.empty())
+                    timeout = timeout < 0 ? 4 : std::min<int64_t>(timeout, 4);
+                waitForWork(*rt, timeout);
+            }
             continue;
         }
         // One window waits for its events; several take turns without blocking.
+        bool alone = open.size() == 1 && rt->inspectorWindows.empty();
         for (auto* window : open)
-            window->window->runOnce(open.size() == 1 ? std::nullopt : std::optional { 1_ms });
+            window->window->runOnce(alone ? std::nullopt : std::optional { 1_ms });
     }
     rt->quit = false;
     return ZG_OK;
@@ -625,11 +708,10 @@ void zg_runtime_update(zg_runtime* rt)
 {
     if (!rt || !checkThread())
         return;
-#if !OS(WINDOWS)
-    uint64_t count;
-    while (read(static_cast<int>(rt->wakeUpHandle), &count, sizeof(count)) > 0) { }
-#endif
-    runPendingWork();
+    runEngineWork(*rt);
+    // Own-loop hosts drive the inspector's windows from here.
+    if (!rt->inspectorWindows.empty())
+        runInspectorWindows(*rt, 0_s);
 }
 
 zg_native_handle zg_runtime_wakeup_handle(zg_runtime* rt)
@@ -1190,6 +1272,16 @@ private:
 
 } // namespace
 
+zg_result zg_runtime_add_ca_certificates(zg_runtime* rt, const void* pem, size_t length)
+{
+    clearError();
+    if (!rt || !pem || !length)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no certificates"_s);
+    if (!addTrustedCertificates(std::span { static_cast<const uint8_t*>(pem), length }))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no PEM certificate could be read"_s);
+    return ZG_OK;
+}
+
 void zg_clipboard_reply_data(zg_clipboard_reply* reply, const void* data, size_t length)
 {
     if (reply && data)
@@ -1365,6 +1457,9 @@ void zg_view_destroy(zg_view* view)
         return;
     auto& views = view->context->views;
     views.erase(std::remove(views.begin(), views.end(), view), views.end());
+    // Its inspector's window goes with it, while the client can close it.
+    if (auto* inspector = view->view->inspector())
+        inspector->close();
     view->view->setClient(nullptr);
     detachBindings(*view);
     delete view;
@@ -1592,6 +1687,22 @@ int zg_view_drag(zg_view* view, zg_drag_event event, float x, float y, const zg_
     return view->view->drag(dragEvent, { x, y }, items);
 }
 
+// ---- Web Inspector ----
+
+zg_result zg_view_show_inspector(zg_view* view)
+{
+    clearError();
+    if (!view)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no view"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    if (!ViewInspector::isAvailable())
+        return fail(ZG_ERROR_UNSUPPORTED, makeString("the Web Inspector is in the dev and debug profiles, not in "_s, ZEROG_PROFILE_NAME ""_s));
+    if (!view->view->showInspector())
+        return t_lastError.empty() ? fail(ZG_ERROR_GPU, "cannot open the inspector"_s) : ZG_ERROR_GPU;
+    return ZG_OK;
+}
+
 // ---- Windows ----
 
 zg_window* zg_window_create(zg_context* context, const zg_window_config* configuration)
@@ -1629,6 +1740,8 @@ void zg_window_destroy(zg_window* window)
         return;
     auto& windows = window->context->runtime->windows;
     windows.erase(std::remove(windows.begin(), windows.end(), window), windows.end());
+    if (auto* inspector = window->view.view->inspector())
+        inspector->close();
     window->view.view->setClient(nullptr);
     detachBindings(window->view);
     delete window;

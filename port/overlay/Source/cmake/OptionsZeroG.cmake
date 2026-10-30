@@ -100,7 +100,14 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE ON) # toDataURL, toBl
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_WOFF2 PRIVATE ON)
 
 # Functions per profile (ZeroG.md, "Funzioni da spegnere").
-WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE ${_zerog_full_web})
+# WebGL draws only once the compositor exists (GraphicsContextGLZeroG.cpp); on
+# Linux it also needs ANGLE, not wired yet (ThirdParty/ANGLE/PlatformZeroG.cmake),
+# so there it waits for the compositor. Windows builds ANGLE anyway (its GL).
+if (WIN32)
+    WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE ${_zerog_full_web})
+else ()
+    WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE OFF)
+endif ()
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY PRIVATE ${_zerog_full_web})
 # The WebAssembly JIT tiers default to the FTL setting, not to ENABLE_WEBASSEMBLY:
 # left on without WebAssembly they pull Wasm types into B3 and fail to compile.
@@ -133,7 +140,9 @@ WEBKIT_OPTION_END()
 set(ENABLE_WEBCORE ON)
 set(ENABLE_WEBKIT_LEGACY OFF)
 set(ENABLE_WEBKIT OFF)
-set(ENABLE_WEBINSPECTORUI OFF)
+# The Web Inspector's frontend (dev and debug): built into a resource directory,
+# which port/embedding packs with tools/assets.py and compiles in.
+set(ENABLE_WEBINSPECTORUI ${_zerog_inspector})
 set(ENABLE_WEBGPU OFF)
 set(ENABLE_API_TESTS OFF)
 

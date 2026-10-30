@@ -74,7 +74,16 @@ public:
     // <input type=file>: answer with the chosen paths, or nullopt to cancel; the
     // answer may come later. The default cancels.
     virtual void runOpenPanel(const WebCore::FileChooserSettings&, CompletionHandler<void(std::optional<Vector<String>>&&)>&& completionHandler) { completionHandler(std::nullopt); }
+    // The Web Inspector (dev and debug profiles, inspector/InspectorZeroG.h).
+    // Opening it: create a view of `session` for its frontend, owned and shown by
+    // the embedder, and return it; null opens nothing. The frontend closing
+    // itself: destroy that view. The embedder may also destroy it at any time.
+    virtual View* createInspectorView(Session&) { return nullptr; }
+    virtual void closeInspectorView(View&) { }
+    virtual void bringInspectorViewToFront(View&) { }
 };
+
+class ViewInspector;
 
 class View {
     WTF_MAKE_NONCOPYABLE(View);
@@ -172,6 +181,15 @@ public:
     // Number of pixels painted by the last published frame, for tests.
     uint64_t lastPaintedArea() const { return m_lastPaintedArea; }
 
+    // The Web Inspector of the page; null in profiles without it.
+    ViewInspector* inspector() const { return m_inspector.get(); }
+    // Opens the inspector's frontend (ViewClient::createInspectorView). False
+    // without the inspector, or when the embedder shows none.
+    bool showInspector();
+    // Called first thing in the destructor (the inspector's frontend view tells
+    // the inspector it is going).
+    void setWillDestroyCallback(Function<void()>&& callback) { m_willDestroy = WTF::move(callback); }
+
     // From ChromeClientZeroG.
     void invalidate(const WebCore::IntRect& rootViewRect);
     void setNeedsRenderingUpdate() { m_needsRenderingUpdate = true; }
@@ -206,6 +224,8 @@ private:
     Vector<Ref<Download>> m_downloads;
     WebCore::PlatformCursorType m_cursor { WebCore::PlatformCursorType::Pointer };
     Function<void(WebCore::PlatformCursorType)> m_cursorChanged;
+    Function<void()> m_willDestroy;
+    std::unique_ptr<ViewInspector> m_inspector;
 };
 
 } // namespace ZeroG

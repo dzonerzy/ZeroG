@@ -25,9 +25,11 @@ static int check(const char *what, int ok)
     return ok;
 }
 
-int main(void)
+/* argv[1]: the engine's ICU data profile ("minimal", the default, or "full"). */
+int main(int argc, char **argv)
 {
     int ok = 1;
+    int fullData = argc > 1 && !strcmp(argv[1], "full");
 
     /* Host ICU: stock data, every locale available. */
     UChar text[] = { 'z', 'e', 'r', 'o', 'g', 0 };
@@ -39,7 +41,8 @@ int main(void)
     ok &= check("host mi_malloc is the host's", p && host_mi_malloc_calls == 1);
     free(p);
 
-    /* Engine: its own ICU with the minimal data, its own allocator. */
+    /* Engine: its own ICU with its own data (minimal: no Swahili), its own
+       allocator. */
     JSGlobalContextRef ctx = JSGlobalContextCreate(NULL);
     JSStringRef source = JSStringCreateWithUTF8CString(
         "[new Intl.DateTimeFormat('it', {month: 'long', timeZone: 'UTC'}).format(0),"
@@ -53,7 +56,8 @@ int main(void)
         JSStringRelease(str);
     }
     printf("      engine: %s\n", buf);
-    ok &= check("engine ICU uses its own minimal data", strcmp(buf, "gennaio|it") == 0);
+    ok &= check(fullData ? "engine ICU uses its own full data" : "engine ICU uses its own minimal data",
+                strcmp(buf, fullData ? "gennaio|sw,it" : "gennaio|it") == 0);
     ok &= check("engine did not call the host's mi_malloc", host_mi_malloc_calls == 1);
     JSGlobalContextRelease(ctx);
 

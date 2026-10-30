@@ -219,6 +219,9 @@ Session& sessionForFrame(WebCore::LocalFrame*);
 // http and https over curl (LoaderCurl.cpp). Certificates are set up once,
 // before the first TLS connection (WebSockets included).
 void initializeCertificates();
+// Root certificates trusted on top of the system's (PEM, any number); returns how
+// many were read. Process-wide, thread-safe.
+size_t addTrustedCertificates(std::span<const uint8_t> pem);
 Ref<LoadTask> createNetworkTask(WebCore::ResourceLoader&);
 Ref<LoadTask> createNetworkTask(Download&, Session&, const WebCore::ResourceRequest&);
 bool loadNetworkResourceSynchronously(Session&, const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);

@@ -36,6 +36,7 @@
 #include "FrameLoaderClientZeroG.h"
 
 #include "View.h"
+#include "inspector/InspectorZeroG.h"
 #include "loader/Download.h"
 #include "loader/Loader.h"
 #include <WebCore/Color.h>
@@ -159,11 +160,19 @@ private:
 
     void dispatchDidReceiveTitle(const StringWithDirection& title) final
     {
-        if (m_view && isMainFrame())
-            m_view->client().titleChanged(title.string);
+        if (!m_view || !isMainFrame())
+            return;
+        m_view->client().titleChanged(title.string);
+        if (auto* inspector = m_view->inspector())
+            inspector->pageChanged();
     }
 
-    void dispatchDidCommitLoad(const std::optional<BackForwardCacheCommitData>&) final { }
+    void dispatchDidCommitLoad(const std::optional<BackForwardCacheCommitData>&) final
+    {
+        // The remote inspector lists the page by its title and URL.
+        if (auto* inspector = m_view && isMainFrame() ? m_view->inspector() : nullptr)
+            inspector->pageChanged();
+    }
 
     void dispatchDidFailProvisionalLoad(const ResourceError& error, WillContinueLoading, WillInternallyHandleFailure) final
     {

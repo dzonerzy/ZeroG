@@ -309,8 +309,13 @@ private:
             didFail(WTF::move(*error));
     }
 
-    void didFail(CurlStreamID, CURLcode errorCode, CertificateInfo&&) final
+    void didFail(CurlStreamID, CURLcode errorCode, CertificateInfo&& certificate) final
     {
+        if (errorCode == CURLE_PEER_FAILED_VERIFICATION) {
+            auto reason = certificate.verificationErrorDescription();
+            didFail(makeString("WebSocket network error: certificate not trusted"_s, reason.isEmpty() ? ""_s : ": "_s, reason));
+            return;
+        }
         didFail(makeString("WebSocket network error: "_s, String::fromLatin1(curl_easy_strerror(errorCode)), " (curl error "_s, static_cast<unsigned>(errorCode), ')'));
     }
 

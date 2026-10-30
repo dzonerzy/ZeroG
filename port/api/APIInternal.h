@@ -68,6 +68,8 @@ struct zg_runtime {
     zg_runtime_config config { };
     std::vector<zg_context*> contexts;
     std::vector<zg_window*> windows;
+    // The Web Inspector's windows (zg_view_show_inspector): the engine's own.
+    std::vector<std::unique_ptr<ZeroG::Window>> inspectorWindows;
     std::atomic<bool> quit { false }; // zg_runtime_quit, from any thread
     zg_native_handle wakeUpHandle { 0 };
 };

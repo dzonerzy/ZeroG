@@ -276,7 +276,9 @@ static void *serve(void *argument)
                 break;
         }
         request[length] = 0;
-        if (strstr(request, "Authorization: Basic dXNlcjpzZWNyZXQ="))
+        if (!strncmp(request, "GET /dev ", 9))
+            reply = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 64\r\nConnection: close\r\n\r\n<title>dev</title><script>window.devSum = App.add(1, 2)</script>";
+        else if (strstr(request, "Authorization: Basic dXNlcjpzZWNyZXQ="))
             reply = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 30\r\nConnection: close\r\n\r\n<title>signed in</title>hello!";
         else
             reply = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"api\"\r\nContent-Type: text/html\r\nContent-Length: 22\r\nConnection: close\r\n\r\n<title>denied</title>!";
@@ -589,6 +591,8 @@ int main(int argc, char **argv)
         CHECK(zg_context_register_scheme(context, "app", onNativeScheme, NULL) == ZG_ERROR_ALREADY_EXISTS, "a file scheme has no handler: %s", zg_last_error());
         CHECK(zg_context_register_scheme(context, "native", onNativeScheme, NULL) == ZG_OK, "register native://");
         CHECK(zg_context_register_scheme(context, "https", onNativeScheme, NULL) == ZG_ERROR_INVALID_ARGUMENT, "built-in schemes are refused: %s", zg_last_error());
+        // Trusting a certificate over HTTPS is in tests/render/loader.cpp.
+        CHECK(zg_runtime_add_ca_certificates(runtime, "junk", 4) == ZG_ERROR_INVALID_ARGUMENT, "data without a PEM certificate is refused: %s", zg_last_error());
         CHECK(zg_context_add_file(context, "native", "/x", "x", 1, NULL, NULL, NULL) == ZG_ERROR_ALREADY_EXISTS, "a handler scheme serves no files: %s", zg_last_error());
 
         callbacks.load_finished = onLoadFinished;
@@ -690,6 +694,40 @@ int main(int argc, char **argv)
             callbacks.navigation_blocked = NULL;
             callbacks.auth_challenge = NULL;
             zg_view_set_callbacks(view, &callbacks);
+
+            /* The dev server: trusted (navigation, bindings) by the dev and debug
+               profiles only; the others ignore dev_server_url. */
+            {
+                char devServer[64];
+                zg_context_config devConfig = { sizeof devConfig };
+                zg_view_callbacks devCallbacks = { sizeof devCallbacks };
+                zg_context *devContext;
+                zg_view *devView;
+                int devProfile = !strcmp(version.profile, "dev") || !strcmp(version.profile, "debug");
+                snprintf(devServer, sizeof devServer, "http://127.0.0.1:%d", serverPort);
+                snprintf(url, sizeof url, "%s/dev", devServer);
+                devConfig.dev_server_url = devServer;
+                devContext = zg_context_create(runtime, &devConfig);
+                devView = zg_view_create(devContext, &viewConfig);
+                devCallbacks.load_finished = onLoadFinished;
+                zg_view_set_callbacks(devView, &devCallbacks);
+                zg_view_bind(devView, "App.add", add, NULL);
+                loads = loadsFinished;
+                zg_view_load_url(devView, url);
+                if (devProfile)
+                    CHECK(waitForLoad(devView, loads) && !strcmp(evaluate(devView, "window.devSum"), "3"),
+                        "profile %s: the dev server's page loads and calls bindings: %s", version.profile, evaluate(devView, "window.devSum"));
+                else {
+                    for (i = 0; i < 100; ++i) {
+                        sleepMilliseconds(5);
+                        frame(devView);
+                    }
+                    CHECK(loadsFinished == loads && !strstr(evaluate(devView, "location.href"), "/dev"),
+                        "profile %s: dev_server_url is ignored, its page blocked: %s", version.profile, evaluate(devView, "location.href"));
+                }
+                zg_view_destroy(devView);
+                zg_context_destroy(devContext);
+            }
             closesocket_(listener);
         }
 
@@ -726,6 +764,11 @@ int main(int argc, char **argv)
                 "let frames = 0; (function tick() { if (++frames == 30) App.quit(); else requestAnimationFrame(tick); })();"
                 "</script></body>";
             zg_view_bind(zg_window_view(window), "App.quit", quit, NULL);
+            /* The Web Inspector, in a window of its own: dev and debug profiles. */
+            if (!strcmp(version.profile, "dev") || !strcmp(version.profile, "debug"))
+                CHECK(zg_view_show_inspector(zg_window_view(window)) == ZG_OK, "the Web Inspector opens: %s", zg_last_error());
+            else
+                CHECK(zg_view_show_inspector(zg_window_view(window)) == ZG_ERROR_UNSUPPORTED, "profile %s: no Web Inspector: %s", version.profile, zg_last_error());
             zg_view_load_html(zg_window_view(window), windowPage, sizeof windowPage - 1, NULL);
             CHECK(zg_runtime_run(runtime) == ZG_OK, "zg_runtime_run returns when a binding calls zg_runtime_quit");
             CHECK(!strcmp(evaluate(zg_window_view(window), "frames"), "30"), "the window ran 30 animation frames");

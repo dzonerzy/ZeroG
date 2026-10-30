@@ -24,6 +24,20 @@ Engine features of roadmap phases 3 and 4:
 - Drag and drop: `zg_view_drag` for drags from the host (files, text, URLs);
   window mode takes drops on the window; drags in the page (draggable elements,
   links, images, selections) and selecting text by dragging the mouse work.
+- Certificates: `zg_runtime_add_ca_certificates` trusts PEM root certificates
+  on top of the system's, on every OS (Windows too, where curl reads only the
+  system store). An untrusted certificate fails the load with "certificate not
+  trusted: <reason>" in `zg_last_error()`, for pages, fetches and wss.
+- Web Inspector (dev and debug profiles): `zg_view_show_inspector` opens it in a
+  window of its own (F12 and Ctrl+Shift+I in window mode);
+  `zg_runtime_config.inspector_port` starts the remote inspector's server on
+  127.0.0.1. `ZG_ERROR_UNSUPPORTED` in the other profiles.
+- Window mode with several windows: each window gets its own events. Before,
+  whichever window polled first took every window's events.
+- WebGL (standard, dev and debug profiles): `getContext('webgl')` returns null
+  until the compositor lands (compositing version 2); on Linux WebGL is not
+  built until then (it also needs ANGLE there). Before, these profiles did not
+  link on Windows nor configure on Linux.
 
 ## 0.2.0
 

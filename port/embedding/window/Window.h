@@ -15,6 +15,7 @@
 
 struct SDL_Window;
 struct SDL_Cursor;
+union SDL_Event;
 
 namespace WebCore {
 class GLContext;
@@ -53,6 +54,8 @@ public:
     void setTitle(const String&);
     void setSize(const WebCore::IntSize&); // logical pixels
     void setFullscreen(bool);
+    // Above the other windows, with the keyboard focus.
+    void raise();
     Seconds refreshInterval() const { return m_refreshInterval; }
     void* nativeHandle() const; // HWND, X11 Window, wl_surface*
 
@@ -68,7 +71,9 @@ public:
 
 private:
     Window(SDL_Window*, std::unique_ptr<View>&&, std::unique_ptr<WebCore::GLContext>&&, void* nativeWindow);
-    void handleEvents();
+    // SDL's queue is the process's: every window's events go to their window.
+    static void handleEvents();
+    void handleEvent(const SDL_Event&);
     WebCore::FloatPoint viewPoint(float x, float y) const;
     void updateCursor(WebCore::PlatformCursorType);
     static View::MouseButton mouseButton(uint8_t);

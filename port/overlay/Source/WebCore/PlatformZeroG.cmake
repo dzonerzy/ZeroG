@@ -33,6 +33,7 @@ list(APPEND WebCore_SOURCES
     editing/zerog/EditorZeroG.cpp
 
     platform/graphics/zerog/FontManagerZeroG.cpp
+    platform/graphics/zerog/GraphicsContextGLZeroG.cpp
     platform/graphics/zerog/GraphicsLayerZeroG.cpp
     platform/graphics/zerog/PlatformDisplayZeroG.cpp
     platform/zerog/DragDataZeroG.cpp

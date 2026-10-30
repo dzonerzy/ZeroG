@@ -38,6 +38,7 @@ run "value conversions" "$bin/ZeroGValuesTest"
 run "scripts, bytes, references and classes" "$bin/ZeroGBindingsTest"
 run "localStorage, sessionStorage and IndexedDB" "$bin/ZeroGStorageTest"
 run "clipboard, file chooser, drag and drop" "$bin/ZeroGHostTest"
+run "Web Inspector (dev and debug builds)" "$bin/ZeroGInspector"
 run "create and destroy cycles" xvfb-run -a "$bin/ZeroGLifecycleTest"
 for target in assets requests values; do
     run "fuzz corpus: $target" "$bin/ZeroGFuzz$(echo $target | sed 's/./\U&/')" /src/tests/fuzz/corpus/$target/*

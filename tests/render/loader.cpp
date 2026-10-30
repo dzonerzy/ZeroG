@@ -21,6 +21,7 @@
 #include "View.h"
 #include "loader/Download.h"
 #include "loader/HTTPCache.h"
+#include "loader/Loader.h"
 #include "loader/MemoryFS.h"
 #include <wtf/FileSystem.h>
 
@@ -39,6 +40,9 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 #include <zlib.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 
 using namespace WebCore;
 
@@ -145,10 +149,100 @@ int unusedPort()
     return ntohs(address.sin_port);
 }
 
+// One client of the server: plain, or TLS over the socket.
+struct Connection {
+    Socket socket;
+    SSL* ssl { nullptr };
+
+    int read(char* buffer, int size)
+    {
+        return ssl ? SSL_read(ssl, buffer, size) : static_cast<int>(recv(socket, buffer, size, 0));
+    }
+
+    void write(const std::string& data)
+    {
+        if (ssl)
+            SSL_write(ssl, data.data(), static_cast<int>(data.size()));
+        else
+            send(socket, data.data(), static_cast<int>(data.size()), 0);
+    }
+};
+
+// ---- A test certificate authority and a server certificate it signs ----
+
+struct TestCertificates {
+    std::string authorityPEM; // what the engine is told to trust
+    bssl::UniquePtr<X509> server;
+    bssl::UniquePtr<EVP_PKEY> serverKey;
+};
+
+bssl::UniquePtr<EVP_PKEY> generateKey()
+{
+    bssl::UniquePtr<EC_KEY> ec { EC_KEY_new_by_curve_name(NID_X9_62_prime256v1) };
+    EC_KEY_generate_key(ec.get());
+    bssl::UniquePtr<EVP_PKEY> key { EVP_PKEY_new() };
+    EVP_PKEY_assign_EC_KEY(key.get(), ec.release());
+    return key;
+}
+
+void addExtension(X509* certificate, X509* issuer, int nid, const char* value)
+{
+    X509V3_CTX context;
+    X509V3_set_ctx(&context, issuer, certificate, nullptr, nullptr, 0);
+    bssl::UniquePtr<X509_EXTENSION> extension { X509V3_EXT_nconf_nid(nullptr, &context, nid, value) };
+    X509_add_ext(certificate, extension.get(), -1);
+}
+
+bssl::UniquePtr<X509> makeCertificate(const char* commonName, EVP_PKEY* key, X509* issuer, EVP_PKEY* issuerKey, long serial)
+{
+    bssl::UniquePtr<X509> certificate { X509_new() };
+    X509_set_version(certificate.get(), X509_VERSION_3);
+    ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()), serial);
+    X509_gmtime_adj(X509_getm_notBefore(certificate.get()), -3600);
+    X509_gmtime_adj(X509_getm_notAfter(certificate.get()), 24 * 3600);
+    auto* name = X509_get_subject_name(certificate.get());
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, reinterpret_cast<const uint8_t*>(commonName), -1, -1, 0);
+    X509_set_issuer_name(certificate.get(), issuer ? X509_get_subject_name(issuer) : name);
+    X509_set_pubkey(certificate.get(), key);
+    auto* signer = issuer ? issuer : certificate.get();
+    if (!issuer) {
+        addExtension(certificate.get(), signer, NID_basic_constraints, "critical,CA:TRUE");
+        addExtension(certificate.get(), signer, NID_key_usage, "critical,keyCertSign,cRLSign");
+    } else {
+        addExtension(certificate.get(), signer, NID_basic_constraints, "critical,CA:FALSE");
+        addExtension(certificate.get(), signer, NID_ext_key_usage, "serverAuth");
+        addExtension(certificate.get(), signer, NID_subject_alt_name, "DNS:localhost,IP:127.0.0.1");
+    }
+    X509_sign(certificate.get(), issuer ? issuerKey : key, EVP_sha256());
+    return certificate;
+}
+
+TestCertificates makeTestCertificates()
+{
+    auto authorityKey = generateKey();
+    auto authority = makeCertificate("ZeroG Test CA", authorityKey.get(), nullptr, nullptr, 1);
+    TestCertificates certificates;
+    certificates.serverKey = generateKey();
+    certificates.server = makeCertificate("localhost", certificates.serverKey.get(), authority.get(), authorityKey.get(), 2);
+    bssl::UniquePtr<BIO> bio { BIO_new(BIO_s_mem()) };
+    PEM_write_bio_X509(bio.get(), authority.get());
+    const uint8_t* data;
+    size_t length;
+    BIO_mem_contents(bio.get(), &data, &length);
+    certificates.authorityPEM.assign(reinterpret_cast<const char*>(data), length);
+    return certificates;
+}
+
 class HTTPServer {
 public:
-    HTTPServer()
+    // With `certificates`: HTTPS (and wss) instead.
+    explicit HTTPServer(const TestCertificates* certificates = nullptr)
     {
+        if (certificates) {
+            m_tls.reset(SSL_CTX_new(TLS_server_method()));
+            SSL_CTX_use_certificate(m_tls.get(), certificates->server.get());
+            SSL_CTX_use_PrivateKey(m_tls.get(), certificates->serverKey.get());
+        }
 #if defined(_WIN32)
         WSADATA data;
         WSAStartup(MAKEWORD(2, 2), &data);
@@ -214,7 +308,18 @@ private:
             std::lock_guard lock { m_lock };
             m_open.push_back(client);
             m_connections.emplace_back([this, client] {
-                serve(client);
+                Connection connection { client };
+                bssl::UniquePtr<SSL> ssl;
+                if (m_tls) {
+                    ssl.reset(SSL_new(m_tls.get()));
+                    SSL_set_fd(ssl.get(), static_cast<int>(client));
+                    if (SSL_accept(ssl.get()) == 1) {
+                        connection.ssl = ssl.get();
+                        serve(connection);
+                        SSL_shutdown(ssl.get());
+                    }
+                } else
+                    serve(connection);
                 std::lock_guard lock { m_lock };
                 m_open.erase(std::find(m_open.begin(), m_open.end(), client));
                 closeSocket(client);
@@ -222,17 +327,20 @@ private:
         }
     }
 
-    void serve(Socket client)
+    void serve(Connection& client)
     {
         {
             std::string request;
             char buffer[4096];
             while (request.find("\r\n\r\n") == std::string::npos) {
-                auto received = recv(client, buffer, sizeof(buffer), 0);
+                auto received = client.read(buffer, sizeof(buffer));
                 if (received <= 0)
                     break;
                 request.append(buffer, received);
             }
+            // Closed first (a TLS client that refused the certificate).
+            if (request.find("\r\n\r\n") == std::string::npos)
+                return;
             if (request.find("\r\nUpgrade: websocket\r\n") != std::string::npos) {
                 ++m_requests;
                 webSocket(client, request);
@@ -244,7 +352,7 @@ private:
             if (headerEnd != std::string::npos && lengthHeader != std::string::npos && lengthHeader < headerEnd) {
                 size_t length = std::stoul(request.substr(lengthHeader + 18));
                 while (request.size() < headerEnd + 4 + length) {
-                    auto received = recv(client, buffer, sizeof(buffer), 0);
+                    auto received = client.read(buffer, sizeof(buffer));
                     if (received <= 0)
                         break;
                     request.append(buffer, received);
@@ -257,8 +365,7 @@ private:
                 std::lock_guard lock { m_lock };
                 ++m_hits[path];
             }
-            auto response = respond(path, request);
-            send(client, response.data(), static_cast<int>(response.size()), 0);
+            client.write(respond(path, request));
         }
     }
 
@@ -271,7 +378,7 @@ private:
         return request.substr(start, request.find("\r\n", start) - start);
     }
 
-    static void sendFrame(Socket client, uint8_t opCode, const std::string& payload)
+    static void sendFrame(Connection& client, uint8_t opCode, const std::string& payload)
     {
         std::string frame;
         frame += static_cast<char>(0x80 | opCode);
@@ -287,26 +394,25 @@ private:
                 frame += static_cast<char>(static_cast<uint64_t>(payload.size()) >> (8 * i));
         }
         frame += payload;
-        send(client, frame.data(), static_cast<int>(frame.size()), 0);
+        client.write(frame);
     }
 
     // An echo server: a welcome message with the handshake's cookies, then each
     // text message back as "echo: ...", binary as is, pings answered, and the
     // close handshake returned.
-    void webSocket(Socket client, const std::string& request)
+    void webSocket(Connection& client, const std::string& request)
     {
         auto pathStart = request.find(' ') + 1;
         auto path = request.substr(pathStart, request.find(' ', pathStart) - pathStart);
         if (path == "/ws-reject") {
-            auto rejected = response("403 Forbidden", "text/plain", "no");
-            send(client, rejected.data(), static_cast<int>(rejected.size()), 0);
+            client.write(response("403 Forbidden", "text/plain", "no"));
             return;
         }
         auto key = header(request, "Sec-WebSocket-Key");
-        SHA1 sha1;
+        WTF::SHA1 sha1; // not BoringSSL's SHA1()
         auto accepted = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
         sha1.addBytes(std::span { reinterpret_cast<const uint8_t*>(accepted.data()), accepted.size() });
-        SHA1::Digest digest;
+        WTF::SHA1::Digest digest;
         sha1.computeHash(digest);
         auto accept = base64EncodeToString(digest).utf8();
         std::string handshake = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
@@ -314,7 +420,7 @@ private:
         if (header(request, "Sec-WebSocket-Protocol").find("chat") != std::string::npos)
             handshake += "Sec-WebSocket-Protocol: chat\r\n";
         handshake += "Set-Cookie: fromsocket=4; Path=/\r\n\r\n";
-        send(client, handshake.data(), static_cast<int>(handshake.size()), 0);
+        client.write(handshake);
         sendFrame(client, 1, "welcome, cookies: " + header(request, "Cookie"));
 
         std::string data;
@@ -337,7 +443,7 @@ private:
                     if ((length < 126 || offset > 2) && data.size() >= offset + 4 + length)
                         break;
                 }
-                auto received = recv(client, buffer, sizeof(buffer), 0);
+                auto received = client.read(buffer, sizeof(buffer));
                 if (received <= 0)
                     return;
                 data.append(buffer, received);
@@ -449,6 +555,7 @@ private:
     std::atomic<int> m_requests { 0 };
     std::atomic<int> m_notModified { 0 };
     std::map<std::string, int> m_hits;
+    bssl::UniquePtr<SSL_CTX> m_tls;
 };
 
 // ---- The page ----
@@ -459,6 +566,7 @@ public:
     {
         finishedURL = url;
         loadFailed = !error.isNull();
+        lastError = error.localizedDescription();
         if (loadFailed)
             std::printf("     load of %s failed: %s (%s %d)\n", url.string().utf8().data(), error.localizedDescription().utf8().data(), error.domain().utf8().data(), error.errorCode());
         ++loads;
@@ -502,6 +610,7 @@ public:
     Vector<String> challenges;
     Deque<std::pair<String, String>> credentials;
     URL finishedURL;
+    String lastError;
     bool loadFailed { false };
     int loads { 0 };
 };
@@ -931,6 +1040,41 @@ int main()
         passed &= check(server.hits("/cache/big?12") == 1 && server.hits("/cache/big?1") == 2, "the newest entry stays, the oldest went: %d, %d requests",
             server.hits("/cache/big?12"), server.hits("/cache/big?1"));
         FileSystem::deleteNonEmptyDirectory(directory);
+    }
+
+    // HTTPS with a certificate authority the system does not know: refused,
+    // until the application trusts it.
+    {
+        auto certificates = makeTestCertificates();
+        HTTPServer secureServer { &certificates };
+        auto https = makeString("https://127.0.0.1:"_s, secureServer.port());
+        auto wss = makeString("wss://127.0.0.1:"_s, secureServer.port());
+        ZeroG::View::Configuration configuration;
+        configuration.session = session.copyRef();
+        auto view = ZeroG::View::create(WTF::move(configuration));
+        Client client;
+        view->setClient(&client);
+        int loads = client.loads;
+        view->loadURL(URL { makeString(https, "/page.html"_s) });
+        runUntil([&] { return client.loads > loads; });
+        passed &= check(client.loadFailed && !secureServer.hits("/page.html"), "an untrusted certificate is refused before the request is sent");
+        passed &= check(client.lastError.startsWith("certificate not trusted: "_s), "and said so: %s", client.lastError.utf8().data());
+        load(*view, client, makeString(http, "/page.html"_s));
+        auto refusedSocket = await(*view, makeString("new Promise(resolve => { const ws = new WebSocket('"_s, wss, "/echo');"
+            "ws.onopen = () => resolve('open'); ws.onerror = () => resolve('error'); })"_s));
+        passed &= check(refusedSocket == "error"_s, "wss:// with it too: %s", refusedSocket.utf8().data());
+
+        passed &= check(!ZeroG::addTrustedCertificates(bytes("not a certificate")), "data without a PEM certificate adds nothing");
+        auto added = ZeroG::addTrustedCertificates(std::span { reinterpret_cast<const uint8_t*>(certificates.authorityPEM.data()), certificates.authorityPEM.size() });
+        passed &= check(added == 1, "the test authority is trusted: %zu certificate(s)", added);
+        passed &= check(load(*view, client, makeString(https, "/page.html"_s)), "then the page loads over https");
+        passed &= check(view->evaluateScript("document.title"_s) == "From HTTP"_s, "its title: %s", view->evaluateScript("document.title"_s).utf8().data());
+        auto secureFetch = await(*view, "fetch('/api.json').then(r => r.json()).then(j => j.remote)"_s);
+        passed &= check(secureFetch == "true"_s, "and its subresources: %s", secureFetch.utf8().data());
+        auto secureSocket = await(*view, makeString("new Promise(resolve => { const ws = new WebSocket('"_s, wss, "/echo');"
+            "ws.onopen = () => ws.send('over tls'); ws.onmessage = e => { if (e.data.startsWith('echo')) { resolve(e.data); ws.close(); } };"
+            "ws.onerror = () => resolve('error'); })"_s));
+        passed &= check(secureSocket == "echo: over tls"_s, "and wss://: %s", secureSocket.utf8().data());
     }
 
     passed &= check(!released, "an external file stays while the file system lives");

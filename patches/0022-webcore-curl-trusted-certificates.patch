@@ -1,0 +1,110 @@
+diff --git a/Source/WebCore/platform/network/curl/CurlContext.cpp b/Source/WebCore/platform/network/curl/CurlContext.cpp
+index 17c6d594a9..4740605bc6 100644
+--- a/Source/WebCore/platform/network/curl/CurlContext.cpp
++++ b/Source/WebCore/platform/network/curl/CurlContext.cpp
+@@ -36,6 +36,7 @@
+ #include "HTTPHeaderMap.h"
+ #include <NetworkLoadMetrics.h>
+ #include <mutex>
++#include <openssl/ssl.h>
+ #include <wtf/FileSystem.h>
+ #include <wtf/MainThread.h>
+ #include <wtf/NeverDestroyed.h>
+@@ -366,6 +367,10 @@ CURLcode CurlHandle::willSetupSslCtx(void* sslCtx)
+     if (!sslCtx)
+         return CURLE_ABORTED_BY_CALLBACK;
+ 
++    // Every connection's context, after curl loaded the CA info into it (the
++    // native store on Windows).
++    CurlContext::singleton().sslHandle().addTrustedCertificatesToStore(SSL_CTX_get_cert_store(static_cast<SSL_CTX*>(sslCtx)));
++
+     if (!m_sslVerifier)
+         lazyInitialize(m_sslVerifier, makeUnique<CurlSSLVerifier>(sslCtx));
+ 
+diff --git a/Source/WebCore/platform/network/curl/CurlSSLHandle.cpp b/Source/WebCore/platform/network/curl/CurlSSLHandle.cpp
+index 6336ef4162..4793a18e47 100644
+--- a/Source/WebCore/platform/network/curl/CurlSSLHandle.cpp
++++ b/Source/WebCore/platform/network/curl/CurlSSLHandle.cpp
+@@ -30,6 +30,10 @@
+ #if USE(CURL)
+
++#include <openssl/err.h>
++#include <openssl/pem.h>
++#include <openssl/x509.h>
++
+ #if NEED_OPENSSL_THREAD_SUPPORT && OS(WINDOWS)
+ #include <wtf/Threading.h>
+ #endif
+
+@@ -61,6 +65,32 @@ void CurlSSLHandle::clearCACertInfo()
+     m_caCertInfo = std::monostate { };
+ }
+ 
++size_t CurlSSLHandle::addTrustedCertificates(std::span<const uint8_t> pem)
++{
++    auto* bio = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
++    if (!bio)
++        return 0;
++    size_t added = 0;
++    Locker locker { m_trustedCertificatesLock };
++    while (auto* certificate = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr)) {
++        m_trustedCertificates.append(certificate);
++        ++added;
++    }
++    // The end of the data reads as an error too.
++    ERR_clear_error();
++    BIO_free(bio);
++    return added;
++}
++
++void CurlSSLHandle::addTrustedCertificatesToStore(void* x509Store) const
++{
++    auto* store = static_cast<X509_STORE*>(x509Store);
++    Locker locker { m_trustedCertificatesLock };
++    for (auto* certificate : m_trustedCertificates)
++        X509_STORE_add_cert(store, static_cast<X509*>(certificate));
++    ERR_clear_error(); // already in the store
++}
++
+ #if NEED_OPENSSL_THREAD_SUPPORT
+ 
+ void CurlSSLHandle::ThreadSupport::setup()
+diff --git a/Source/WebCore/platform/network/curl/CurlSSLHandle.h b/Source/WebCore/platform/network/curl/CurlSSLHandle.h
+index 0708fd9999..ca0e21d209 100644
+--- a/Source/WebCore/platform/network/curl/CurlSSLHandle.h
++++ b/Source/WebCore/platform/network/curl/CurlSSLHandle.h
+@@ -28,9 +28,12 @@
+ 
+ #include "CertificateInfo.h"
+ #include <openssl/crypto.h>
++#include <span>
+ #include <wtf/HashMap.h>
+ #include <wtf/HashSet.h>
++#include <wtf/Lock.h>
+ #include <wtf/NeverDestroyed.h>
++#include <wtf/Vector.h>
+ #include <wtf/text/StringHash.h>
+ 
+ // all version of LibreSSL and OpenSSL prior to 1.1.0 need thread support
+@@ -67,6 +70,12 @@ public:
+     WEBCORE_EXPORT void setCACertData(CertificateInfo::Certificate&&);
+     WEBCORE_EXPORT void clearCACertInfo();
+ 
++    // Root certificates trusted on top of the CA info above (the system's), on
++    // every platform: added to each connection's store when curl sets it up.
++    // Returns how many PEM certificates were read; thread-safe.
++    WEBCORE_EXPORT size_t addTrustedCertificates(std::span<const uint8_t> pem);
++    void addTrustedCertificatesToStore(void* x509Store) const;
++
+ private:
+ #if NEED_OPENSSL_THREAD_SUPPORT
+     class ThreadSupport {
+@@ -101,6 +110,8 @@ private:
+     ASCIICString m_signatureAlgorithmsList;
+     ASCIICString m_ecCurves;
+     CACertInfo m_caCertInfo;
++    mutable Lock m_trustedCertificatesLock;
++    Vector<void*> m_trustedCertificates WTF_GUARDED_BY_LOCK(m_trustedCertificatesLock); // X509*
+ 
+     bool m_ignoreSSLErrors { false };
+ };

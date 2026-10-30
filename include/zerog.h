@@ -15,8 +15,8 @@
  *     thread. Calls from another thread fail with ZG_ERROR_WRONG_THREAD or do
  *     nothing. The exceptions are marked "any thread": zg_runtime_quit,
  *     zg_runtime_now_ms, zg_surface_acquire/release, settling a zg_promise,
- *     zg_ref_release, answering a zg_scheme_request, a zg_auth_challenge or a
- *     zg_file_chooser;
+ *     zg_ref_release, zg_runtime_add_ca_certificates, answering a
+ *     zg_scheme_request, a zg_auth_challenge or a zg_file_chooser;
  *     zg_last_error is per thread. Release callbacks (zg_context_add_file,
  *     zg_value_bytes_external) and the engine's own log messages may come on
  *     any thread.
@@ -163,6 +163,12 @@ typedef struct zg_runtime_config {
     zg_log_fn log;
     void *log_user;
     zg_log_level log_level;
+
+    /* Since 0.3, dev and debug profiles: a nonzero port starts the remote
+       inspector's server on 127.0.0.1 (reach it from another machine through a
+       tunnel), so a WebKit frontend elsewhere can inspect every view; a warning
+       in the log if it cannot listen. Ignored by the other profiles. */
+    unsigned inspector_port;
 } zg_runtime_config;
 
 /* Creates the process-wide runtime on the calling thread, which becomes the
@@ -208,6 +214,13 @@ typedef struct zg_memory_stats {
 
 ZG_API void zg_runtime_memory_stats(zg_runtime *rt, zg_memory_stats *out);
 ZG_API void zg_runtime_collect_garbage(zg_runtime *rt);
+
+/* Root certificates trusted for https and wss on top of the system's (Windows'
+   store, the distribution's CA bundle on Linux): a private CA, a development
+   server's. PEM, any number in one call; process-wide, for connections set up
+   from now on. ZG_ERROR_INVALID_ARGUMENT if none could be read. Any thread.
+   Since 0.3. */
+ZG_API zg_result zg_runtime_add_ca_certificates(zg_runtime *rt, const void *pem, size_t len);
 
 /* ---- Clipboard (0.3) ----
 
@@ -515,6 +528,16 @@ typedef struct zg_drag_data {
 /* Nonzero if the page accepts a drop there (for DROP: it took it). The data is
    read at ENTER (and at DROP if there was no ENTER). */
 ZG_API int zg_view_drag(zg_view *view, zg_drag_event event, float x, float y, const zg_drag_data *data);
+
+/* ---- Web Inspector (0.3; dev and debug profiles) ----
+
+   Opens the Web Inspector for the view's page in a window of its own, or brings
+   it to the front; in window mode F12 and Ctrl+Shift+I do the same. The
+   inspector's windows run in zg_runtime_run (and zg_runtime_update) and do not
+   count as the application's: closing them ends nothing. ZG_ERROR_UNSUPPORTED
+   in the minimal and standard profiles, ZG_ERROR_GPU if no window can be
+   created. */
+ZG_API zg_result zg_view_show_inspector(zg_view *view);
 
 /* ---- Callbacks from the engine to the host ---- */
 

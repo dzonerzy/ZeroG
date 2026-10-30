@@ -331,7 +331,8 @@ def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runt
     exe = out / "bin" / (f"{name}.exe" if IS_WINDOWS else name)
     if IS_WINDOWS:
         crt = "/MT" if args.port == "ZeroG" else "/MD"
-        system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib"]
+        # ws2_32: JavaScriptCore's remote inspector sockets (dev and debug profiles).
+        system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib", "ws2_32.lib"]
         fuse = ["-fuse-ld=lld"] if linker == "lld" else []
         objects = out / "linktest" / name
         objects.mkdir(parents=True, exist_ok=True)
@@ -386,11 +387,11 @@ def cmd_linktest(args):
     #    its own mi_malloc): no duplicate symbols, each side keeps its own.
     host = link_c(args, out, "zerog-host-conflicts", [tests / "host_conflicts.c"], [headers, include],
                   [bundle_path(out), *icu_archives(None)])
-    run([host])
+    run([host, icu_data])
     if IS_WINDOWS:
         host = link_c(args, out, "zerog-host-conflicts-msvc", [tests / "host_conflicts.c"],
                       [headers, include], [bundle_path(out), *icu_archives(None)], linker="link")
-        run([host])
+        run([host, icu_data])
 
     # 3. The C API test, a C program that sees only include/zerog.h, linked with the
     #    bundle and the system libraries it lists: the full engine, nothing else.

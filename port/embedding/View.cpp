@@ -5,6 +5,7 @@
 #include "clients/DragClientZeroG.h"
 #include "clients/EditorClientZeroG.h"
 #include "clients/FrameLoaderClientZeroG.h"
+#include "inspector/InspectorZeroG.h"
 #include "loader/Download.h"
 #include "loader/WebSocketChannelZeroG.h"
 #include <WebCore/FrameLoadRequest.h>
@@ -38,6 +39,7 @@
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
 #include <WebCore/PageConfiguration.h>
+#include <WebCore/PageInspectorController.h>
 #include <WebCore/Settings.h>
 #include <pal/SessionID.h>
 #include <wtf/HashMap.h>
@@ -78,6 +80,8 @@ static Ref<Page> createPage(View& view)
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     configuration.dragClient = makeUnique<DragClientZeroG>();
+    if (auto inspectorClient = ViewInspector::createBackendClient(view))
+        configuration.inspectorBackendClient = WTF::move(inspectorClient);
     return Page::create(WTF::move(configuration));
 }
 
@@ -135,6 +139,11 @@ View::View(Configuration&& configuration)
     frame->setView(frameView.copyRef());
     frame->init();
 
+    // The Web Inspector (its target is the page).
+    m_inspector = ViewInspector::create(*this);
+    if (m_inspector)
+        settings.setDeveloperExtrasEnabled(true);
+
     // A view is visible and active until the application says otherwise; hidden
     // pages have requestAnimationFrame and timers suspended. Needs the frame's
     // initial document.
@@ -149,6 +158,12 @@ ViewClient View::s_defaultClient;
 
 View::~View()
 {
+    if (auto willDestroy = std::exchange(m_willDestroy, nullptr))
+        willDestroy();
+    // Closes the frontend, if open, while the page is whole.
+    m_inspector = nullptr;
+    if (auto* inspectorClient = m_page->inspectorController().inspectorBackendClient(); inspectorClient && ViewInspector::isAvailable())
+        ViewInspector::detachBackendClient(*inspectorClient);
     for (auto& download : std::exchange(m_downloads, { }))
         download->detachFromView();
     viewsByPage().remove(m_page.ptr());
@@ -165,6 +180,11 @@ View::~View()
 void View::setClient(ViewClient* client)
 {
     m_client = client;
+}
+
+bool View::showInspector()
+{
+    return m_inspector && m_inspector->show();
 }
 
 void View::addDownload(Download& download)
@@ -272,6 +292,8 @@ bool View::render(MonotonicTime frameTime)
             FloatRect logicalRect { rect };
             logicalRect.scale(1 / m_scale);
             frameView->paint(context, enclosingIntRect(logicalRect));
+            if (m_inspector)
+                m_inspector->paintHighlight(context);
         }
         canvas.restore();
         m_lastPaintedArea += static_cast<uint64_t>(rect.width()) * rect.height();
