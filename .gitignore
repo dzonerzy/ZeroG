@@ -9,6 +9,8 @@
 /.zig-cache/
 *.pdb
 *.ilk
+# Written by the render tests in the directory they run from
+/first_render.png
 
 # Editors
 /.vs/
