@@ -1,0 +1,35 @@
+diff --git a/Source/JavaScriptCore/inspector/remote/socket/RemoteInspectorSocketEndpoint.cpp b/Source/JavaScriptCore/inspector/remote/socket/RemoteInspectorSocketEndpoint.cpp
+index 2ba7ebf66d..bc09339b72 100644
+--- a/Source/JavaScriptCore/inspector/remote/socket/RemoteInspectorSocketEndpoint.cpp
++++ b/Source/JavaScriptCore/inspector/remote/socket/RemoteInspectorSocketEndpoint.cpp
+@@ -223,13 +223,12 @@ void RemoteInspectorSocketEndpoint::disconnect(ConnectionID id)
+ {
+     Locker locker { m_connectionsLock };
+ 
+-    if (const auto& connection = m_listeners.get(id)) {
+-        m_listeners.remove(id);
++    // Taken out of the maps: the connection lives until its owner has been told.
++    if (auto connection = m_listeners.take(id)) {
+         Socket::close(connection->socket);
+         locker.unlockEarly();
+         connection->listener.didChangeStatus(*this, id, Listener::Status::Closed);
+-    } else if (const auto& connection = m_clients.get(id)) {
+-        m_clients.remove(id);
++    } else if (auto connection = m_clients.take(id)) {
+         Socket::close(connection->socket);
+         locker.unlockEarly();
+         connection->client.didClose(*this, id);
+@@ -293,10 +292,11 @@ void RemoteInspectorSocketEndpoint::recvIfEnabled(ConnectionID id)
+         }
+ 
+         Socket::close(connection->socket);
+-        m_clients.remove(id);
++        // Kept alive until its client has been told.
++        auto closed = m_clients.take(id);
+ 
+         locker.unlockEarly();
+-        connection->client.didClose(*this, id);
++        closed->client.didClose(*this, id);
+     }
+ }
+ 

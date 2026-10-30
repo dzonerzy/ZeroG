@@ -246,7 +246,10 @@ int main()
             if (static_cast<unsigned char>(character) < 0x20)
                 character = '.';
         }
-        passed &= check(listed, "a remote client gets the target list with the page: %s", received.c_str());
+        passed &= check(listed, "a remote client gets the target list with the page: %s", received.substr(0, 400).c_str());
+        // The backend's protocol comes first, so the remote frontend speaks this engine's.
+        passed &= check(received.find("\"event\":\"BackendCommands\",\"message\":\"\"") == std::string::npos && received.find("InspectorBackend") != std::string::npos,
+            "with the backend's protocol (%zu bytes received)", received.size());
     }
 
     // The inspected view goes with its inspector open: the frontend closes.

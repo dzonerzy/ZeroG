@@ -77,6 +77,12 @@ void initializeProcess(const ProcessOptions& options)
             }
             if (options.heapLimit)
                 JSC::Options::gcMaxHeapSize() = static_cast<unsigned>(std::min<size_t>(options.heapLimit, std::numeric_limits<unsigned>::max()));
+#if ASAN_ENABLED && OS(WINDOWS)
+            // AddressSanitizer maps its shadow memory on access violations, and
+            // WebAssembly's fault handler takes them first and crashes the process:
+            // WebAssembly checks its bounds explicitly instead.
+            JSC::Options::useWasmFaultSignalHandler() = false;
+#endif
         });
         JSC::initialize();
         WTF::initializeMainThread();

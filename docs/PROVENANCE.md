@@ -67,6 +67,7 @@ under `patches/` is listed here when it is created.
 | `port/embedding/loader/WebSocketChannelZeroG.*` | Upstream, derived from `Source/WebKit/WebProcess/Network/WebSocketChannel.cpp` (Apple) and `Source/WebKit/NetworkProcess/curl/WebSocketTaskCurl.cpp` (Sony) | BSD-2-Clause (Apple and Sony headers kept) |
 | `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |
 | `patches/0022-webcore-curl-trusted-certificates.patch` | Original, modifies `CurlSSLHandle.{h,cpp}` and `CurlContext.cpp` | Same as the modified files; upstream candidate |
+| `patches/0023-jsc-remote-inspector-socket-use-after-free.patch` | Original, modifies `RemoteInspectorSocketEndpoint.cpp` (a closed connection was used after its map freed it) | Same as the modified file; upstream candidate |
 | `port/embedding/inspector/{LegacyWebPageInspectorController,LegacyWebPageDebuggable}.*` | WebKitLegacy, copied from `Source/WebKitLegacy/WebCoreSupport`. Changes: `config.h`, the debuggable guarded by `ENABLE(REMOTE_INSPECTOR)` | BSD-2-Clause (Apple headers kept) |
 | `port/embedding/inspector/InspectorZeroG.*`, `tests/render/inspector.cpp` | Original; the local frontend follows WebKitLegacy's `mac/WebCoreSupport/WebInspectorClient.mm` | BSD-2-Clause |
 | `port/overlay/Source/WebCore/platform/graphics/zerog/GraphicsContextGLZeroG.cpp` | Original | BSD-2-Clause |

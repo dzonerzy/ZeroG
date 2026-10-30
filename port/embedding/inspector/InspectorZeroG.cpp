@@ -20,7 +20,12 @@
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "inspector/LegacyWebPageDebuggable.h"
+#include <JavaScriptCore/RemoteInspector.h>
 #include <JavaScriptCore/RemoteInspectorServer.h>
+#include <WebCore/ResourceRequest.h>
+#include <WebCore/ResourceResponse.h>
+#include <filesystem>
+#include <wtf/FileSystem.h>
 #endif
 
 // WebInspectorUI's resources, packed by tools/assets.py at build time.
@@ -320,9 +325,39 @@ Session& inspectorSession()
     return session.get();
 }
 
+#if ENABLE(REMOTE_INSPECTOR)
+// The protocol the backend speaks, for remote frontends (sent on connection).
+// The remote inspector reads it from a file: the compiled-in copy is written to
+// the temporary directory once, under a name that is the same on every run.
+static void provideBackendCommands()
+{
+    Ref files = MemoryFS::create();
+    if (!files->mountArchive("/"_s, std::span { zerog_inspector_resources, zerog_inspector_resources_len }))
+        return;
+    ResourceResponse response;
+    Vector<uint8_t> commands;
+    auto& handler = static_cast<SchemeHandler&>(files.get());
+    if (!handler.loadSynchronously(ResourceRequest { URL { "inspector://localhost/Protocol/InspectorBackendCommands.js"_s } }, response, commands) || commands.isEmpty())
+        return;
+    std::error_code error;
+    auto directory = std::filesystem::temp_directory_path(error);
+    if (error)
+        return;
+    auto utf8Path = (directory / "zerog-inspector-backend-commands.js").u8string();
+    auto path = String::fromUTF8(std::span<const char8_t> { utf8Path.data(), utf8Path.size() });
+    auto existing = FileSystem::readEntireFile(path);
+    if (!existing || existing->span().size() != commands.size() || !equalSpans(existing->span(), commands.span())) {
+        if (!FileSystem::overwriteEntireFile(path, commands.span()))
+            return;
+    }
+    Inspector::RemoteInspector::singleton().setBackendCommandsPath(path);
+}
+#endif
+
 bool startRemoteInspectorServer(const String& address, uint16_t port)
 {
 #if ENABLE(REMOTE_INSPECTOR)
+    provideBackendCommands();
     auto utf8 = address.utf8();
     return Inspector::RemoteInspectorServer::singleton().start(UTF8CStringView::unsafeFromUTF8(byteCast<char>(utf8.data())), port);
 #else

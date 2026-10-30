@@ -23,3 +23,4 @@
 0020-webcore-pasteboard-items-for-zerog.patch
 0021-webcore-drag-and-drop-for-zerog.patch
 0022-webcore-curl-trusted-certificates.patch
+0023-jsc-remote-inspector-socket-use-after-free.patch

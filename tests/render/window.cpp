@@ -65,6 +65,24 @@ bool runUntil(ZeroG::Window& window, Seconds timeout, const std::function<bool()
     return true;
 }
 
+// The test's window as SDL sees it. The desktop can minimize or cover a test
+// window (another application, "show desktop"); then the system gives it no
+// vsync and does not resize it until it is restored, which is not the engine's doing.
+SDL_Window* sdlWindow()
+{
+    int count = 0;
+    auto* windows = SDL_GetWindows(&count);
+    SDL_Window* window = windows && count ? windows[0] : nullptr;
+    SDL_free(windows);
+    return window;
+}
+
+bool hiddenByDesktop()
+{
+    auto* window = sdlWindow();
+    return window && (SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_OCCLUDED));
+}
+
 } // namespace
 
 int main()
@@ -87,8 +105,13 @@ int main()
     auto callbacks = parseInteger<uint64_t>(window->view().evaluateScript("callbacks"_s)).value_or(0);
     double rate = callbacks / elapsed.seconds();
     double refresh = 1 / window->refreshInterval().seconds();
-    ok &= check(rate <= refresh * 1.1 && rate >= refresh * 0.4, "rAF at the display's rate: %.0f per second at %.0f Hz", rate, refresh);
-    ok &= check(window->presentedFrames() >= 30 && window->presentedFrames() <= callbacks, "presented %u frames for the animation's changes", window->presentedFrames());
+    if (hiddenByDesktop()) {
+        // No vsync for a hidden window: the rate says nothing about the engine.
+        std::printf("     skipped: the desktop minimized or covered the window (rAF %.0f per second, %u frames)\n", rate, window->presentedFrames());
+    } else {
+        ok &= check(rate <= refresh * 1.1 && rate >= refresh * 0.4, "rAF at the display's rate: %.0f per second at %.0f Hz", rate, refresh);
+        ok &= check(window->presentedFrames() >= 30 && window->presentedFrames() <= callbacks, "presented %u frames for the animation's changes", window->presentedFrames());
+    }
 
     // The presented image against a CPU render, with the animation stopped.
     window->view().evaluateScript("step = () => { }; 0"_s);
@@ -156,10 +179,26 @@ int main()
     ok &= check(runUntil(*window, 2_s, [&] { return window->view().evaluateScript("field.value"_s) == "hi"_s; }),
         "click and typing reach the text field: '%s'", window->view().evaluateScript("field.value"_s).utf8().data());
 
-    // Resizing the window resizes the page.
+    // Resizing the window resizes the page. A minimized window is resized only
+    // once restored: restore it first if the desktop minimized it.
+    if (auto* sdl = sdlWindow(); sdl && (SDL_GetWindowFlags(sdl) & SDL_WINDOW_MINIMIZED)) {
+        std::printf("     the desktop minimized the window: restoring it\n");
+        SDL_RestoreWindow(sdl);
+        SDL_SyncWindow(sdl);
+    }
     window->setSize({ 500, 300 });
-    ok &= check(runUntil(*window, 5_s, [&] { return window->view().size() == IntSize(500, 300); }), "page resized with the window: %dx%d",
-        window->view().size().width(), window->view().size().height());
+    bool resized = runUntil(*window, 5_s, [&] { return window->view().size() == IntSize(500, 300); });
+    ok &= check(resized, "page resized with the window: %dx%d", window->view().size().width(), window->view().size().height());
+    if (!resized) {
+        // What SDL reports, to tell a resize it refused from one the view missed.
+        if (auto* sdl = sdlWindow()) {
+            int width = 0, height = 0, pixelWidth = 0, pixelHeight = 0;
+            SDL_GetWindowSize(sdl, &width, &height);
+            SDL_GetWindowSizeInPixels(sdl, &pixelWidth, &pixelHeight);
+            std::printf("     SDL: %dx%d (%dx%d pixels), flags 0x%llx\n", width, height, pixelWidth, pixelHeight,
+                static_cast<unsigned long long>(SDL_GetWindowFlags(sdl)));
+        }
+    }
     auto innerWidth = window->view().evaluateScript("innerWidth + 'x' + innerHeight"_s);
     ok &= check(innerWidth == "500x300"_s, "window.innerWidth/innerHeight: %s", innerWidth.utf8().data());
 
