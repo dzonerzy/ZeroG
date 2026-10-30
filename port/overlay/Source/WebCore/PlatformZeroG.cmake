@@ -82,6 +82,13 @@ list(APPEND WebCore_SOURCES
 )
 
 if (WIN32)
+    # WebGL over ANGLE, which is the engine's EGL on Windows (patch 0027).
+    if (ENABLE_WEBGL)
+        list(APPEND WebCore_SOURCES
+            platform/graphics/angle/PlatformDisplayANGLE.cpp
+            platform/graphics/egl/GraphicsContextGLEGL.cpp
+        )
+    endif ()
     list(APPEND WebCore_SOURCES
         platform/network/win/CurlSSLHandleWin.cpp
 

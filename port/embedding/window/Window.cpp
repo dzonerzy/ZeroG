@@ -208,6 +208,21 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
         eglSwapInterval(eglGetCurrentDisplay(), interval);
         glGenFramebuffers(1, &m_readFramebuffer);
     }
+    {
+        int width, height;
+        SDL_GetWindowSizeInPixels(m_window, &width, &height);
+        Locker locker { m_presentLock };
+        m_pixelSize = { width, height };
+    }
+    // A composited view's frames are presented on the compositor thread as it
+    // publishes them: the window's context becomes that thread's (one thread at
+    // a time may have it current).
+    if (auto* compositor = m_view->compositor()) {
+        m_presentContext->unmakeContextCurrent();
+        compositor->setPresenter([this] {
+            present();
+        });
+    }
     m_view->setCursorChangedCallback([this](PlatformCursorType type) {
         updateCursor(type);
     });
@@ -216,6 +231,9 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
 Window::~Window()
 {
     windows().remove(m_window);
+    // The window's context comes back to this thread.
+    if (auto* compositor = m_view->compositor())
+        compositor->setPresenter(nullptr);
     if (m_presentContext->makeContextCurrent() && m_readFramebuffer)
         glDeleteFramebuffers(1, &m_readFramebuffer);
     m_presentContext = nullptr;
@@ -330,10 +348,22 @@ void Window::updateSize()
     float scale = SDL_GetWindowDisplayScale(m_window);
     if (scale <= 0)
         scale = 1;
+    {
+        // The native window is resized where frames are presented, before a
+        // swap at the new size.
+        Locker locker { m_presentLock };
+        m_pixelSize = { width, height };
+        m_nativeWindowSize = { width, height };
+    }
+    if (!m_view->compositor()) {
+        // Presented here: the Wayland window takes its size now.
 #if !OS(WINDOWS)
-    if (isWayland() && m_nativeWindow)
-        WaylandEGL::singleton().resize(m_nativeWindow, width, height, 0, 0);
+        if (isWayland() && m_nativeWindow)
+            WaylandEGL::singleton().resize(m_nativeWindow, width, height, 0, 0);
 #endif
+        Locker locker { m_presentLock };
+        m_nativeWindowSize = { };
+    }
     m_view->setScale(scale);
     m_view->resize({ static_cast<int>(width / scale), static_cast<int>(height / scale) });
 }
@@ -571,25 +601,33 @@ bool Window::runOnce(std::optional<Seconds> maxWait)
     // frame that changed nothing on screen waits a whole refresh interval. The
     // interval also bounds the rate where swaps do not block (no vblank, as on
     // Xvfb).
-    // A composited view's frames come from the compositor thread, after
-    // render() and also without it (animations): each one is presented as it
-    // arrives.
+    // A composited view is presented on the compositor thread: here only
+    // rendering updates, at most one per refresh interval (a rendering update
+    // that changes nothing asks for no frame) and each once the previous frame
+    // is out (its swap waited for vsync there). The compositor's frames wake
+    // this loop.
     auto now = MonotonicTime::now();
     bool hasWork = m_view->hasPendingRenderingUpdate() || m_view->hasDamage();
-    bool composited = m_view->compositor();
-    if ((hasWork && now >= m_nextFrameTime) || (composited && m_view->surface().hasNewFrame())) {
-        bool rendered = hasWork && now >= m_nextFrameTime && m_view->render(now);
-        bool presented = (rendered || composited) && present();
-        if (hasWork || presented)
-            m_nextFrameTime = now + (presented ? m_refreshInterval * 0.9 : m_refreshInterval);
-        if (presented)
+    if (auto* compositor = m_view->compositor()) {
+        if (hasWork && now >= m_nextFrameTime && !compositor->isWaitingForFrame()) {
+            m_view->render(now);
+            // One interval after the previous one, not after now: the rate stays the display's.
+            m_nextFrameTime = std::max(now, m_nextFrameTime + m_refreshInterval);
+        }
+        hasWork = m_view->hasPendingRenderingUpdate() && !compositor->isWaitingForFrame();
+    } else if (hasWork && now >= m_nextFrameTime) {
+        bool presented = m_view->render(now) && present();
+        m_nextFrameTime = now + (presented ? m_refreshInterval * 0.9 : m_refreshInterval);
+        if (presented) {
+            didPresent();
             return !m_closed;
+        }
     }
 
     // Sleep until an event, engine work, or the next frame if one is wanted.
     now = MonotonicTime::now();
     auto wakeUp = maxWait ? now + *maxWait : MonotonicTime::infinity();
-    if (m_view->hasPendingRenderingUpdate() || m_view->hasDamage())
+    if (hasWork && (m_view->hasPendingRenderingUpdate() || m_view->hasDamage()))
         wakeUp = std::min(wakeUp, m_nextFrameTime);
     if (auto engineWork = RunLoop::mainSingleton().nextWakeUpTime())
         wakeUp = std::min(wakeUp, *engineWork);
@@ -618,7 +656,19 @@ bool Window::present()
         eglWaitSync(eglGetCurrentDisplay(), static_cast<EGLSync>(frame.fence), 0);
 
     int width, height;
-    SDL_GetWindowSizeInPixels(m_window, &width, &height);
+    IntSize nativeWindowSize;
+    {
+        Locker locker { m_presentLock };
+        width = m_pixelSize.width();
+        height = m_pixelSize.height();
+        nativeWindowSize = std::exchange(m_nativeWindowSize, { });
+    }
+#if !OS(WINDOWS)
+    if (!nativeWindowSize.isEmpty() && isWayland() && m_nativeWindow)
+        WaylandEGL::singleton().resize(m_nativeWindow, nativeWindowSize.width(), nativeWindowSize.height(), 0, 0);
+#else
+    UNUSED_VARIABLE(nativeWindowSize);
+#endif
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_readFramebuffer);
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, static_cast<GLuint>(reinterpret_cast<uintptr_t>(frame.texture)), 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -633,28 +683,44 @@ bool Window::present()
     int copyHeight = std::min<int>(frame.height, height);
     glBlitFramebuffer(0, 0, copyWidth, copyHeight, 0, height, copyWidth, height - copyHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-    if (std::exchange(m_captureRequested, false)) {
+    if (m_captureRequested.exchange(false)) {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
         Vector<uint8_t> bottomUp(static_cast<size_t>(width) * height * 4);
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, bottomUp.mutableSpan().data());
-        m_capture.resize(bottomUp.size());
+        Vector<uint8_t> capture(bottomUp.size());
         for (int y = 0; y < height; ++y)
-            std::memcpy(m_capture.mutableSpan().data() + static_cast<size_t>(y) * width * 4, bottomUp.span().data() + static_cast<size_t>(height - 1 - y) * width * 4, width * 4);
+            std::memcpy(capture.mutableSpan().data() + static_cast<size_t>(y) * width * 4, bottomUp.span().data() + static_cast<size_t>(height - 1 - y) * width * 4, width * 4);
+        Locker locker { m_presentLock };
+        m_capture = WTF::move(capture);
         m_captureSize = { width, height };
     }
 
     m_presentContext->swapBuffers();
-    m_lastPresent = MonotonicTime::now();
     ++m_presentedFrames;
-    if (!m_shown && m_showWhenPresented) {
-        SDL_ShowWindow(m_window);
-        m_shown = true;
+    // The window is shown with its first frame, by the engine thread (SDL's
+    // windows belong to it).
+    if (m_view->compositor()) {
+        if (m_presentedFrames == 1) {
+            callOnMainThread([sdlWindow = m_window] {
+                if (auto* window = windows().get(sdlWindow))
+                    window->didPresent();
+            });
+        }
     }
     return true;
 }
 
+void Window::didPresent()
+{
+    if (!m_shown && m_showWhenPresented) {
+        SDL_ShowWindow(m_window);
+        m_shown = true;
+    }
+}
+
 bool Window::takeCapture(Vector<uint8_t>& pixels, IntSize& size)
 {
+    Locker locker { m_presentLock };
     if (m_capture.isEmpty())
         return false;
     pixels = std::exchange(m_capture, { });

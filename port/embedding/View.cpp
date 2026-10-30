@@ -140,6 +140,11 @@ View::View(Configuration&& configuration)
     // The whole page in layers, as GTK and WPE run coordinated graphics: a
     // composited view paints nothing outside them.
     settings.setForceCompositingMode(!!m_compositor);
+    // WebGL draws into a layer of its own, which only the compositor shows
+    // (off in WebCore's defaults, on in WebKit2's).
+#if ENABLE(WEBGL)
+    settings.setWebGLEnabled(!!m_compositor);
+#endif
     page->setDeviceScaleFactor(m_scale);
 
     RefPtr frame = page->localMainFrame();

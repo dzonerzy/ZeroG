@@ -167,6 +167,45 @@ int main()
     } else
         ok &= check(false, "a still frame and the CPU reference (%d, %d)", readStill, !!expected);
 
+    // WebGL (standard, dev and debug builds): its drawing buffer is a layer the
+    // compositor shows.
+    {
+        auto webGLSurface = ZeroG::createGPUSurface(3);
+        auto webGLView = ZeroG::View::create({ { viewWidth, viewHeight }, 1, false, true, WTF::move(webGLSurface) });
+        // Why a context could not be created, as WebCore says it.
+        struct ConsoleClient final : public ZeroG::ViewClient {
+            void consoleMessage(JSC::MessageSource, JSC::MessageLevel, const String& message, unsigned, unsigned, const String&, const String&) final
+            {
+                std::printf("     console: %s\n", message.utf8().data());
+            }
+        } consoleClient;
+        webGLView->setClient(&consoleClient);
+        webGLView->loadHTML("<!DOCTYPE html><body style='margin: 0; background: white'><canvas id=c width=100 height=100></canvas><script>"
+            "c.addEventListener('webglcontextcreationerror', e => console.log('webglcontextcreationerror: ' + e.statusMessage));"
+            "const gl = c.getContext('webgl');"
+            "window.hasWebGL = !!gl;"
+            "if (gl) { gl.clearColor(0, 1, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); }"
+            "</script>"_s);
+        for (int i = 0; i < 20; ++i) {
+            ZeroG::runPendingWork();
+            webGLView->render(frameTime);
+            frameTime += 16_ms;
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        bool hasWebGL = webGLView->evaluateScript("String(window.hasWebGL)"_s) == "true"_s;
+        bool built = webGLView->evaluateScript("typeof WebGLRenderingContext"_s) == "function"_s;
+        if (!built)
+            ok &= check(!hasWebGL, "this build has no WebGL: no context");
+        else {
+            ok &= check(hasWebGL, "a WebGL context");
+            Vector<uint8_t> pixels;
+            bool read = acquireAndRead(*webGLView, pixels);
+            auto* center = read ? pixels.span().data() + (static_cast<size_t>(50) * viewWidth + 50) * 4 : nullptr;
+            ok &= check(center && center[0] < 30 && center[1] > 220 && center[2] < 30, "the WebGL canvas is composited: %d,%d,%d",
+                center ? center[0] : -1, center ? center[1] : -1, center ? center[2] : -1);
+        }
+    }
+
     std::printf(ok ? "PASS\n" : "FAILED\n");
     return ok ? 0 : 1;
 }

@@ -75,10 +75,9 @@ namespace ZeroG {
 class Surface;
 class View;
 
-class Compositor final : public WebCore::GraphicsLayerFactory, public WebCore::CoordinatedPlatformLayer::Client, public CanMakeCheckedPtr<Compositor> {
+class Compositor final : public WebCore::GraphicsLayerFactory, public WebCore::CoordinatedPlatformLayer::Client {
     WTF_MAKE_NONCOPYABLE(Compositor);
     WTF_MAKE_TZONE_ALLOCATED(Compositor);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Compositor);
 public:
     // Takes over the view's surface (a GPU one). Null, with the surface given
     // back, if the compositor thread gets no GL context.
@@ -113,6 +112,10 @@ public:
     // window mode). Animations are composited at this rate.
     void setFrameInterval(Seconds);
     void setTransparent(bool);
+    // Window mode: runs on the compositor thread after each frame is published
+    // (it presents it, and its swap may wait for vsync there). Null removes it,
+    // once any call in progress has returned.
+    void setPresenter(Function<void()>&&);
 
     // For tests: frames composited so far, any thread.
     unsigned compositedFrames() const { return m_compositedFrames; }
@@ -140,11 +143,15 @@ private:
     void updateRootLayer();
     void requestCompositionForRenderingUpdate();
 
-    // Compositor thread.
+    // Compositor thread. Work for it is plain tasks on its queue (no RunLoop
+    // timers: the thread outlives each compositor, and a timer may not be
+    // destroyed while its run loop goes on); tasks for a compositor that has gone
+    // find it out of the live set and do nothing.
     void renderLayerTree();
     void frameComplete();
     void scheduleUpdateLocked() WTF_REQUIRES_LOCK(m_stateLock);
-    void startRenderTimerLocked() WTF_REQUIRES_LOCK(m_stateLock);
+    void scheduleRenderLocked() WTF_REQUIRES_LOCK(m_stateLock);
+    void runOnCompositorThread(Function<void()>&&, Seconds delay = 0_s);
 
     View& m_view;
     std::unique_ptr<Surface> m_surface;
@@ -172,6 +179,7 @@ private:
     OptionSet<WebCore::CompositionReason> m_reasons WTF_GUARDED_BY_LOCK(m_stateLock);
     bool m_waitingForTiles WTF_GUARDED_BY_LOCK(m_stateLock) { false };
     bool m_notifyRenderingUpdate WTF_GUARDED_BY_LOCK(m_stateLock) { false };
+    bool m_renderScheduled WTF_GUARDED_BY_LOCK(m_stateLock) { false };
     Lock m_attributesLock;
     WebCore::IntSize m_physicalSize WTF_GUARDED_BY_LOCK(m_attributesLock);
     float m_scale WTF_GUARDED_BY_LOCK(m_attributesLock) { 1 };
@@ -180,9 +188,12 @@ private:
     std::atomic<unsigned> m_compositedFrames { 0 };
 
     // Compositor thread.
-    RunLoop::Timer m_renderTimer;
-    RunLoop::Timer m_frameTimer;
+    Function<void()> m_presenter;
     MonotonicTime m_lastFrameStart;
+    // A frame's completion is pending (one frame interval after it started);
+    // the generation tells a pending completion from one already done early.
+    bool m_framePending { false };
+    uint64_t m_frameGeneration { 0 };
 };
 
 } // namespace ZeroG

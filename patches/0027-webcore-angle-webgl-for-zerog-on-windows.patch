@@ -1,0 +1,87 @@
+diff --git a/Source/WebCore/platform/graphics/angle/GraphicsContextGLANGLE.cpp b/Source/WebCore/platform/graphics/angle/GraphicsContextGLANGLE.cpp
+index e8b03b554d..172a997bf1 100644
+--- a/Source/WebCore/platform/graphics/angle/GraphicsContextGLANGLE.cpp
++++ b/Source/WebCore/platform/graphics/angle/GraphicsContextGLANGLE.cpp
+@@ -1065,14 +1065,14 @@ void GraphicsContextGLANGLE::compileShader(PlatformGLObject shader)
+     if (!makeContextCurrent())
+         return;
+ 
+-#if !PLATFORM(WIN)
++#if !PLATFORM(WIN) && !(PLATFORM(ZEROG) && OS(WINDOWS))
+     // We need the ANGLE_texture_rectangle extension to support IOSurface
+     // backbuffers, but we don't want it exposed to WebGL user shaders.
+     // Temporarily disable it during shader compilation.
+     GL_Disable(GL_TEXTURE_RECTANGLE_ANGLE);
+ #endif
+     GL_CompileShader(shader);
+-#if !PLATFORM(WIN)
++#if !PLATFORM(WIN) && !(PLATFORM(ZEROG) && OS(WINDOWS))
+     GL_Enable(GL_TEXTURE_RECTANGLE_ANGLE);
+ #endif
+ }
+diff --git a/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp b/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp
+index 100e61c99f..abf2c0e111 100644
+--- a/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp
++++ b/Source/WebCore/platform/graphics/angle/PlatformDisplayANGLE.cpp
+@@ -29,7 +29,8 @@ namespace WebCore {
+ 
+ EGLDisplay PlatformDisplay::angleEGLDisplay() const
+ {
+-#if PLATFORM(WIN)
++    // ANGLE is the platform's EGL there: the display is the ANGLE display.
++#if PLATFORM(WIN) || (PLATFORM(ZEROG) && OS(WINDOWS))
+     return eglDisplay();
+ #else
+     if (m_angleEGLDisplay != EGL_NO_DISPLAY)
+@@ -69,7 +70,7 @@ EGLDisplay PlatformDisplay::angleEGLDisplay() const
+ 
+ EGLContext PlatformDisplay::angleSharingGLContext()
+ {
+-#if PLATFORM(WIN)
++#if PLATFORM(WIN) || (PLATFORM(ZEROG) && OS(WINDOWS))
+     return sharingGLContext()->platformContext();
+ #else
+     ASSERT(m_angleEGLDisplay != EGL_NO_DISPLAY);
+diff --git a/Source/WebCore/platform/graphics/egl/GraphicsContextGLEGL.cpp b/Source/WebCore/platform/graphics/egl/GraphicsContextGLEGL.cpp
+index 24ac596ad8..fbe586bcde 100644
+--- a/Source/WebCore/platform/graphics/egl/GraphicsContextGLEGL.cpp
++++ b/Source/WebCore/platform/graphics/egl/GraphicsContextGLEGL.cpp
+@@ -87,13 +87,13 @@ GraphicsContextGLANGLE::~GraphicsContextGLANGLE()
+             bool result = EGL_DestroySync(m_displayObj, sync);
+             ASSERT_UNUSED(result, !!result);
+         }
+-#if PLATFORM(WIN)
++#if PLATFORM(WIN) || (PLATFORM(ZEROG) && OS(WINDOWS))
+         EGL_MakeCurrent(m_displayObj, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+ #endif
+         EGL_DestroyContext(m_displayObj, m_contextObj);
+     }
+ 
+-#if !PLATFORM(WIN)
++#if !PLATFORM(WIN) && !(PLATFORM(ZEROG) && OS(WINDOWS))
+     if (m_angleSharingContextObj)
+         EGL_DestroyContext(m_displayObj, m_angleSharingContextObj);
+ 
+@@ -305,8 +305,11 @@ bool GraphicsContextGLEGL::platformInitializeContext()
+     eglContextAttributes.append(EGL_CONTEXT_BIND_GENERATES_RESOURCE_CHROMIUM);
+     eglContextAttributes.append(EGL_FALSE);
+ #if USE(COORDINATED_GRAPHICS)
+-    eglContextAttributes.append(EGL_CONTEXT_VIRTUALIZATION_GROUP_ANGLE);
+-    eglContextAttributes.append(0);
++    // Not every backend has it (D3D11 does not): asking anyway fails the context.
++    if (GLContext::isExtensionSupported(displayExtensions, "EGL_ANGLE_context_virtualization")) {
++        eglContextAttributes.append(EGL_CONTEXT_VIRTUALIZATION_GROUP_ANGLE);
++        eglContextAttributes.append(0);
++    }
+ #endif
+ 
+     if (WTF::contains(unsafeSpan(displayExtensions), "EGL_ANGLE_power_preference"_span)) {
+@@ -317,7 +320,7 @@ bool GraphicsContextGLEGL::platformInitializeContext()
+     }
+     eglContextAttributes.append(EGL_NONE);
+ 
+-#if PLATFORM(WIN)
++#if PLATFORM(WIN) || (PLATFORM(ZEROG) && OS(WINDOWS))
+     m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, sharedDisplay.angleSharingGLContext(), eglContextAttributes.span().data());
+ #else
+     m_angleSharingContextObj = sharedDisplay.angleSharingGLContext();

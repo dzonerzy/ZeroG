@@ -7,7 +7,9 @@
 
 #include "View.h"
 #include <array>
+#include <atomic>
 #include <memory>
+#include <wtf/Lock.h>
 #include <optional>
 #include <wtf/Seconds.h>
 #include <wtf/Vector.h>
@@ -64,7 +66,7 @@ public:
     void showOpenDialog(const WebCore::FileChooserSettings&, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
 
     // Tests: frames presented so far, and the contents of the next presented frame
-    // (RGBA8, rows top to bottom) read back before the swap.
+    // (RGBA8, rows top to bottom) read back before the swap. Any thread.
     unsigned presentedFrames() const { return m_presentedFrames; }
     void captureNextFrame() { m_captureRequested = true; }
     bool takeCapture(Vector<uint8_t>& pixels, WebCore::IntSize& size);
@@ -79,24 +81,31 @@ private:
     static View::MouseButton mouseButton(uint8_t);
     static View::MouseButton pressedButton(uint32_t);
     void updateSize();
+    // Presents the surface's newest frame with the window's context: on the
+    // compositor thread for a composited view (the swap's vsync wait is there),
+    // else on the engine thread.
     bool present();
+    void didPresent();
 
     SDL_Window* m_window { nullptr };
     std::unique_ptr<View> m_view;
     std::unique_ptr<WebCore::GLContext> m_presentContext;
     void* m_nativeWindow { nullptr }; // the EGL native window (wl_egl_window* on Wayland)
     unsigned m_readFramebuffer { 0 };
-    MonotonicTime m_lastPresent;
     MonotonicTime m_nextFrameTime;
     Seconds m_refreshInterval { 1_s / 60 };
-    unsigned m_presentedFrames { 0 };
+    std::atomic<unsigned> m_presentedFrames { 0 };
     bool m_closed { false };
     bool m_shown { false };
     bool m_showWhenPresented { true };
-    bool m_captureRequested { false };
-    Vector<uint8_t> m_capture;
+    // Set by the engine thread, read where frames are presented.
+    Lock m_presentLock;
+    WebCore::IntSize m_pixelSize WTF_GUARDED_BY_LOCK(m_presentLock);
+    WebCore::IntSize m_nativeWindowSize WTF_GUARDED_BY_LOCK(m_presentLock); // Wayland: applied before a swap
+    std::atomic<bool> m_captureRequested { false };
+    Vector<uint8_t> m_capture WTF_GUARDED_BY_LOCK(m_presentLock);
+    WebCore::IntSize m_captureSize WTF_GUARDED_BY_LOCK(m_presentLock);
     std::array<SDL_Cursor*, 32> m_cursors { }; // by SDL_SystemCursor
-    WebCore::IntSize m_captureSize;
     // Files and text dropped on the window: SDL sends them one by one, then
     // DROP_COMPLETE; the page gets the drop then.
     View::DragItems m_drop;

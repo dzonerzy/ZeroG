@@ -48,6 +48,7 @@
 #include <WebCore/SkiaCompositingLayer.h>
 #include <WebCore/TransformationMatrix.h>
 #include <wtf/MainThread.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
@@ -60,6 +61,31 @@ namespace ZeroG {
 using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Compositor);
+
+// One compositor thread for every view of the runtime, with one Skia GL context:
+// GL is then used from as few threads as possible (ANGLE's D3D11 backend shares
+// one device context between all GL contexts, which threads drawing at once
+// corrupt even under its share-context lock). A window's swap waits for vsync
+// there, which other views' frames wait behind at most once per refresh.
+static WorkQueue& compositorQueue()
+{
+    static NeverDestroyed<Ref<WorkQueue>> queue = WorkQueue::create("ZeroG compositor"_s);
+    return queue.get();
+}
+
+// Engine thread: the compositors alive, so that the last one gives the compositor
+// thread's GL state back.
+static unsigned s_compositorCount;
+
+// Compositor thread: the compositors its tasks may still run for.
+static HashSet<Compositor*>& liveCompositors()
+{
+    static NeverDestroyed<HashSet<Compositor*>> compositors;
+    return compositors;
+}
+
+// Frame generations, unique across compositors (one may reuse another's address).
+static std::atomic<uint64_t> s_frameGenerations;
 
 std::unique_ptr<Compositor> Compositor::create(View& view, std::unique_ptr<Surface>& surface)
 {
@@ -74,10 +100,9 @@ Compositor::Compositor(View& view, std::unique_ptr<Surface>&& surface)
     : m_view(view)
     , m_surface(WTF::move(surface))
     , m_sceneState(WebKit::CoordinatedSceneState::create())
-    , m_workQueue(WorkQueue::create("ZeroG compositor"_s))
-    , m_renderTimer(m_workQueue->runLoop(), "ZeroG::Compositor::renderTimer"_s, this, &Compositor::renderLayerTree)
-    , m_frameTimer(m_workQueue->runLoop(), "ZeroG::Compositor::frameTimer"_s, this, &Compositor::frameComplete)
+    , m_workQueue(compositorQueue())
 {
+    ++s_compositorCount;
     auto& rootLayer = m_sceneState->rootLayer();
     Locker locker { rootLayer.lock() };
     rootLayer.setAnchorPoint(FloatPoint3D(0, 0, 0));
@@ -87,7 +112,9 @@ bool Compositor::initialize()
 {
     bool initialized = false;
     m_workQueue->dispatchSync([&] {
-        // The compositor thread's own context, in the engine's share group.
+        liveCompositors().add(this);
+        // The compositor thread's own context, in the engine's share group
+        // (created by the first compositor, shared by the others).
         auto* context = PlatformDisplay::sharedDisplay().skiaGLContext();
         if (!context || !context->makeContextCurrent())
             return;
@@ -113,17 +140,21 @@ Compositor::~Compositor()
         Locker locker { m_stateLock };
         m_state = State::Invalidated;
     }
-    m_workQueue->dispatchSync([this] {
-        m_renderTimer.stop();
-        m_frameTimer.stop();
+    bool last = !--s_compositorCount;
+    m_workQueue->dispatchSync([this, last] {
+        // Its tasks still queued do nothing from now on.
+        liveCompositors().remove(this);
         if (m_maxTextureSize) {
             m_sceneState->flushCompositingState(CompositionReason::RenderingUpdate);
             m_sceneState->invalidateCommittedLayers();
         }
         // The surface's GPU resources are this thread's context's.
         m_surface = nullptr;
+        if (!last)
+            return;
+        // The last compositor: the thread's context, and EGL's state for the
+        // thread (ANGLE keeps its device there), go too.
         PlatformDisplay::sharedDisplay().setSkiaGLContextForCurrentThread(nullptr);
-        // EGL's state for this thread (ANGLE keeps its device there) goes too.
         eglReleaseThread();
     });
     m_sceneState->invalidate();
@@ -205,6 +236,13 @@ void Compositor::setTransparent(bool transparent)
     m_transparent = transparent;
 }
 
+void Compositor::setPresenter(Function<void()>&& presenter)
+{
+    m_workQueue->dispatchSync([&] {
+        m_presenter = WTF::move(presenter);
+    });
+}
+
 void Compositor::requestCompositionForRenderingUpdate()
 {
     m_waitingForFrame = true;
@@ -218,11 +256,9 @@ void Compositor::requestCompositionForRenderingUpdate()
     // rendering update has its clock already (the application's, or vsync):
     // its frame does not wait for the previous one's interval to end.
     if (m_state == State::ScheduledWhileInProgress) {
-        m_workQueue->dispatch([this] {
-            if (m_frameTimer.isActive()) {
-                m_frameTimer.stop();
+        runOnCompositorThread([this] {
+            if (std::exchange(m_framePending, false))
                 frameComplete();
-            }
         });
     }
 }
@@ -283,11 +319,11 @@ void Compositor::scheduleUpdateLocked()
     case State::Idle:
         m_state = State::Scheduled;
         if (!m_waitingForTiles)
-            startRenderTimerLocked();
+            scheduleRenderLocked();
         break;
     case State::Scheduled:
         if (!m_waitingForTiles)
-            startRenderTimerLocked();
+            scheduleRenderLocked();
         break;
     case State::InProgress:
         m_state = State::ScheduledWhileInProgress;
@@ -298,19 +334,29 @@ void Compositor::scheduleUpdateLocked()
     }
 }
 
-void Compositor::startRenderTimerLocked()
+void Compositor::scheduleRenderLocked()
 {
-    // The timer belongs to the compositor thread's run loop.
-    if (m_workQueue->runLoop().isCurrent()) {
-        if (!m_renderTimer.isActive())
-            m_renderTimer.startOneShot(0_s);
+    if (std::exchange(m_renderScheduled, true))
         return;
-    }
-    m_workQueue->dispatch([this] {
-        Locker locker { m_stateLock };
-        if (m_state != State::Invalidated && !m_renderTimer.isActive())
-            m_renderTimer.startOneShot(0_s);
+    runOnCompositorThread([this] {
+        {
+            Locker locker { m_stateLock };
+            m_renderScheduled = false;
+        }
+        renderLayerTree();
     });
+}
+
+void Compositor::runOnCompositorThread(Function<void()>&& task, Seconds delay)
+{
+    auto run = [this, task = WTF::move(task)] mutable {
+        if (liveCompositors().contains(this))
+            task();
+    };
+    if (delay > 0_s)
+        m_workQueue->dispatchAfter(delay, WTF::move(run));
+    else
+        m_workQueue->dispatch(WTF::move(run));
 }
 
 // ---- Compositor thread ----
@@ -362,6 +408,12 @@ void Compositor::renderLayerTree()
             target->canvas.restore();
             m_surface->endFrame();
             ++m_compositedFrames;
+            if (m_presenter) {
+                m_presenter();
+                // The presenter used its window's context: Skia's again.
+                if (auto* context = PlatformDisplay::sharedDisplay().skiaGLContext())
+                    context->makeContextCurrent();
+            }
         }
         if (hasRunningAnimations)
             requestComposition(CompositionReason::Animation);
@@ -374,8 +426,16 @@ void Compositor::renderLayerTree()
         m_waitingForFrame = false;
     RunLoop::mainSingleton().dispatch([] { });
 
+    // The frame completes one frame interval after it started.
     auto remaining = Seconds(m_frameIntervalSeconds.load()) - (MonotonicTime::now() - m_lastFrameStart);
-    m_frameTimer.startOneShot(std::max(0_s, remaining));
+    m_framePending = true;
+    auto generation = m_frameGeneration = ++s_frameGenerations;
+    runOnCompositorThread([this, generation] {
+        if (m_framePending && m_frameGeneration == generation) {
+            m_framePending = false;
+            frameComplete();
+        }
+    }, std::max(0_s, remaining));
 }
 
 void Compositor::frameComplete()
@@ -392,7 +452,7 @@ void Compositor::frameComplete()
     case State::ScheduledWhileInProgress:
         m_state = State::Scheduled;
         if (!(m_reasons.containsOnly({ CompositionReason::RenderingUpdate }) && m_waitingForTiles))
-            startRenderTimerLocked();
+            scheduleRenderLocked();
         break;
     }
 }

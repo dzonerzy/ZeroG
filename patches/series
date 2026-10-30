@@ -27,3 +27,4 @@
 0024-webcore-coordinated-skia-without-epoxy.patch
 0025-webcore-coordinated-scrolling-only-with-async-scrolling.patch
 0026-webcore-skia-executor-per-context.patch
+0027-webcore-angle-webgl-for-zerog-on-windows.patch

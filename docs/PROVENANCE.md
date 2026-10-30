@@ -76,7 +76,8 @@ under `patches/` is listed here when it is created.
 | `patches/0023-jsc-remote-inspector-socket-use-after-free.patch` | Original, modifies `RemoteInspectorSocketEndpoint.cpp` (a closed connection was used after its map freed it) | Same as the modified file; upstream candidate |
 | `port/embedding/inspector/{LegacyWebPageInspectorController,LegacyWebPageDebuggable}.*` | WebKitLegacy, copied from `Source/WebKitLegacy/WebCoreSupport`. Changes: `config.h`, the debuggable guarded by `ENABLE(REMOTE_INSPECTOR)` | BSD-2-Clause (Apple headers kept) |
 | `port/embedding/inspector/InspectorZeroG.*`, `tests/render/inspector.cpp` | Original; the local frontend follows WebKitLegacy's `mac/WebCoreSupport/WebInspectorClient.mm` | BSD-2-Clause |
-| `port/overlay/Source/WebCore/platform/graphics/zerog/GraphicsContextGLZeroG.cpp` | Original | BSD-2-Clause |
+| `port/overlay/Source/WebCore/platform/graphics/zerog/GraphicsContextGLZeroG.cpp` | Upstream, derived from `platform/graphics/coordinated/GraphicsContextGLCoordinatedEpoxy.cpp` (ANGLE's entry points instead of libepoxy) | BSD-2-Clause (Igalia header kept) |
+| `patches/0027-webcore-angle-webgl-for-zerog-on-windows.patch` | Original, modifies `PlatformDisplayANGLE.cpp`, `GraphicsContextGLEGL.cpp` (ANGLE is the EGL on Windows, as for the Win port; context virtualization only where ANGLE has it) and `GraphicsContextGLANGLE.cpp` | Same as the modified files; upstream candidate |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from
 `Source/WebKitLegacy`, BSD), **Ultralight WebCore** (derived from
