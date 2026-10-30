@@ -35,6 +35,7 @@ run "window on X11" xvfb-run -a "$bin/ZeroGWindow"
 run "C API" xvfb-run -a "$bin/ZeroGAPITest"
 run "C API without a display" "$bin/ZeroGAPITest" --no-window
 run "value conversions" "$bin/ZeroGValuesTest"
+run "scripts, bytes, references and classes" "$bin/ZeroGBindingsTest"
 run "create and destroy cycles" xvfb-run -a "$bin/ZeroGLifecycleTest"
 for target in assets requests values; do
     run "fuzz corpus: $target" "$bin/ZeroGFuzz$(echo $target | sed 's/./\U&/')" /src/tests/fuzz/corpus/$target/*

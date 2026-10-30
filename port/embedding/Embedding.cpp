@@ -162,6 +162,16 @@ void loadHTML(Page& page, const String& html, const URL& baseURL)
     writer.insertDataSynchronously(html);
     writer.end();
 
+    // The document is the application's, as a committed load's would be (as
+    // FrameLoader::initForSynthesizedDocument does): otherwise the frame keeps
+    // showing its initial empty document, and every same-origin replacement
+    // reuses the previous page's window object and its globals.
+    auto& stateMachine = frame->loader().stateMachine();
+    if (stateMachine.stateForDebugging() == FrameLoaderStateMachine::DisplayingInitialEmptyDocument)
+        stateMachine.advanceTo(FrameLoaderStateMachine::DisplayingInitialEmptyDocumentPostCommit);
+    if (stateMachine.stateForDebugging() == FrameLoaderStateMachine::DisplayingInitialEmptyDocumentPostCommit)
+        stateMachine.advanceTo(FrameLoaderStateMachine::CommittedFirstRealLoad);
+
     if (RefPtr document = frame->document())
         document->updateLayoutIgnorePendingStylesheets();
 }

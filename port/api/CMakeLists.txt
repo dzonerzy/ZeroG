@@ -65,6 +65,14 @@ set(ZeroGValuesTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGValuesTest)
 WEBKIT_EXECUTABLE(ZeroGValuesTest)
 
+# Page scripts, binary values, references and classes (API 0.2).
+set(ZeroGBindingsTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/bindings_test.c)
+set(ZeroGBindingsTest_LIBRARIES ZeroGAPI)
+set(ZeroGBindingsTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGBindingsTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGBindingsTest)
+WEBKIT_EXECUTABLE(ZeroGBindingsTest)
+
 # Creating and destroying contexts, views and windows with work in flight.
 set(ZeroGLifecycleTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/lifecycle_test.c)
 set(ZeroGLifecycleTest_LIBRARIES ZeroGAPI)

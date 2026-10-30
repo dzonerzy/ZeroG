@@ -1,8 +1,9 @@
 /*
  * ZeroG — public C API.
  *
- * Version 0.1: the API of ZeroG.md ("API pubblica C"), frozen at the end of
- * roadmap phase 2. Within 0.x a minor version may add functions, enum values
+ * Version 0.2: the API of ZeroG.md ("API pubblica C"), frozen at the end of
+ * roadmap phase 2 (0.1), with binary values, references to JavaScript values,
+ * classes and page scripts added. Within 0.x a minor version may add functions, enum values
  * and fields at the end of config structs; nothing is renamed or removed and no
  * meaning changes without a new minor version and a note in docs/api-changes.md.
  *
@@ -12,10 +13,11 @@
  *     runtime (the runtime thread), and every callback is delivered on that
  *     thread. Calls from another thread fail with ZG_ERROR_WRONG_THREAD or do
  *     nothing. The exceptions are marked "any thread": zg_runtime_quit,
- *     zg_runtime_now_ms, zg_surface_acquire/release, zg_promise_resolve/reject,
- *     answering a zg_scheme_request or a zg_auth_challenge; zg_last_error is
- *     per thread. Release callbacks (zg_context_add_file) and the engine's own
- *     log messages may come on any thread.
+ *     zg_runtime_now_ms, zg_surface_acquire/release, settling a zg_promise,
+ *     zg_ref_release, answering a zg_scheme_request or a zg_auth_challenge;
+ *     zg_last_error is per thread. Release callbacks (zg_context_add_file,
+ *     zg_value_bytes_external) and the engine's own log messages may come on
+ *     any thread.
  *   - Config structs start with `size`; set it to sizeof(the struct) so new
  *     fields can be appended without breaking existing clients. Zeroed fields
  *     mean "default".
@@ -55,7 +57,7 @@ extern "C" {
 #endif
 
 #define ZG_VERSION_MAJOR 0
-#define ZG_VERSION_MINOR 1
+#define ZG_VERSION_MINOR 2
 #define ZG_VERSION_PATCH 0
 
 /* ------------------------------------------------------------------------ */
@@ -551,6 +553,13 @@ typedef zg_value *(*zg_bind_fn)(zg_call *call, void *user);
    again on every call. */
 ZG_API zg_result zg_view_bind(zg_view *view, const char *path, zg_bind_fn fn, void *user);
 
+/* A script run in every page that gets the bindings, under the same rules, after
+   the bindings and classes are installed and before the page's own scripts (a
+   framework's JavaScript runtime, for instance). Scripts run in the order they
+   were added; the current document runs it too, at once. Its errors reach
+   js_error. The source is copied. Since 0.2. */
+ZG_API zg_result zg_view_add_script(zg_view *view, const char *source, size_t len);
+
 /* Dispatch `new CustomEvent(name, { detail: JSON.parse(json_detail) })` on window. */
 ZG_API zg_result zg_view_emit(zg_view *view, const char *name,
                               const char *json_detail, size_t json_len);
@@ -560,7 +569,8 @@ ZG_API zg_result zg_view_emit(zg_view *view, const char *name,
 typedef enum zg_value_type {
     ZG_TYPE_UNDEFINED, ZG_TYPE_NULL, ZG_TYPE_BOOLEAN, ZG_TYPE_NUMBER,
     ZG_TYPE_BIGINT, ZG_TYPE_STRING, ZG_TYPE_ARRAY, ZG_TYPE_OBJECT,
-    ZG_TYPE_FUNCTION
+    ZG_TYPE_FUNCTION,
+    ZG_TYPE_BYTES        /* ArrayBuffer, typed array or DataView (0.2; OBJECT before) */
 } zg_value_type;
 
 /* Each reader converts as JavaScript does (Boolean(), Number(), String(),
@@ -579,10 +589,20 @@ ZG_API const char   *zg_call_arg_string(zg_call *call, size_t index, size_t *len
 /* JSON (arrays, objects); "null" for what JSON cannot hold (undefined,
    functions, BigInts, NaN). Lives until the callback returns. */
 ZG_API const char   *zg_call_arg_json(zg_call *call, size_t index, size_t *len);
+/* The bytes of an ArrayBuffer, typed array or DataView, in place (no copy), and
+   writable: a binding can fill a buffer the page passed. NULL for other values
+   and detached buffers. Valid until the callback returns or calls into
+   JavaScript (zg_view_evaluate, zg_ref_call), which could detach it. Since 0.2. */
+ZG_API void         *zg_call_arg_bytes(zg_call *call, size_t index, size_t *len);
 ZG_API zg_view      *zg_call_view(const zg_call *call);
 ZG_API const char   *zg_call_origin(const zg_call *call);
 
-/* ---- Return values (owned by the call; the engine frees them) ---- */
+/* ---- Return values ----
+
+   Made on `call`, a value belongs to the call and the engine frees it. Made with
+   `call` NULL (0.2), the caller owns it and frees it with zg_value_release: for
+   zg_ref_call arguments. zg_call_throw, zg_call_promise and zg_value_new_instance
+   need a call. */
 
 ZG_API zg_value *zg_value_null(zg_call *call);
 ZG_API zg_value *zg_value_bool(zg_call *call, int v);
@@ -591,6 +611,13 @@ ZG_API zg_value *zg_value_int64(zg_call *call, int64_t v); /* BigInt beyond 2^53
 ZG_API zg_value *zg_value_string(zg_call *call, const char *s);
 ZG_API zg_value *zg_value_string_len(zg_call *call, const char *s, size_t len);
 ZG_API zg_value *zg_value_json(zg_call *call, const char *json, size_t len);
+/* A Uint8Array over a new ArrayBuffer with a copy of the bytes. Since 0.2. */
+ZG_API zg_value *zg_value_bytes(zg_call *call, const void *data, size_t len);
+/* The same, without a copy: JavaScript uses `data` in place and `release(user)`
+   is called, on any thread, once the buffer is collected (or the value released
+   unused). The value can reach JavaScript once. Since 0.2. */
+ZG_API zg_value *zg_value_bytes_external(zg_call *call, void *data, size_t len,
+                                         zg_release_fn release, void *user);
 ZG_API zg_value *zg_call_throw(zg_call *call, const char *message);
 
 /* ---- Asynchronous calls ---- */
@@ -601,7 +628,65 @@ ZG_API zg_value *zg_call_throw(zg_call *call, const char *message);
    the view is gone. */
 ZG_API zg_value *zg_call_promise(zg_call *call, zg_promise **out);
 ZG_API void zg_promise_resolve(zg_promise *p, const char *json, size_t len); /* JSON value */
+/* Resolves with a Uint8Array of a copy of the bytes (taken at the call). 0.2. */
+ZG_API void zg_promise_resolve_bytes(zg_promise *p, const void *data, size_t len);
 ZG_API void zg_promise_reject(zg_promise *p, const char *message);
+
+/* ---- JavaScript values kept by the host (0.2) ----
+
+   A zg_ref keeps a value of a page alive past the call that received it: a
+   callback to call later, an object to hand back. It keeps the page's script
+   objects alive until released, like a pending promise. */
+typedef struct zg_ref zg_ref;
+
+/* Argument `index` as a new reference, owned by the caller; NULL if missing. */
+ZG_API zg_ref   *zg_call_arg_ref(zg_call *call, size_t index);
+/* Return the referenced value (the same object, not a copy). Only into the page
+   it came from: elsewhere the call throws. */
+ZG_API zg_value *zg_value_ref(zg_call *call, const zg_ref *ref);
+ZG_API zg_value_type zg_ref_type(const zg_ref *ref);
+/* Calls a referenced function with `this` undefined. `argv` are values made with
+   a NULL call (or on a call in progress); they are not consumed. `result` as for
+   zg_view_evaluate (may be NULL). ZG_ERROR_JS_EXCEPTION if it throws,
+   ZG_ERROR_NOT_FOUND once its page is gone. Runtime thread; may run from inside
+   a binding. */
+ZG_API zg_result zg_ref_call(zg_ref *fn, size_t argc, zg_value *const *argv, zg_value **result);
+/* Any thread. */
+ZG_API void      zg_ref_release(zg_ref *ref);
+
+/* ---- Classes (0.2) ----
+
+   A JavaScript class whose instances carry a native pointer. Installed with the
+   bindings (same rules, at a dotted path such as "App.File"), with its methods
+   and accessors on the prototype. `instanceof`, subclassing with `extends` and
+   Symbol.toStringTag (the last path segment) work as for built-in classes. */
+typedef struct zg_class zg_class;
+
+/* Called once for each native pointer set on an instance, on the runtime thread
+   after the instance was collected (not during the collection: it may call the
+   API), or when the view is destroyed. Not at process exit. */
+typedef void (*zg_finalize_fn)(void *native, void *user);
+
+/* `constructor` runs for `new`, with the new instance as `this`: it sets its
+   pointer with zg_call_set_native, or throws. NULL: `new` throws a TypeError and
+   instances come only from zg_value_new_instance. Calling the class without
+   `new` throws. Owned by the view; add methods and properties before the page
+   that uses them loads. */
+ZG_API zg_class *zg_view_define_class(zg_view *view, const char *path, zg_bind_fn constructor,
+                                      zg_finalize_fn finalize, void *user);
+/* Methods and accessors get the instance as `this`: zg_call_native gives its
+   pointer; called on another object they throw a TypeError. The setter gets the
+   new value as argument 0; a NULL setter makes the property read-only. */
+ZG_API zg_result zg_class_add_method(zg_class *cls, const char *name, zg_bind_fn fn, void *user);
+ZG_API zg_result zg_class_add_property(zg_class *cls, const char *name,
+                                       zg_bind_fn getter, zg_bind_fn setter, void *user);
+/* In a constructor: the instance's native pointer (once). */
+ZG_API zg_result zg_call_set_native(zg_call *call, void *native);
+/* In a constructor, method or accessor: the instance's native pointer. */
+ZG_API void     *zg_call_native(zg_call *call);
+/* A new instance of `cls` in the call's page, without running its constructor:
+   for bindings that return objects. */
+ZG_API zg_value *zg_value_new_instance(zg_call *call, zg_class *cls, void *native);
 
 /* ---- Values returned by zg_view_evaluate (caller-owned) ---- */
 

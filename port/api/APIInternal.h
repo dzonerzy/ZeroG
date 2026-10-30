@@ -38,6 +38,8 @@ struct zg_view {
     zg_surface surface;
     zg_view_callbacks callbacks { };
     std::vector<std::shared_ptr<zg_binding>> bindings;
+    std::vector<std::shared_ptr<zg_class>> classes; // Bindings.cpp
+    std::vector<std::string> scripts; // zg_view_add_script, in order
     std::unique_ptr<ViewClientAPI> client;
 };
 
@@ -86,6 +88,9 @@ bool isTrusted(zg_context&, const URL&, zg_trust_request, bool isMainFrame);
 
 // Bindings (Bindings.cpp).
 void installBindings(zg_view&, WebCore::LocalFrame&);
+// The view is going: its functions throw from now on, and the native pointers of
+// its classes' live instances are finalized.
+void detachBindings(zg_view&);
 JSGlobalContextRef globalContext(WebCore::LocalFrame&);
 
 } // namespace ZeroG::API

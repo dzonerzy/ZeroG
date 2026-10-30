@@ -1186,9 +1186,7 @@ void zg_view_destroy(zg_view* view)
     auto& views = view->context->views;
     views.erase(std::remove(views.begin(), views.end(), view), views.end());
     view->view->setClient(nullptr);
-    // Functions bound in pages still referenced elsewhere throw from now on.
-    for (auto& binding : view->bindings)
-        binding->view = nullptr;
+    detachBindings(*view);
     delete view;
 }
 
@@ -1419,8 +1417,7 @@ void zg_window_destroy(zg_window* window)
     auto& windows = window->context->runtime->windows;
     windows.erase(std::remove(windows.begin(), windows.end(), window), windows.end());
     window->view.view->setClient(nullptr);
-    for (auto& binding : window->view.bindings)
-        binding->view = nullptr;
+    detachBindings(window->view);
     delete window;
 }
 
