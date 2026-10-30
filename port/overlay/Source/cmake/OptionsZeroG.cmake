@@ -22,6 +22,14 @@ if (MSVC)
     # Single binary: static CRT. OptionsMSVC hard-sets MultiThreadedDLL, so this
     # must come after it; every dependency in the sysroot is built /MT as well.
     set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+    # OptionsMSVC gives every build full debug information (/Zi, /DEBUG). Each
+    # program linking the static engine (every test) then writes all its types
+    # into a PDB of its own, about 1.3 GB apiece. Outside the debug profile, line
+    # tables only (clang-cl takes the last of /Zi and this): stacks keep their
+    # functions and lines, the PDBs a fraction of the size.
+    if (NOT ZEROG_PROFILE STREQUAL "debug")
+        MSVC_ADD_COMPILE_OPTIONS(-gline-tables-only)
+    endif ()
 else ()
     set(CMAKE_C_VISIBILITY_PRESET hidden)
     set(CMAKE_CXX_VISIBILITY_PRESET hidden)
