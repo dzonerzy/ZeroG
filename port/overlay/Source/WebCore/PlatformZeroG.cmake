@@ -81,14 +81,16 @@ list(APPEND WebCore_SOURCES
     platform/playstation/PlatformScreenPlayStation.cpp
 )
 
+# WebGL over ANGLE: the engine's EGL on Windows (patch 0027); on Linux a second
+# EGL over the same driver, as GTK and WPE build it.
+if (ENABLE_WEBGL)
+    list(APPEND WebCore_SOURCES
+        platform/graphics/angle/PlatformDisplayANGLE.cpp
+        platform/graphics/egl/GraphicsContextGLEGL.cpp
+    )
+endif ()
+
 if (WIN32)
-    # WebGL over ANGLE, which is the engine's EGL on Windows (patch 0027).
-    if (ENABLE_WEBGL)
-        list(APPEND WebCore_SOURCES
-            platform/graphics/angle/PlatformDisplayANGLE.cpp
-            platform/graphics/egl/GraphicsContextGLEGL.cpp
-        )
-    endif ()
     list(APPEND WebCore_SOURCES
         platform/network/win/CurlSSLHandleWin.cpp
 

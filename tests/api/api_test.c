@@ -498,6 +498,8 @@ int main(int argc, char **argv)
     viewConfig.height = 200;
     view = zg_view_create(context, &viewConfig);
     CHECK(view != NULL && zg_view_surface(view) != NULL, "CPU view with a surface");
+    CHECK(zg_view_set_frame_rate(view, 144) == ZG_OK, "a texture-mode view takes the host's frame rate");
+    CHECK(zg_view_set_frame_rate(view, 0) == ZG_ERROR_INVALID_ARGUMENT, "a frame rate must be positive");
 
     callbacks.console = onConsole;
     callbacks.js_error = onJSError;
@@ -764,6 +766,7 @@ int main(int argc, char **argv)
                 "let frames = 0; (function tick() { if (++frames == 30) App.quit(); else requestAnimationFrame(tick); })();"
                 "</script></body>";
             zg_view_bind(zg_window_view(window), "App.quit", quit, NULL);
+            CHECK(zg_view_set_frame_rate(zg_window_view(window), 30) == ZG_ERROR_INVALID_ARGUMENT, "a window keeps its display's frame rate");
             /* The Web Inspector, in a window of its own: dev and debug profiles. */
             if (!strcmp(version.profile, "dev") || !strcmp(version.profile, "debug"))
                 CHECK(zg_view_show_inspector(zg_window_view(window)) == ZG_OK, "the Web Inspector opens: %s", zg_last_error());

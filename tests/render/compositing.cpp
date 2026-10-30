@@ -124,6 +124,15 @@ int main()
     unsigned animationFrames = view->compositor()->compositedFrames() - framesBefore;
     ok &= check(animationFrames >= 15, "CSS animations go on with no rendering update: %u frames in 500 ms", animationFrames);
 
+    // At the host display's rate (zg_view_set_frame_rate): 20 frames a second.
+    view->compositor()->setFrameInterval(1_s / 20);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    unsigned slowBefore = view->compositor()->compositedFrames();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    unsigned slowFrames = view->compositor()->compositedFrames() - slowBefore;
+    ok &= check(slowFrames >= 5 && slowFrames <= 12, "at 20 frames a second: %u frames in 500 ms", slowFrames);
+    view->compositor()->setFrameInterval(1_s / 60);
+
     // And they move: two frames apart differ where the slider is.
     Vector<uint8_t> first, second;
     bool readFirst = acquireAndRead(*view, first);

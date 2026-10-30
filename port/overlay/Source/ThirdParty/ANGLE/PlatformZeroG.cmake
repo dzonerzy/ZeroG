@@ -15,8 +15,42 @@ if (WIN32)
     # so calls alternating between threads must re-apply their context's state
     # (angle_force_context_check_every_call; it replaces the per-context mutex).
     list(APPEND ANGLE_DEFINITIONS ANGLE_ENABLE_SHARE_CONTEXT_LOCK=1 ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Only for WebGL (ZeroG.md, "Backend GPU per piattaforma"): the GL backend over
+    # the system's EGL, loaded at run time, as PlatformWPE.cmake builds it.
+    list(APPEND ANGLE_DEFINITIONS ANGLE_PLATFORM_LINUX EGL_NO_PLATFORM_SPECIFIC_TYPES)
+    include(linux.cmake)
+
+    list(APPEND ANGLE_SOURCES
+        ${gl_backend_sources}
+
+        ${angle_system_utils_sources_linux}
+        ${angle_system_utils_sources_posix}
+
+        ${angle_dma_buf_sources}
+
+        ${libangle_gl_egl_dl_sources}
+        ${libangle_gl_egl_sources}
+        ${libangle_gl_sources}
+
+        ${libangle_gpu_info_util_sources}
+        ${libangle_gpu_info_util_linux_sources}
+    )
+
+    list(APPEND ANGLE_DEFINITIONS
+        ANGLE_ENABLE_OPENGL
+        USE_SYSTEM_EGL
+    )
+
+    list(APPEND ANGLEGLESv2_LIBRARIES
+        ${CMAKE_DL_LIBS}
+        Threads::Threads
+    )
+
+    # WebCore calls ANGLE through its prefixed entry points (GL_*, EGL_*). The
+    # unprefixed gl* ones would be a second definition of the system GL's, which
+    # the engine itself draws with (port/gl, ZeroGGL).
+    set(libglesv2_sources "")
 else ()
-    # Linux and macOS build ANGLE only for WebGL in the standard profile (ZeroG.md,
-    # "Backend GPU per piattaforma"); its backends are not wired yet.
     message(FATAL_ERROR "ANGLE is not configured for ${CMAKE_SYSTEM_NAME} in the ZeroG port yet")
 endif ()

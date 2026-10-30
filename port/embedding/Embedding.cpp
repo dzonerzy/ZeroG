@@ -199,12 +199,15 @@ String evaluateScript(Page& page, const String& script)
     return result.toWTFString(globalObject);
 }
 
-bool initializeGPU(void* hostDisplay)
+bool initializeGPU(void* hostDisplay, int hostPlatform, void* hostNativeDisplay)
 {
     ASSERT(isMainThread());
     if (auto* display = PlatformDisplay::sharedDisplayIfExists())
         return (!hostDisplay || display->eglDisplay() == hostDisplay) && display->skiaGLContext();
-    auto display = PlatformDisplayZeroG::create(hostDisplay);
+    std::optional<PlatformDisplayZeroG::NativePlatform> hostNativePlatform;
+    if (hostNativeDisplay)
+        hostNativePlatform = PlatformDisplayZeroG::NativePlatform { hostPlatform, hostNativeDisplay };
+    auto display = PlatformDisplayZeroG::create(hostDisplay, hostNativePlatform);
     if (!display) {
         log(LogLevel::Warning, makeString("No GPU display, rendering on the CPU: "_s, String::fromLatin1(GLContext::lastErrorString())));
         return false;

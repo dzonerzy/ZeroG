@@ -138,6 +138,15 @@ int main()
     } else
         ok &= check(false, "CPU reference");
 
+    // WebGL on the window system's display (standard, dev and debug builds):
+    // ANGLE opens it too, and draws.
+    if (window->view().evaluateScript("typeof WebGLRenderingContext"_s) == "function"_s) {
+        auto pixel = window->view().evaluateScript("(() => { const gl = document.createElement('canvas').getContext('webgl');"
+            "if (!gl) return 'no context'; gl.clearColor(0, 1, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);"
+            "const p = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, p); return p.join(); })()"_s);
+        ok &= check(pixel == "0,255,0,255"_s, "WebGL draws in the window: %s", pixel.utf8().data());
+    }
+
     // Input through the window's own events: SDL events in, page effects out.
     window->view().evaluateScript("const field = document.createElement('input'); field.id = 'field';"
         "field.style.cssText = 'position: absolute; left: 20px; top: 150px; width: 150px; height: 25px';"

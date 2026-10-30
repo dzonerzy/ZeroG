@@ -6,6 +6,7 @@
 #include "APIInternal.h"
 
 #include "Embedding.h"
+#include "graphics/Compositor.h"
 #include "graphics/Surface.h"
 #include "inspector/InspectorZeroG.h"
 #include "window/ClipboardSDL.h"
@@ -34,6 +35,7 @@
 #include <WebCore/Page.h>
 #include <WebCore/SecurityOrigin.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
@@ -1540,6 +1542,20 @@ zg_result zg_view_render(zg_view* view, double frameTimeMilliseconds)
     if (view->window)
         return fail(ZG_ERROR_INVALID_ARGUMENT, "a window renders its view itself"_s);
     view->view->render(MonotonicTime::fromRawSeconds(frameTimeMilliseconds / 1000));
+    return ZG_OK;
+}
+
+zg_result zg_view_set_frame_rate(zg_view* view, double framesPerSecond)
+{
+    clearError();
+    if (!viewOrFail(view))
+        return t_lastError.empty() ? ZG_ERROR_INVALID_ARGUMENT : ZG_ERROR_WRONG_THREAD;
+    if (view->window)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "a window follows its display's refresh rate"_s);
+    if (!(framesPerSecond > 0) || !std::isfinite(framesPerSecond))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "the frame rate must be positive"_s);
+    if (auto* compositor = view->view->compositor())
+        compositor->setFrameInterval(1_s / framesPerSecond);
     return ZG_OK;
 }
 

@@ -23,33 +23,35 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// WebGL (the standard, dev and debug profiles build it, on Windows): upstream's
-// coordinated graphics context over ANGLE (GraphicsContextGLCoordinated, created by
+// WebGL (the standard, dev and debug profiles build it): upstream's coordinated
+// graphics context over ANGLE (GraphicsContextGLCoordinated, created by
 // platform/graphics/egl/GraphicsContextGLEGL.cpp), its drawing buffer shown as a
 // layer by the compositor. Upstream sets up the shared texture with libepoxy
-// only (GraphicsContextGLCoordinatedEpoxy.cpp); this is the same through ANGLE's
-// entry points, which on Windows are the engine's GL.
+// only (GraphicsContextGLCoordinatedEpoxy.cpp); this is the same through the
+// engine's GL: the system driver on Linux, where ANGLE runs over it, and ANGLE
+// itself on Windows.
 
 #include "config.h"
 #include "GraphicsContextGLCoordinated.h"
 
 #if ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && !USE(LIBEPOXY)
-#include "ANGLEHeaders.h"
+#include <GLES2/gl2.h>
 
 namespace WebCore {
 
 GCGLuint GraphicsContextGLCoordinated::setupCurrentTexture() const
 {
-    // The drawing buffer's texture, as ANGLE bound it.
+    // The drawing buffer's texture as the engine's GL sees it (on Linux the
+    // driver's ID, not ANGLE's), bound by ANGLE.
     GLint texture;
-    GL_GetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
 
     // The parameters the compositor samples it with, applied now: ANGLE caches
     // them until another call syncs the texture's state.
-    GL_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    GL_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    GL_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    GL_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     return texture;
 }
 

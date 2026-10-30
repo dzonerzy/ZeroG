@@ -100,14 +100,10 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE ON) # toDataURL, toBl
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_WOFF2 PRIVATE ON)
 
 # Functions per profile (ZeroG.md, "Funzioni da spegnere").
-# WebGL draws only once the compositor exists (GraphicsContextGLZeroG.cpp); on
-# Linux it also needs ANGLE, not wired yet (ThirdParty/ANGLE/PlatformZeroG.cmake),
-# so there it waits for the compositor. Windows builds ANGLE anyway (its GL).
-if (WIN32)
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE ${_zerog_full_web})
-else ()
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE OFF)
-endif ()
+# WebGL over ANGLE, composited as layers (GraphicsContextGLZeroG.cpp): ANGLE is
+# the GL on Windows; on Linux its GL backend runs over the system's EGL
+# (ThirdParty/ANGLE/PlatformZeroG.cmake), as GTK and WPE build it.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY PRIVATE ${_zerog_full_web})
 # The WebAssembly JIT tiers default to the FTL setting, not to ENABLE_WEBASSEMBLY:
 # left on without WebAssembly they pull Wasm types into B3 and fail to compile.
@@ -256,6 +252,8 @@ if (WIN32)
     # Khronos headers and ANGLE's export.h mark every EGL/GLES entry point dllimport.
     add_definitions(-DKHRONOS_STATIC -DANGLE_EXPORT=)
 else ()
+    # ANGLE only for WebGL, over the same driver (GTK and WPE do the same).
+    SET_AND_EXPOSE_TO_BUILD(USE_ANGLE ${ENABLE_WEBGL})
     find_path(EGL_INCLUDE_DIRS NAMES EGL/egl.h REQUIRED)
     # No EGL/GLES library at link time: ZeroGGL resolves the driver with dlopen.
     include("${ZEROG_SOURCE_DIR}/port/gl/GLLoader.cmake")

@@ -14,9 +14,11 @@
 
 namespace WebCore {
 
+using NativePlatform = PlatformDisplayZeroG::NativePlatform;
+
 #if OS(WINDOWS)
 
-static RefPtr<GLDisplay> createGLDisplay()
+static RefPtr<GLDisplay> createGLDisplay(std::optional<NativePlatform>&)
 {
     const EGLint attributes[] = {
         EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
@@ -32,8 +34,9 @@ static RefPtr<GLDisplay> createGLDisplay()
 // No window system is involved: Mesa's surfaceless platform, then an EGL device
 // (NVIDIA's headless path; hardware devices before software ones), then the
 // default display. ZEROG_EGL_PLATFORM=surfaceless|device|default forces one, for
-// tests and for systems where the first choice misbehaves.
-static RefPtr<GLDisplay> createGLDisplay()
+// tests and for systems where the first choice misbehaves. `platform` is set to
+// the one that was opened.
+static RefPtr<GLDisplay> createGLDisplay(std::optional<NativePlatform>& platform)
 {
     const char* extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
     if (!extensions)
@@ -49,8 +52,10 @@ static RefPtr<GLDisplay> createGLDisplay()
     auto eglQueryDeviceStringEXT = reinterpret_cast<PFNEGLQUERYDEVICESTRINGEXTPROC>(eglGetProcAddress("eglQueryDeviceStringEXT"));
 
     if (eglGetPlatformDisplayEXT && allowed("surfaceless") && GLContext::isExtensionSupported(extensions, "EGL_MESA_platform_surfaceless")) {
-        if (auto display = GLDisplay::create(eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr)))
+        if (auto display = GLDisplay::create(eglGetPlatformDisplayEXT(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr))) {
+            platform = NativePlatform { EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY };
             return display;
+        }
     }
 
     if (eglGetPlatformDisplayEXT && eglQueryDevicesEXT && allowed("device") && GLContext::isExtensionSupported(extensions, "EGL_EXT_platform_device")) {
@@ -65,8 +70,10 @@ static RefPtr<GLDisplay> createGLDisplay()
                 for (EGLint i = 0; i < count; ++i) {
                     if (isSoftware(devices[i]) != software)
                         continue;
-                    if (auto display = GLDisplay::create(eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, devices[i], nullptr)))
+                    if (auto display = GLDisplay::create(eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, devices[i], nullptr))) {
+                        platform = NativePlatform { EGL_PLATFORM_DEVICE_EXT, devices[i] };
                         return display;
+                    }
                 }
             }
         }
@@ -74,16 +81,18 @@ static RefPtr<GLDisplay> createGLDisplay()
 
     if (!allowed("default"))
         return nullptr;
+    platform = NativePlatform { 0, EGL_DEFAULT_DISPLAY };
     return GLDisplay::create(eglGetDisplay(EGL_DEFAULT_DISPLAY));
 }
 
 #endif
 
-std::unique_ptr<PlatformDisplayZeroG> PlatformDisplayZeroG::create(void* hostDisplay)
+std::unique_ptr<PlatformDisplayZeroG> PlatformDisplayZeroG::create(void* hostDisplay, std::optional<NativePlatform> hostPlatform)
 {
     // eglInitialize on a display the application already initialized only
     // returns its version; it is never terminated by the engine.
-    auto glDisplay = hostDisplay ? GLDisplay::create(static_cast<EGLDisplay>(hostDisplay)) : createGLDisplay();
+    std::optional<NativePlatform> platform = hostDisplay ? hostPlatform : std::nullopt;
+    auto glDisplay = hostDisplay ? GLDisplay::create(static_cast<EGLDisplay>(hostDisplay)) : createGLDisplay(platform);
     if (!glDisplay) {
         RELEASE_LOG_INFO(Compositing, "No GPU display available, rendering on the CPU: %s", GLContext::lastErrorString());
         return nullptr;
@@ -95,13 +104,22 @@ std::unique_ptr<PlatformDisplayZeroG> PlatformDisplayZeroG::create(void* hostDis
     EGLint pbufferConfigs = 0;
     eglChooseConfig(glDisplay->eglDisplay(), pbufferAttributes, nullptr, 0, &pbufferConfigs);
     auto type = pbufferConfigs > 0 ? Type::Surfaceless : Type::Default;
-    return std::unique_ptr<PlatformDisplayZeroG>(new PlatformDisplayZeroG(glDisplay.releaseNonNull(), type));
+    return std::unique_ptr<PlatformDisplayZeroG>(new PlatformDisplayZeroG(glDisplay.releaseNonNull(), type, platform));
 }
 
-PlatformDisplayZeroG::PlatformDisplayZeroG(Ref<GLDisplay>&& glDisplay, Type type)
+PlatformDisplayZeroG::PlatformDisplayZeroG(Ref<GLDisplay>&& glDisplay, Type type, std::optional<NativePlatform> platform)
     : PlatformDisplay(WTF::move(glDisplay))
     , m_type(type)
 {
+#if ENABLE(WEBGL) && !OS(WINDOWS)
+    // What PlatformDisplay::angleEGLDisplay opens; no platform, no WebGL.
+    if (platform) {
+        m_anglePlatform = platform->platform;
+        m_angleNativeDisplay = platform->display;
+    }
+#else
+    UNUSED_PARAM(platform);
+#endif
 }
 
 PlatformDisplayZeroG::~PlatformDisplayZeroG() = default;

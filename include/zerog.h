@@ -390,7 +390,8 @@ typedef struct zg_surface_config {
          already acquired through its keyed mutex.
        ZG_SURFACE_GL: the application's EGLDisplay (required); frames carry an
          EGLImage for glEGLImageTargetTexture2DOES and an EGLSync to eglWaitSync on.
-         Release frames with the context that used them current. */
+         Release frames with the context that used them current. Pages have no
+         WebGL on it (0.3): its ANGLE would have to open the same native display. */
     void *device;
     unsigned buffer_count; /* 2 or 3, 0 = 2 */
 } zg_surface_config;
@@ -462,6 +463,12 @@ ZG_API void zg_view_set_focus(zg_view *view, int focused);
    call it once per app frame.
    Window mode: the engine paces rendering from the display's vsync; do not call. */
 ZG_API zg_result zg_view_render(zg_view *view, double frame_time_ms);
+/* Texture mode (0.3): the refresh rate of the display the app shows the view on,
+   in frames per second (default 60). A GPU view's compositor produces the
+   frames of animations it runs by itself (see zg_view_render) at most at this
+   rate; a CPU view has none and ignores it. ZG_ERROR_INVALID_ARGUMENT for a rate
+   that is not positive, or for a window's view, which follows its display. */
+ZG_API zg_result zg_view_set_frame_rate(zg_view *view, double frames_per_second);
 
 /* Evaluate a script in the main frame. `result` may be NULL; otherwise the
    caller owns *result and frees it with zg_value_release. */

@@ -70,8 +70,10 @@ String evaluateScript(WebCore::Page&, const String& script);
 // Opens the GPU display Skia renders through (ANGLE on Windows, the system EGL
 // driver on Linux). Call after initializeProcess(), once; returns whether a GPU is
 // available. Without it every paint happens on the CPU. On Linux `hostDisplay`
-// may be the application's EGLDisplay, needed for GL texture-mode surfaces.
-bool initializeGPU(void* hostDisplay = nullptr);
+// may be the application's EGLDisplay, needed for GL texture-mode surfaces, and
+// `hostPlatform` with `hostNativeDisplay` how it was opened (eglGetPlatformDisplay's
+// first two arguments), which WebGL needs there; null when unknown.
+bool initializeGPU(void* hostDisplay = nullptr, int hostPlatform = 0, void* hostNativeDisplay = nullptr);
 
 // The GL_RENDERER string of Skia's GPU context, or a null string without a GPU.
 String gpuRenderer();

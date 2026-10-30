@@ -40,13 +40,17 @@ Engine features of roadmap phases 3 and 4:
   `zg_view_render` returns, rather than before; while the previous frame is
   still being composited the call does nothing. Window mode presents on the
   compositor thread: the engine thread no longer waits for vsync. CPU views are
-  unchanged.
+  unchanged. `zg_view_set_frame_rate` gives a texture-mode view the refresh
+  rate of the application's display (default 60), the rate at which these
+  animations produce frames; a window follows its display's.
 - Window mode with several windows: each window gets its own events. Before,
   whichever window polled first took every window's events.
-- WebGL (standard, dev and debug profiles, Windows): WebGL and WebGL 2 in GPU
-  views, their canvases composited as layers; CPU views have none. On Linux
-  WebGL is not built yet (it needs ANGLE there). Before, these profiles did not
-  link on Windows nor configure on Linux.
+- WebGL (standard, dev and debug profiles): WebGL and WebGL 2 in GPU views,
+  their canvases composited as layers; CPU views have none. On Linux ANGLE runs
+  over the system's EGL driver, on the display the engine opened or the
+  window's; a GL texture-mode view on the application's own EGLDisplay has no
+  WebGL, since the engine cannot tell how that display was opened. Before,
+  these profiles did not link on Windows nor configure on Linux.
 
 ## 0.2.0
 

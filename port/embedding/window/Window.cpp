@@ -89,10 +89,13 @@ bool isWayland()
 }
 #endif
 
-// The window system's EGL display (Linux) and the native window EGL draws into.
+// The window system's EGL display (Linux), the platform and native display it was
+// opened from, and the native window EGL draws into.
 struct NativeWindow {
     void* eglDisplay { nullptr }; // null: the engine's default display (ANGLE)
     void* window { nullptr };
+    int platform { 0 };
+    void* display { nullptr };
 };
 
 std::optional<NativeWindow> nativeWindow(SDL_Window* window)
@@ -114,13 +117,13 @@ std::optional<NativeWindow> nativeWindow(SDL_Window* window)
             return std::nullopt;
         int width, height;
         SDL_GetWindowSizeInPixels(window, &width, &height);
-        return NativeWindow { getPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR, display, nullptr), wayland.create(surface, width, height) };
+        return NativeWindow { getPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR, display, nullptr), wayland.create(surface, width, height), EGL_PLATFORM_WAYLAND_KHR, display };
     }
     void* display = SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
     auto xWindow = SDL_GetNumberProperty(properties, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
     if (!display || !xWindow)
         return std::nullopt;
-    return NativeWindow { getPlatformDisplay(EGL_PLATFORM_X11_KHR, display, nullptr), reinterpret_cast<void*>(static_cast<uintptr_t>(xWindow)) };
+    return NativeWindow { getPlatformDisplay(EGL_PLATFORM_X11_KHR, display, nullptr), reinterpret_cast<void*>(static_cast<uintptr_t>(xWindow)), EGL_PLATFORM_X11_KHR, display };
 #endif
 }
 
@@ -153,7 +156,7 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     auto native = nativeWindow(window);
     if (!native)
         return fail("no native window for EGL"_s, SDL_GetCurrentVideoDriver());
-    if (!initializeGPU(native->eglDisplay))
+    if (!initializeGPU(native->eglDisplay, native->platform, native->display))
         return fail("no GPU on the window system's display"_s, GLContext::lastErrorString());
 
     auto& display = PlatformDisplay::sharedDisplay();
