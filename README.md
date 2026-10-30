@@ -27,7 +27,7 @@ design against the pinned WebKit revision lives in [docs/verification](docs/veri
 | `include/zerog.h` | Public C API (`zg_*`) |
 | `port/overlay/` | New files added to the WebKit tree (`Options<Port>.cmake`, `Platform<Port>.cmake`, …), mirroring its layout |
 | `port/platform/` | Platform layer: GPU contexts for Skia, fonts, clipboard, cursor, IME, timers |
-| `port/embedding/` | Embedding layer: `Page`, `LocalFrame`, WebCore clients, resource loader |
+| `port/embedding/` | Embedding layer: process setup and `View` at the root; `clients/` (WebCore's clients), `loader/` (sessions, schemes and the app's files, curl, blobs, WebSockets, downloads, HTTP cache, fonts), `storage/` (Web storage, IndexedDB), `graphics/` (surfaces), `window/` (SDL window mode) |
 | `port/gl/` | Linux EGL/GLES loader: entry points generated from the Khronos headers, driver loaded with `dlopen` |
 | `tests/` | Link tests against the bundle, render tests, C API tests, fuzz targets and their corpus |
 | `port/api/` | C API implementation |

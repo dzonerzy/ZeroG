@@ -6,8 +6,8 @@
 #include "APIInternal.h"
 
 #include "Embedding.h"
-#include "KeyboardSDL.h"
-#include "Surface.h"
+#include "graphics/Surface.h"
+#include "window/KeyboardSDL.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSLock.h>

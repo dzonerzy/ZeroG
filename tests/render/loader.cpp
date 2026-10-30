@@ -17,11 +17,11 @@
 #endif
 
 #include "config.h"
-#include "Download.h"
 #include "Embedding.h"
-#include "HTTPCache.h"
-#include "MemoryFS.h"
 #include "View.h"
+#include "loader/Download.h"
+#include "loader/HTTPCache.h"
+#include "loader/MemoryFS.h"
 #include <wtf/FileSystem.h>
 
 #include <algorithm>

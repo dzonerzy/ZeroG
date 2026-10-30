@@ -1,11 +1,11 @@
 #include "config.h"
 #include "View.h"
 
-#include "ChromeClientZeroG.h"
-#include "Download.h"
-#include "EditorClientZeroG.h"
-#include "FrameLoaderClientZeroG.h"
-#include "WebSocketChannelZeroG.h"
+#include "clients/ChromeClientZeroG.h"
+#include "clients/EditorClientZeroG.h"
+#include "clients/FrameLoaderClientZeroG.h"
+#include "loader/Download.h"
+#include "loader/WebSocketChannelZeroG.h"
 #include <WebCore/FrameLoadRequest.h>
 #include <WebCore/FrameTree.h>
 #include <WebCore/FrameLoader.h>

@@ -29,7 +29,7 @@
 #include "config.h"
 #include "PlatformStrategiesZeroG.h"
 
-#include "Loader.h"
+#include "loader/Loader.h"
 #include <WebCore/BlobRegistry.h>
 #include <WebCore/LoaderStrategy.h>
 #include <WebCore/MediaStrategy.h>

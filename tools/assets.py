@@ -7,7 +7,7 @@ Each file is stored as is or zlib-compressed, whichever is smaller; formats that
 are already compressed (images, fonts, media, archives) are stored. The engine
 inflates a compressed entry on its first request and keeps the result.
 
-Format (little-endian), read by port/embedding/MemoryFS.cpp:
+Format (little-endian), read by port/embedding/loader/MemoryFS.cpp:
     header, 16 bytes:  "ZGAR", u32 version (1), u32 file count, u32 flags (0)
     entries, 40 bytes each:
         u64 data offset, u64 stored size, u64 size,

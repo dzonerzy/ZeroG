@@ -4,26 +4,36 @@
 set(ZeroGEmbedding_LIBRARY_TYPE STATIC)
 
 set(ZeroGEmbedding_SOURCES
-    ChromeClientZeroG.cpp
-    Download.cpp
-    EditorClientZeroG.cpp
+    # The embedding entry points: process setup, the view.
     Embedding.cpp
-    Fonts.cpp
-    FrameLoaderClientZeroG.cpp
-    HTTPCache.cpp
-    KeyboardSDL.cpp
-    Loader.cpp
-    LoaderBlob.cpp
-    LoaderCurl.cpp
-    MemoryFS.cpp
     PlatformStrategiesZeroG.cpp
-    Surface.cpp
-    SurfaceGL.cpp
     View.cpp
-    WebSocketChannelZeroG.cpp
-    Window.cpp
 
-    # Web storage and IndexedDB, in process (from WebKitLegacy; storage/).
+    # WebCore's clients for a ZeroG page.
+    clients/ChromeClientZeroG.cpp
+    clients/EditorClientZeroG.cpp
+    clients/FrameLoaderClientZeroG.cpp
+
+    # Surfaces the view renders into.
+    graphics/Surface.cpp
+    graphics/SurfaceGL.cpp
+
+    # Resource loading: sessions, schemes and the app's files, http over curl,
+    # blobs, WebSockets, downloads, the HTTP disk cache, registered fonts.
+    loader/Download.cpp
+    loader/Fonts.cpp
+    loader/HTTPCache.cpp
+    loader/Loader.cpp
+    loader/LoaderBlob.cpp
+    loader/LoaderCurl.cpp
+    loader/MemoryFS.cpp
+    loader/WebSocketChannelZeroG.cpp
+
+    # Window mode (SDL3).
+    window/KeyboardSDL.cpp
+    window/Window.cpp
+
+    # Web storage and IndexedDB, in process (from WebKitLegacy).
     storage/DatabaseProviderZeroG.cpp
     storage/InProcessIDBServer.cpp
     storage/StorageAreaImpl.cpp
@@ -39,7 +49,7 @@ find_package(SDL3 CONFIG REQUIRED)
 set(ZeroGEmbedding_LIBRARIES SDL3::SDL3-static ZLIB::ZLIB)
 
 if (WIN32)
-    list(APPEND ZeroGEmbedding_SOURCES SurfaceD3D11.cpp)
+    list(APPEND ZeroGEmbedding_SOURCES graphics/SurfaceD3D11.cpp)
     list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi)
 endif ()
 

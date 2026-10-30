@@ -35,9 +35,9 @@
 #include "config.h"
 #include "FrameLoaderClientZeroG.h"
 
-#include "Download.h"
-#include "Loader.h"
 #include "View.h"
+#include "loader/Download.h"
+#include "loader/Loader.h"
 #include <WebCore/Color.h>
 #include <WebCore/SubresourceLoader.h>
 #include <WebCore/DOMWrapperWorld.h>

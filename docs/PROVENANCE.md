@@ -41,16 +41,16 @@ under `patches/` is listed here when it is created.
 | `port/gl/*` | Original; the generated entry points are derived from the Khronos EGL/GLES headers (Apache-2.0 / MIT) | BSD-2-Clause |
 | `patches/0012-webcore-generic-timer-keyboard-and-editor-for-zerog.patch` | Original, guard changes in WebCore files | Same as the modified files |
 | `patches/0013-wtf-keep-main-thread-data-at-exit-on-windows.patch` | Original, modifies `ThreadingWin.cpp` (BSD) | BSD-2-Clause; upstream candidate |
-| `port/embedding/View.*`, `port/embedding/Surface*`, `port/embedding/Window.*`, `tests/render/frame_loop.cpp`, `tests/render/texture_*.cpp`, `tests/render/window.cpp`, `tests/render/run_linux.sh` | Original | BSD-2-Clause |
-| `port/embedding/KeyboardSDL.*`, `tests/render/input.cpp` | Original | BSD-2-Clause |
-| `port/embedding/EditorClientZeroG.*` | Upstream, derived from `EmptyEditorClient` (`Source/WebCore/loader/EmptyClients.cpp`) and the key bindings of `Source/WebKit/WebProcess/WebPage/win/WebPageWin.cpp` | BSD-2-Clause (Apple and Sony headers kept) |
-| `port/embedding/ChromeClientZeroG.*` | Upstream, derived from `EmptyChromeClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple header kept) |
-| `port/embedding/FrameLoaderClientZeroG.*` | Upstream, derived from `EmptyFrameLoaderClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple, Eric Seidel, Nokia and Samsung headers kept) |
+| `port/embedding/View.*`, `port/embedding/graphics/Surface*`, `port/embedding/window/Window.*`, `tests/render/frame_loop.cpp`, `tests/render/texture_*.cpp`, `tests/render/window.cpp`, `tests/render/run_linux.sh` | Original | BSD-2-Clause |
+| `port/embedding/window/KeyboardSDL.*`, `tests/render/input.cpp` | Original | BSD-2-Clause |
+| `port/embedding/clients/EditorClientZeroG.*` | Upstream, derived from `EmptyEditorClient` (`Source/WebCore/loader/EmptyClients.cpp`) and the key bindings of `Source/WebKit/WebProcess/WebPage/win/WebPageWin.cpp` | BSD-2-Clause (Apple and Sony headers kept) |
+| `port/embedding/clients/ChromeClientZeroG.*` | Upstream, derived from `EmptyChromeClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple header kept) |
+| `port/embedding/clients/FrameLoaderClientZeroG.*` | Upstream, derived from `EmptyFrameLoaderClient` in `Source/WebCore/loader/EmptyClients.{h,cpp}` | BSD-2-Clause (Apple, Eric Seidel, Nokia and Samsung headers kept) |
 | `port/api/*`, `tests/api/*` | Original | BSD-2-Clause |
-| `port/embedding/Loader.*` | Upstream, derived from WebKit's `WebLoaderStrategy`, `WebURLSchemeTaskProxy` (`Source/WebKit/WebProcess`), `WebErrors` (`Source/WebKit/Shared`) and `NetworkStorageSessionCurl` (`Source/WebKit/NetworkProcess/curl`) | BSD-2-Clause (Apple, Igalia and Sony headers kept) |
-| `port/embedding/LoaderBlob.cpp` | Original; the load follows `Source/WebKit/NetworkProcess/NetworkDataTaskBlob.cpp` over WebCore's `BlobResourceHandleBase` and `BlobRegistryImpl` | BSD-2-Clause |
-| `port/embedding/LoaderCurl.cpp` | Upstream, derived from `Source/WebKit/NetworkProcess/curl/NetworkDataTaskCurl.cpp` | BSD-2-Clause (Sony header kept) |
-| `port/embedding/MemoryFS.*`, `port/embedding/Fonts.cpp`, `port/embedding/Download.*`, `tools/assets.py`, `tests/render/loader.cpp` | Original | BSD-2-Clause |
+| `port/embedding/loader/Loader.*` | Upstream, derived from WebKit's `WebLoaderStrategy`, `WebURLSchemeTaskProxy` (`Source/WebKit/WebProcess`), `WebErrors` (`Source/WebKit/Shared`) and `NetworkStorageSessionCurl` (`Source/WebKit/NetworkProcess/curl`) | BSD-2-Clause (Apple, Igalia and Sony headers kept) |
+| `port/embedding/loader/LoaderBlob.cpp` | Original; the load follows `Source/WebKit/NetworkProcess/NetworkDataTaskBlob.cpp` over WebCore's `BlobResourceHandleBase` and `BlobRegistryImpl` | BSD-2-Clause |
+| `port/embedding/loader/LoaderCurl.cpp` | Upstream, derived from `Source/WebKit/NetworkProcess/curl/NetworkDataTaskCurl.cpp` | BSD-2-Clause (Sony header kept) |
+| `port/embedding/loader/MemoryFS.*`, `port/embedding/loader/Fonts.cpp`, `port/embedding/loader/Download.*`, `tools/assets.py`, `tests/render/loader.cpp` | Original | BSD-2-Clause |
 | `patches/0015-webcore-embedder-frame-time.patch` | Original, modifies `Page.{h,cpp}` and `LocalDOMWindow.{h,cpp}` | Same as the modified files; upstream candidate |
 | `patches/0016-wtf-generic-run-loop-next-wake-up-time.patch` | Original, modifies `RunLoop.h` and `RunLoopGeneric.cpp` (BSD) | BSD-2-Clause; upstream candidate |
 | `patches/0017-webcore-threadable-loader-redirected-after-restart.patch` | Original, modifies `DocumentThreadableLoader.{h,cpp}` | Same as the modified files; upstream candidate |
@@ -60,8 +60,8 @@ under `patches/` is listed here when it is created.
 | `tests/fuzz/*` (targets, seeds and corpus) | Original | BSD-2-Clause |
 | `port/embedding/storage/{StorageAreaImpl,StorageAreaSync,StorageNamespaceImpl,StorageSyncManager,StorageThread,WebStorageNamespaceProvider,InProcessIDBServer}.*` | WebKitLegacy, copied from `Source/WebKitLegacy/Storage` (namespace kept). Changes: `config.h` and explicit includes, local storage in memory for ephemeral sessions | BSD-2-Clause (Apple headers kept) |
 | `port/embedding/storage/StorageTracker.h`, `DatabaseProviderZeroG.*` | Original: an inactive stand-in for WebKitLegacy's tracker; IndexedDB per session | BSD-2-Clause |
-| `port/embedding/HTTPCache.*` | Original; freshness and validation through WebCore's `CacheValidation` | BSD-2-Clause |
-| `port/embedding/WebSocketChannelZeroG.*` | Upstream, derived from `Source/WebKit/WebProcess/Network/WebSocketChannel.cpp` (Apple) and `Source/WebKit/NetworkProcess/curl/WebSocketTaskCurl.cpp` (Sony) | BSD-2-Clause (Apple and Sony headers kept) |
+| `port/embedding/loader/HTTPCache.*` | Original; freshness and validation through WebCore's `CacheValidation` | BSD-2-Clause |
+| `port/embedding/loader/WebSocketChannelZeroG.*` | Upstream, derived from `Source/WebKit/WebProcess/Network/WebSocketChannel.cpp` (Apple) and `Source/WebKit/NetworkProcess/curl/WebSocketTaskCurl.cpp` (Sony) | BSD-2-Clause (Apple and Sony headers kept) |
 | `port/embedding/PlatformStrategiesZeroG.cpp` | Upstream, derived from `Tools/TestWebKitAPI/Tests/WebCore/TestPlatformStrategies.cpp` (Apple) | BSD-2-Clause (Apple header kept) |
 
 Origins: **Original** (written for ZeroG), **WebKitLegacy** (derived from

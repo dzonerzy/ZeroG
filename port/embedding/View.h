@@ -4,8 +4,8 @@
 // (ZeroG.md, "Ciclo di un frame"). Engine thread only, except the surface's
 // acquire/release.
 
-#include "Loader.h"
-#include "Surface.h"
+#include "graphics/Surface.h"
+#include "loader/Loader.h"
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/Credential.h>
 #include <WebCore/Cursor.h>

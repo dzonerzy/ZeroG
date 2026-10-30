@@ -2,10 +2,10 @@
 
 // The handles of the C API (include/zerog.h) over the embedding layer.
 
-#include "Download.h"
-#include "MemoryFS.h"
 #include "View.h"
-#include "Window.h"
+#include "loader/Download.h"
+#include "loader/MemoryFS.h"
+#include "window/Window.h"
 #include "zerog.h"
 #include <JavaScriptCore/JSBase.h>
 #include <atomic>

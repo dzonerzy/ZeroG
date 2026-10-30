@@ -7,7 +7,7 @@
 
 #include "config.h"
 #include "Embedding.h"
-#include "Window.h"
+#include "window/Window.h"
 
 #include <WebCore/ColorSpace.h>
 #include <WebCore/ImageBuffer.h>
