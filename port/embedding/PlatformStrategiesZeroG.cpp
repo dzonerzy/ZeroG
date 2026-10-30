@@ -33,7 +33,10 @@
 #include <WebCore/BlobRegistry.h>
 #include <WebCore/LoaderStrategy.h>
 #include <WebCore/MediaStrategy.h>
+#include <WebCore/Pasteboard.h>
+#include <WebCore/PasteboardCustomData.h>
 #include <WebCore/PasteboardItemInfo.h>
+#include <WebCore/PasteboardItemsZeroG.h>
 #include <WebCore/PasteboardStrategy.h>
 #include <WebCore/PlatformStrategies.h>
 #include <WebCore/ResourceError.h>
@@ -49,17 +52,87 @@ using namespace WebCore;
 
 namespace {
 
+// What navigator.clipboard reads through: the system clipboard
+// (PasteboardItemsZeroG.h) as one item, its types those the page may see.
 class PasteboardStrategyZeroG final : public PasteboardStrategy {
 public:
-    String readStringFromPasteboard(size_t, const String&, const String&, const PasteboardContext*) final { return { }; }
-    RefPtr<SharedBuffer> readBufferFromPasteboard(std::optional<size_t>, const String&, const String&, const PasteboardContext*) final { return nullptr; }
-    URL readURLFromPasteboard(size_t, const String&, String&, const PasteboardContext*) final { return { }; }
-    std::optional<PasteboardItemInfo> informationForItemAtIndex(size_t, const String&, int64_t, const PasteboardContext*) final { return std::nullopt; }
-    std::optional<Vector<PasteboardItemInfo>> allPasteboardItemInfo(const String&, int64_t, const PasteboardContext*) final { return std::nullopt; }
-    int getPasteboardItemsCount(const String&, const PasteboardContext*) final { return 0; }
-    Vector<String> typesSafeForDOMToReadAndWrite(const String&, const String&, const PasteboardContext*) final { return { }; }
-    int64_t writeCustomData(const Vector<PasteboardCustomData>&, const String&, const PasteboardContext*) final { return 0; }
-    bool containsStringSafeForDOMToReadForType(const String&, const String&, const PasteboardContext*) final { return false; }
+    String readStringFromPasteboard(size_t index, const String& type, const String&, const PasteboardContext*) final
+    {
+        auto buffer = index ? nullptr : systemClipboardZeroG().read(type);
+        return buffer ? String::fromUTF8(buffer->span()) : String();
+    }
+
+    RefPtr<SharedBuffer> readBufferFromPasteboard(std::optional<size_t> index, const String& type, const String&, const PasteboardContext*) final
+    {
+        return index.value_or(0) ? nullptr : systemClipboardZeroG().read(type);
+    }
+
+    URL readURLFromPasteboard(size_t index, const String& name, String& title, const PasteboardContext* context) final
+    {
+        title = { };
+        auto list = readStringFromPasteboard(index, "text/uri-list"_s, name, context);
+        for (auto line : StringView { list }.split('\n')) {
+            auto trimmed = line.trim(isASCIIWhitespace<char16_t>);
+            if (!trimmed.isEmpty() && !trimmed.startsWith('#'))
+                return URL { trimmed.toString() };
+        }
+        return { };
+    }
+
+    std::optional<PasteboardItemInfo> informationForItemAtIndex(size_t index, const String&, int64_t, const PasteboardContext*) final
+    {
+        if (index)
+            return std::nullopt;
+        auto types = systemClipboardZeroG().types();
+        if (types.isEmpty())
+            return std::nullopt;
+        PasteboardItemInfo info;
+        for (auto& type : types) {
+            if (type == customPasteboardDataTypeZeroG)
+                continue;
+            info.platformTypesByFidelity.append(type);
+            if (isWebSafe(type))
+                info.webSafeTypesByFidelity.append(type);
+            if (!type.startsWith("text/"_s))
+                info.isNonTextType = true;
+        }
+        return info;
+    }
+
+    std::optional<Vector<PasteboardItemInfo>> allPasteboardItemInfo(const String& name, int64_t changeCount, const PasteboardContext* context) final
+    {
+        Vector<PasteboardItemInfo> items;
+        if (auto info = informationForItemAtIndex(0, name, changeCount, context))
+            items.append(WTF::move(*info));
+        return items;
+    }
+
+    int getPasteboardItemsCount(const String&, const PasteboardContext*) final
+    {
+        return systemClipboardZeroG().types().isEmpty() ? 0 : 1;
+    }
+
+    Vector<String> typesSafeForDOMToReadAndWrite(const String&, const String& origin, const PasteboardContext*) final
+    {
+        return Pasteboard::createForCopyAndPaste(nullptr)->typesSafeForBindings(origin);
+    }
+
+    int64_t writeCustomData(const Vector<PasteboardCustomData>& data, const String&, const PasteboardContext*) final
+    {
+        Pasteboard::createForCopyAndPaste(nullptr)->writeCustomData(data);
+        return systemClipboardZeroG().changeCount();
+    }
+
+    bool containsStringSafeForDOMToReadForType(const String& type, const String&, const PasteboardContext*) final
+    {
+        return isWebSafe(type) && systemClipboardZeroG().types().contains(type);
+    }
+
+private:
+    static bool isWebSafe(const String& type)
+    {
+        return type == "text/plain"_s || type == "text/html"_s || type == "text/uri-list"_s || type == "image/png"_s;
+    }
 };
 
 class MediaStrategyZeroG final : public MediaStrategy {

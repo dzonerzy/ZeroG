@@ -124,7 +124,7 @@ private:
     // The view drives rendering updates itself (scheduleRenderingUpdate()).
     WebCore::DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const final { return nullptr; }
 
-    void runOpenPanel(WebCore::LocalFrame&, WebCore::FileChooser&) final { }
+    void runOpenPanel(WebCore::LocalFrame&, WebCore::FileChooser&) final;
     void showShareSheet(WebCore::ShareDataWithParsedURL&&, CompletionHandler<void(bool)>&& completionHandler) final { completionHandler(false); }
     void loadIconForFiles(const Vector<String>&, WebCore::FileIconLoader&) final { }
 

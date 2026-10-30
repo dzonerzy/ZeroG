@@ -31,6 +31,9 @@ enum class MessageSource : uint8_t;
 namespace WebCore {
 class LocalFrame;
 class Page;
+class PasteboardItemsZeroG;
+enum class DragOperation : uint8_t;
+struct FileChooserSettings;
 }
 
 namespace ZeroG {
@@ -68,6 +71,9 @@ public:
     virtual void alert(const String&) { }
     virtual bool confirm(const String&) { return false; }
     virtual std::optional<String> prompt(const String& /* message */, const String& /* defaultValue */) { return std::nullopt; }
+    // <input type=file>: answer with the chosen paths, or nullopt to cancel; the
+    // answer may come later. The default cancels.
+    virtual void runOpenPanel(const WebCore::FileChooserSettings&, CompletionHandler<void(std::optional<Vector<String>>&&)>&& completionHandler) { completionHandler(std::nullopt); }
 };
 
 class View {
@@ -135,6 +141,21 @@ public:
 
     void setFocused(bool);
 
+    // A drag from outside the page (files from the desktop, text from another
+    // application), in logical pixels: entering, moving over, leaving, or dropped
+    // on the view. Returns whether the page would accept a drop there.
+    struct DragItems {
+        Vector<String> files; // paths
+        String text;
+        String url;
+        String html;
+    };
+    enum class DragEvent : uint8_t { Enter, Over, Leave, Drop };
+    bool drag(DragEvent, const WebCore::FloatPoint&, const DragItems&);
+    // A drag that started in the page (DragClientZeroG): the mouse events that
+    // follow move it until the button is released.
+    void startInternalDrag(Ref<WebCore::PasteboardItemsZeroG>&&);
+
     // Not owned; null restores the default (silent) client.
     void setClient(ViewClient*);
 
@@ -162,6 +183,14 @@ private:
     explicit View(Configuration&&);
     void invalidateAll() { invalidate({ { }, m_size }); }
     WebCore::IntSize physicalSize() const;
+    // The drag controller's answer for the items at a point; nullopt: no drop.
+    std::optional<WebCore::DragOperation> dragUpdated(WebCore::PasteboardItemsZeroG&, const WebCore::IntPoint&);
+    void finishInternalDrag(const WebCore::IntPoint&, bool drop);
+
+    // A drag from outside, and one from inside the page, in progress.
+    RefPtr<WebCore::PasteboardItemsZeroG> m_externalDrag;
+    RefPtr<WebCore::PasteboardItemsZeroG> m_internalDrag;
+    std::optional<WebCore::DragOperation> m_internalDragOperation;
 
     const Ref<Session> m_session;
     const Ref<WebCore::Page> m_page;

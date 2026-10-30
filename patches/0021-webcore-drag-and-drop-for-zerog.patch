@@ -1,0 +1,29 @@
+diff --git a/Source/WebCore/dom/DataTransfer.cpp b/Source/WebCore/dom/DataTransfer.cpp
+index a655061f9c..520b707951 100644
+--- a/Source/WebCore/dom/DataTransfer.cpp
++++ b/Source/WebCore/dom/DataTransfer.cpp
+@@ -290,7 +290,10 @@ bool DataTransfer::shouldSuppressGetAndSetDataToAvoidExposingFilePaths() const
+ 
+ bool DataTransfer::allowsFileAccess() const
+ {
+-#if PLATFORM(COCOA)
++#if PLATFORM(COCOA) || PLATFORM(ZEROG)
++    // ZeroG: a drag's files come from the host only (zg_view_drag, files dropped
++    // on the window), never from data a page put on the drag; see
++    // PasteboardZeroG.cpp.
+     return !forDrag() || forFileDrag();
+ #elif PLATFORM(GTK) || PLATFORM(WPE)
+     // File drag access is disabled until https://webkit.org/b/271957 is resolved for GTK/WPE ports.
+diff --git a/Source/WebCore/platform/DragImage.cpp b/Source/WebCore/platform/DragImage.cpp
+index 12fb5a0111..0c4fe48ae6 100644
+--- a/Source/WebCore/platform/DragImage.cpp
++++ b/Source/WebCore/platform/DragImage.cpp
+@@ -116,7 +116,7 @@ IntPoint DragImage::platformAdjustDragImageHotSpot(const IntPoint& hotSpot, cons
+ 
+ #endif
+ 
+-#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN) && !(PLATFORM(WPE) && ENABLE(DRAG_SUPPORT))
++#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WIN) && !(PLATFORM(WPE) && ENABLE(DRAG_SUPPORT)) && !(PLATFORM(ZEROG) && ENABLE(DRAG_SUPPORT))
+ 
+ IntSize DragImage::size() const
+ {

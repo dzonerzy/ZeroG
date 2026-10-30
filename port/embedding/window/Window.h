@@ -56,6 +56,10 @@ public:
     Seconds refreshInterval() const { return m_refreshInterval; }
     void* nativeHandle() const; // HWND, X11 Window, wl_surface*
 
+    // The system's file dialog for <input type=file> (SDL3), its answer on the
+    // engine thread: the chosen paths, or nullopt.
+    void showOpenDialog(const WebCore::FileChooserSettings&, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
+
     // Tests: frames presented so far, and the contents of the next presented frame
     // (RGBA8, rows top to bottom) read back before the swap.
     unsigned presentedFrames() const { return m_presentedFrames; }
@@ -88,6 +92,10 @@ private:
     Vector<uint8_t> m_capture;
     std::array<SDL_Cursor*, 32> m_cursors { }; // by SDL_SystemCursor
     WebCore::IntSize m_captureSize;
+    // Files and text dropped on the window: SDL sends them one by one, then
+    // DROP_COMPLETE; the page gets the drop then.
+    View::DragItems m_drop;
+    WebCore::FloatPoint m_dropPoint;
 };
 
 } // namespace ZeroG

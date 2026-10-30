@@ -2,6 +2,7 @@
 #include "View.h"
 
 #include "clients/ChromeClientZeroG.h"
+#include "clients/DragClientZeroG.h"
 #include "clients/EditorClientZeroG.h"
 #include "clients/FrameLoaderClientZeroG.h"
 #include "loader/Download.h"
@@ -22,6 +23,9 @@
 #include <WebCore/Chrome.h>
 #include <WebCore/CookieJar.h>
 #include <WebCore/DatabaseProvider.h>
+#include <WebCore/DragController.h>
+#include <WebCore/DragData.h>
+#include <WebCore/PasteboardItemsZeroG.h>
 #include <WebCore/StorageNamespaceProvider.h>
 #include <WebCore/UserContentProvider.h>
 #include <WebCore/DocumentView.h>
@@ -73,6 +77,7 @@ static Ref<Page> createPage(View& view)
     configuration.databaseProvider = view.session().databaseProvider();
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
+    configuration.dragClient = makeUnique<DragClientZeroG>();
     return Page::create(WTF::move(configuration));
 }
 
@@ -108,6 +113,10 @@ View::View(Configuration&& configuration)
     // Off in WebCore's defaults, on in every WebKit port: the session provides them.
     settings.setLocalStorageEnabled(true);
     settings.setSessionStorageEnabled(true);
+    // navigator.clipboard (the clipboard is the application's, PasteboardZeroG.cpp);
+    // reading it asks the editor client, which grants it during a user gesture.
+    settings.setAsyncClipboardAPIEnabled(true);
+    settings.setDOMPasteAccessRequestsEnabled(true);
     if (processOptions().synchronousImageDecoding) {
         settings.setLargeImageAsyncDecodingEnabled(false);
         settings.setAnimatedImageAsyncDecodingEnabled(false);
@@ -302,6 +311,11 @@ bool View::mouseMove(const FloatPoint& position, MouseButton pressed, Modifiers 
     RefPtr frame = mainFrame(m_page);
     if (!frame)
         return false;
+    // A drag from the page follows the mouse until the button goes up.
+    if (RefPtr items = m_internalDrag) {
+        m_internalDragOperation = dragUpdated(*items, flooredIntPoint(position));
+        return true;
+    }
     PlatformMouseEvent event(position, position, platformButton(pressed), PlatformEvent::Type::MouseMoved, 0, modifiers, MonotonicTime::now(), 0,
         SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
     return frame->eventHandler().mouseMoved(event).wasHandled();
@@ -322,9 +336,97 @@ bool View::mouseUp(const FloatPoint& position, MouseButton button, int clickCoun
     RefPtr frame = mainFrame(m_page);
     if (!frame)
         return false;
+    if (m_internalDrag) {
+        finishInternalDrag(flooredIntPoint(position), true);
+        return true;
+    }
     PlatformMouseEvent event(position, position, platformButton(button), PlatformEvent::Type::MouseReleased, clickCount, modifiers, MonotonicTime::now(), 0,
         SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
     return frame->eventHandler().handleMouseReleaseEvent(event).wasHandled();
+}
+
+// ---- Drag and drop ----
+
+std::optional<DragOperation> View::dragUpdated(PasteboardItemsZeroG& items, const IntPoint& point)
+{
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return std::nullopt;
+    DragData data(&items, point, point, anyDragOperation(), { }, anyDragDestinationAction(), m_page->identifier());
+    auto result = m_page->dragController().dragEnteredOrUpdated(*frame, WTF::move(data));
+    if (auto* operation = std::get_if<std::optional<DragOperation>>(&result))
+        return *operation;
+    return std::nullopt;
+}
+
+bool View::drag(DragEvent event, const FloatPoint& position, const DragItems& dragItems)
+{
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return false;
+    auto point = flooredIntPoint(position);
+    if (event == DragEvent::Enter || !m_externalDrag) {
+        auto items = MemoryPasteboardItemsZeroG::create();
+        Vector<PasteboardItemsZeroG::Item> data;
+        auto add = [&](ASCIILiteral type, const String& value) {
+            if (!value.isEmpty()) {
+                auto utf8 = value.utf8();
+                data.append({ type, SharedBuffer::create(byteCast<uint8_t>(utf8.span())) });
+            }
+        };
+        add("text/plain"_s, dragItems.text);
+        add("text/uri-list"_s, dragItems.url);
+        add("text/html"_s, dragItems.html);
+        items->write(WTF::move(data));
+        items->setFilePaths(Vector<String> { dragItems.files });
+        m_externalDrag = WTF::move(items);
+    }
+    Ref items = *m_externalDrag;
+    switch (event) {
+    case DragEvent::Enter:
+    case DragEvent::Over:
+        return dragUpdated(items, point).has_value();
+    case DragEvent::Leave:
+        m_page->dragController().dragExited(*frame, DragData(items.ptr(), point, point, anyDragOperation(), { }, anyDragDestinationAction(), m_page->identifier()));
+        m_externalDrag = nullptr;
+        return false;
+    case DragEvent::Drop: {
+        // Dropped without moving over first: the page sees it arrive.
+        bool accepted = dragUpdated(items, point).has_value();
+        if (accepted)
+            m_page->dragController().performDragOperation(DragData(items.ptr(), point, point, anyDragOperation(), { }, anyDragDestinationAction(), m_page->identifier()), *frame);
+        else
+            m_page->dragController().dragExited(*frame, DragData(items.ptr(), point, point, anyDragOperation(), { }, anyDragDestinationAction(), m_page->identifier()));
+        m_externalDrag = nullptr;
+        return accepted;
+    }
+    }
+    return false;
+}
+
+void View::startInternalDrag(Ref<PasteboardItemsZeroG>&& items)
+{
+    m_internalDrag = WTF::move(items);
+    m_internalDragOperation = std::nullopt;
+}
+
+void View::finishInternalDrag(const IntPoint& point, bool drop)
+{
+    Ref items = m_internalDrag.releaseNonNull();
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return;
+    auto operation = std::exchange(m_internalDragOperation, std::nullopt);
+    DragData data(items.ptr(), point, point, anyDragOperation(), { }, anyDragDestinationAction(), m_page->identifier());
+    if (drop && operation)
+        m_page->dragController().performDragOperation(WTF::move(data), *frame);
+    else
+        m_page->dragController().dragExited(*frame, WTF::move(data));
+    // As WebKit2's WebPage::dragEnded: the source gets dragend.
+    m_page->dragController().dragEnded();
+    PlatformMouseEvent event(point, point, WebCore::MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), 0,
+        SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    frame->eventHandler().dragSourceEndedAt(event, operation && drop ? OptionSet<DragOperation> { *operation } : OptionSet<DragOperation> { });
 }
 
 void View::mouseLeave()

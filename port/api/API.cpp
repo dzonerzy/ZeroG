@@ -7,7 +7,11 @@
 
 #include "Embedding.h"
 #include "graphics/Surface.h"
+#include "window/ClipboardSDL.h"
 #include "window/KeyboardSDL.h"
+#include <WebCore/FileChooser.h>
+#include <WebCore/PasteboardItemsZeroG.h>
+#include <WebCore/SharedBuffer.h>
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSLock.h>
@@ -132,6 +136,12 @@ String stringFromUTF8(const char* text)
     return text ? String::fromUTF8(text) : String { };
 }
 
+std::string utf8String(const String& string)
+{
+    auto utf8 = string.utf8();
+    return { byteCast<char>(utf8.data()), utf8.length() };
+}
+
 template<typename T>
 T copyConfig(const T* config)
 {
@@ -238,6 +248,18 @@ struct zg_download {
     std::string url;
     std::string suggestedFilename;
     std::string mimeType;
+};
+
+// <input type=file> waiting for the application.
+struct zg_file_chooser {
+    CompletionHandler<void(std::optional<Vector<String>>&&)> completionHandler;
+    bool allowsMultiple { false };
+    bool allowsDirectories { false };
+    std::vector<std::string> accept;
+};
+
+struct zg_clipboard_reply {
+    RefPtr<SharedBuffer> data;
 };
 
 // The view's events, as zg_view_callbacks.
@@ -413,6 +435,28 @@ private:
         if (!error.isNull())
             fail(ZG_ERROR_INTERNAL, error.localizedDescription().isEmpty() ? "download failed"_s : error.localizedDescription());
         callbacks().download_finished(&m_view, handle.get(), !error.isNull(), callbacks().user);
+    }
+
+    void runOpenPanel(const FileChooserSettings& settings, CompletionHandler<void(std::optional<Vector<String>>&&)>&& completionHandler) final
+    {
+        if (callbacks().file_chooser) {
+            auto* chooser = new zg_file_chooser;
+            chooser->completionHandler = WTF::move(completionHandler);
+            chooser->allowsMultiple = settings.allowsMultipleFiles;
+            chooser->allowsDirectories = settings.allowsDirectories;
+            for (auto& type : settings.acceptMIMETypes)
+                chooser->accept.push_back(toUTF8(type));
+            for (auto& extension : settings.acceptFileExtensions)
+                chooser->accept.push_back(toUTF8(extension));
+            callbacks().file_chooser(&m_view, chooser, callbacks().user);
+            return;
+        }
+        // Window mode: the system's dialog.
+        if (m_view.window) {
+            m_view.window->window->showOpenDialog(settings, WTF::move(completionHandler));
+            return;
+        }
+        completionHandler(std::nullopt);
     }
 
     zg_view& m_view;
@@ -1037,6 +1081,136 @@ void zg_auth_challenge_cancel(zg_auth_challenge* challenge)
     });
 }
 
+// ---- File chooser ----
+
+int zg_file_chooser_allows_multiple(const zg_file_chooser* chooser)
+{
+    return chooser && chooser->allowsMultiple;
+}
+
+int zg_file_chooser_allows_directories(const zg_file_chooser* chooser)
+{
+    return chooser && chooser->allowsDirectories;
+}
+
+size_t zg_file_chooser_accept_count(const zg_file_chooser* chooser)
+{
+    return chooser ? chooser->accept.size() : 0;
+}
+
+const char* zg_file_chooser_accept(const zg_file_chooser* chooser, size_t index)
+{
+    return chooser && index < chooser->accept.size() ? chooser->accept[index].c_str() : nullptr;
+}
+
+void zg_file_chooser_choose(zg_file_chooser* chooser, size_t count, const char* const* paths)
+{
+    if (!chooser)
+        return;
+    Vector<String> chosen;
+    for (size_t i = 0; paths && i < count; ++i) {
+        if (paths[i])
+            chosen.append(String::fromUTF8(paths[i]).isolatedCopy());
+    }
+    ensureOnMainThread([chooser, chosen = WTF::move(chosen)] mutable {
+        chooser->completionHandler(chosen.isEmpty() ? std::nullopt : std::optional { WTF::move(chosen) });
+        delete chooser;
+    });
+}
+
+void zg_file_chooser_cancel(zg_file_chooser* chooser)
+{
+    zg_file_chooser_choose(chooser, 0, nullptr);
+}
+
+// ---- Clipboard ----
+
+namespace {
+
+// The application's clipboard, through its callbacks.
+class HostClipboard final : public PasteboardItemsZeroG {
+public:
+    static Ref<HostClipboard> create(const zg_clipboard& clipboard) { return adoptRef(*new HostClipboard(clipboard)); }
+
+    Vector<String> types() final
+    {
+        // The application says which it holds of those a page can use.
+        static constexpr std::array<ASCIILiteral, 9> candidates = { "text/plain"_s, "text/html"_s, "text/uri-list"_s,
+            "image/png"_s, "image/jpeg"_s, "image/gif"_s, "image/webp"_s, "image/bmp"_s, customPasteboardDataTypeZeroG };
+        Vector<String> types;
+        if (!m_clipboard.has)
+            return types;
+        for (auto type : candidates) {
+            if (m_clipboard.has(type.characters(), m_clipboard.user))
+                types.append(type);
+        }
+        return types;
+    }
+
+    RefPtr<SharedBuffer> read(const String& type) final
+    {
+        if (!m_clipboard.read)
+            return nullptr;
+        zg_clipboard_reply reply;
+        auto utf8 = type.utf8();
+        m_clipboard.read(byteCast<char>(utf8.data()), &reply, m_clipboard.user);
+        return WTF::move(reply.data);
+    }
+
+    void write(Vector<Item>&& items) final
+    {
+        ++m_changeCount;
+        if (!m_clipboard.write)
+            return;
+        Vector<std::string> types;
+        Vector<const char*> typePointers;
+        Vector<const void*> data;
+        Vector<size_t> lengths;
+        for (auto& [type, buffer] : items)
+            types.append(utf8String(type));
+        for (size_t i = 0; i < items.size(); ++i) {
+            typePointers.append(types[i].c_str());
+            data.append(items[i].second->span().data());
+            lengths.append(items[i].second->size());
+        }
+        m_clipboard.write(items.size(), typePointers.span().data(), data.span().data(), lengths.span().data(), m_clipboard.user);
+    }
+
+    int64_t changeCount() final { return m_changeCount; }
+
+private:
+    explicit HostClipboard(const zg_clipboard& clipboard)
+        : m_clipboard(clipboard)
+    {
+    }
+
+    zg_clipboard m_clipboard;
+    int64_t m_changeCount { 0 };
+};
+
+} // namespace
+
+void zg_clipboard_reply_data(zg_clipboard_reply* reply, const void* data, size_t length)
+{
+    if (reply && data)
+        reply->data = SharedBuffer::create(std::span { static_cast<const uint8_t*>(data), length });
+}
+
+zg_result zg_runtime_set_clipboard(zg_runtime* rt, const zg_clipboard* clipboard)
+{
+    clearError();
+    if (!rt)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no runtime"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    if (!clipboard) {
+        setApplicationClipboard(nullptr);
+        return ZG_OK;
+    }
+    setApplicationClipboard(HostClipboard::create(copyConfig(clipboard)));
+    return ZG_OK;
+}
+
 zg_result zg_context_register_scheme(zg_context* context, const char* scheme, zg_scheme_fn handler, void* user)
 {
     clearError();
@@ -1383,6 +1557,39 @@ void zg_view_ime_cancel(zg_view* view)
         return;
     if (RefPtr frame = view->view->page().focusController().focusedOrMainFrame())
         frame->editor().cancelComposition();
+}
+
+int zg_view_drag(zg_view* view, zg_drag_event event, float x, float y, const zg_drag_data* data)
+{
+    if (!viewOrFail(view))
+        return 0;
+    View::DragItems items;
+    if (data) {
+        auto config = copyConfig(data);
+        for (size_t i = 0; config.files && i < config.file_count; ++i) {
+            if (config.files[i])
+                items.files.append(String::fromUTF8(config.files[i]));
+        }
+        items.text = stringFromUTF8(config.text);
+        items.url = stringFromUTF8(config.url);
+        items.html = stringFromUTF8(config.html);
+    }
+    View::DragEvent dragEvent = View::DragEvent::Over;
+    switch (event) {
+    case ZG_DRAG_ENTER:
+        dragEvent = View::DragEvent::Enter;
+        break;
+    case ZG_DRAG_OVER:
+        dragEvent = View::DragEvent::Over;
+        break;
+    case ZG_DRAG_LEAVE:
+        dragEvent = View::DragEvent::Leave;
+        break;
+    case ZG_DRAG_DROP:
+        dragEvent = View::DragEvent::Drop;
+        break;
+    }
+    return view->view->drag(dragEvent, { x, y }, items);
 }
 
 // ---- Windows ----

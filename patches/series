@@ -20,3 +20,5 @@
 0017-webcore-threadable-loader-redirected-after-restart.patch
 0018-webcore-console-message-call-stack-to-chrome-client.patch
 0019-jsc-precommit-windows-stack-pages-once.patch
+0020-webcore-pasteboard-items-for-zerog.patch
+0021-webcore-drag-and-drop-for-zerog.patch

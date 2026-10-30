@@ -35,6 +35,7 @@
 #include <wtf/text/StringBuilder.h>
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/Cursor.h>
+#include <WebCore/FileChooser.h>
 #include <WebCore/HitTestResult.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/PopupMenu.h>
@@ -146,6 +147,21 @@ void ChromeClientZeroG::addConsoleMessage(const Inspector::ConsoleMessage& conso
         }
     }
     m_view->client().consoleMessage(consoleMessage.source(), consoleMessage.level(), message, consoleMessage.line(), consoleMessage.column(), consoleMessage.url(), stack.toString());
+}
+
+// <input type=file>: the view's client answers, later if it wants (a dialog).
+void ChromeClientZeroG::runOpenPanel(LocalFrame&, FileChooser& chooser)
+{
+    if (!m_view) {
+        chooser.cancelFileChoosing();
+        return;
+    }
+    m_view->client().runOpenPanel(chooser.settings(), [chooser = Ref { chooser }](std::optional<Vector<String>>&& paths) {
+        if (paths && !paths->isEmpty())
+            chooser->chooseFiles(*paths);
+        else
+            chooser->cancelFileChoosing();
+    });
 }
 
 void ChromeClientZeroG::runJavaScriptAlert(LocalFrame&, const String& message)

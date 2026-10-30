@@ -15,7 +15,8 @@
  *     thread. Calls from another thread fail with ZG_ERROR_WRONG_THREAD or do
  *     nothing. The exceptions are marked "any thread": zg_runtime_quit,
  *     zg_runtime_now_ms, zg_surface_acquire/release, settling a zg_promise,
- *     zg_ref_release, answering a zg_scheme_request or a zg_auth_challenge;
+ *     zg_ref_release, answering a zg_scheme_request, a zg_auth_challenge or a
+ *     zg_file_chooser;
  *     zg_last_error is per thread. Release callbacks (zg_context_add_file,
  *     zg_value_bytes_external) and the engine's own log messages may come on
  *     any thread.
@@ -207,6 +208,33 @@ typedef struct zg_memory_stats {
 
 ZG_API void zg_runtime_memory_stats(zg_runtime *rt, zg_memory_stats *out);
 ZG_API void zg_runtime_collect_garbage(zg_runtime *rt);
+
+/* ---- Clipboard (0.3) ----
+
+   The clipboard copy, cut, paste and navigator.clipboard use, process-wide. By
+   default the system's once a window exists (window mode), else one in
+   process. An application with its own windows (texture mode) connects its own
+   with zg_runtime_set_clipboard. Data is by MIME type: "text/plain" and
+   "text/html" (UTF-8), "text/uri-list", images ("image/png", ...), and the
+   page's own data as "org.zerog.custom-pasteboard-data" (keep it if you can).
+   Runtime thread. */
+typedef struct zg_clipboard_reply zg_clipboard_reply;
+/* The data asked for (copied); not calling it means there is none. */
+ZG_API void zg_clipboard_reply_data(zg_clipboard_reply *reply, const void *data, size_t len);
+
+typedef struct zg_clipboard {
+    size_t size;
+    void *user;
+    /* Replace the clipboard's contents with `count` items. */
+    void (*write)(size_t count, const char *const *types, const void *const *data, const size_t *lens, void *user);
+    /* Whether it holds data of `type`. */
+    int  (*has)(const char *type, void *user);
+    /* The data of `type`, through zg_clipboard_reply_data, during the call. */
+    void (*read)(const char *type, zg_clipboard_reply *reply, void *user);
+} zg_clipboard;
+
+/* NULL goes back to the default. Copied. */
+ZG_API zg_result zg_runtime_set_clipboard(zg_runtime *rt, const zg_clipboard *clipboard);
 
 /* ------------------------------------------------------------------------ */
 /* Context: session state (data dir, schemes, network, fonts)                */
@@ -465,6 +493,29 @@ ZG_API void zg_view_ime_set_composition(zg_view *view, const char *text, size_t 
 ZG_API void zg_view_ime_commit(zg_view *view, const char *text, size_t len);
 ZG_API void zg_view_ime_cancel(zg_view *view);
 
+/* ---- Drag and drop from outside the page (0.3) ----
+
+   Something the host drags over the view (files from the desktop, text from
+   another application), in logical pixels: ENTER, then OVER as it moves, then
+   DROP or LEAVE. The page sees dragenter, dragover, drop and dragleave, with
+   the files in DataTransfer.files. Window mode does this itself for drops on
+   the window. Drags that start in the page need nothing from the host: mouse
+   events move them. */
+typedef enum zg_drag_event { ZG_DRAG_ENTER, ZG_DRAG_OVER, ZG_DRAG_LEAVE, ZG_DRAG_DROP } zg_drag_event;
+
+typedef struct zg_drag_data {
+    size_t size;
+    const char *const *files;  /* UTF-8 paths */
+    size_t file_count;
+    const char *text;          /* UTF-8, NULL for none */
+    const char *url;
+    const char *html;
+} zg_drag_data;
+
+/* Nonzero if the page accepts a drop there (for DROP: it took it). The data is
+   read at ENTER (and at DROP if there was no ENTER). */
+ZG_API int zg_view_drag(zg_view *view, zg_drag_event event, float x, float y, const zg_drag_data *data);
+
 /* ---- Callbacks from the engine to the host ---- */
 
 typedef enum zg_cursor {
@@ -521,6 +572,21 @@ ZG_API zg_result zg_download_set_destination(zg_download *download, const char *
 /* Runtime thread. download_finished reports it as failed. */
 ZG_API void zg_download_cancel(zg_download *download);
 
+/* <input type=file> wants files (0.3). Valid until answered, which must happen
+   exactly once, from any thread. With no file_chooser callback, window mode
+   shows the system's file dialog; other views cancel. */
+typedef struct zg_file_chooser zg_file_chooser;
+
+ZG_API int zg_file_chooser_allows_multiple(const zg_file_chooser *chooser);
+ZG_API int zg_file_chooser_allows_directories(const zg_file_chooser *chooser);
+/* The input's accept list: MIME types ("image/png", or a wildcard such as all
+   images) and extensions (".txt"). */
+ZG_API size_t zg_file_chooser_accept_count(const zg_file_chooser *chooser);
+ZG_API const char *zg_file_chooser_accept(const zg_file_chooser *chooser, size_t index);
+/* UTF-8 paths, copied. No paths is the same as cancelling. */
+ZG_API void zg_file_chooser_choose(zg_file_chooser *chooser, size_t count, const char *const *paths);
+ZG_API void zg_file_chooser_cancel(zg_file_chooser *chooser);
+
 typedef struct zg_view_callbacks {
     size_t size;
     void *user;
@@ -547,6 +613,8 @@ typedef struct zg_view_callbacks {
     void (*download_started)(zg_view *view, zg_download *download, void *user);
     void (*download_progress)(zg_view *view, zg_download *download, void *user);
     void (*download_finished)(zg_view *view, zg_download *download, int failed, void *user);
+    /* <input type=file> (0.3); see zg_file_chooser. */
+    void (*file_chooser)(zg_view *view, zg_file_chooser *chooser, void *user);
 } zg_view_callbacks;
 
 ZG_API void zg_view_set_callbacks(zg_view *view, const zg_view_callbacks *callbacks);

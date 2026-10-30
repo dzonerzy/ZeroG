@@ -1,8 +1,14 @@
 #include "config.h"
 #include "Window.h"
 
+#include "ClipboardSDL.h"
 #include "Embedding.h"
 #include "KeyboardSDL.h"
+#include <WebCore/FileChooser.h>
+#include <WebCore/MIMETypeRegistry.h>
+#include <wtf/CrossThreadCopier.h>
+#include <wtf/text/CString.h>
+#include <wtf/text/StringBuilder.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -125,6 +131,9 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     };
     if (!initializeVideo())
         return fail("no video subsystem"_s, SDL_GetError());
+    // With SDL's video running, the clipboard is the system's (unless the
+    // application gave its own).
+    useSDLClipboard();
 
     SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (configuration.resizable)
@@ -221,6 +230,59 @@ void* Window::nativeHandle() const
         return SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
     return reinterpret_cast<void*>(static_cast<uintptr_t>(SDL_GetNumberProperty(properties, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0)));
 #endif
+}
+
+namespace {
+
+// What SDL's dialog needs until it answers: the filters, and the answer to give.
+struct OpenDialog {
+    CompletionHandler<void(std::optional<Vector<String>>&&)> completionHandler;
+    std::string name;
+    std::string pattern;
+    SDL_DialogFileFilter filter { };
+
+    static void SDLCALL done(void* user, const char* const* files, int)
+    {
+        // SDL may answer on another thread.
+        std::optional<Vector<String>> paths;
+        if (files && *files) {
+            paths = Vector<String> { };
+            for (auto* file = files; *file; ++file)
+                paths->append(String::fromUTF8(*file));
+        }
+        callOnMainThread([dialog = std::unique_ptr<OpenDialog>(static_cast<OpenDialog*>(user)), paths = crossThreadCopy(WTF::move(paths))] mutable {
+            dialog->completionHandler(WTF::move(paths));
+        });
+    }
+};
+
+} // namespace
+
+void Window::showOpenDialog(const FileChooserSettings& settings, CompletionHandler<void(std::optional<Vector<String>>&&)>&& completionHandler)
+{
+    auto dialog = std::make_unique<OpenDialog>();
+    dialog->completionHandler = WTF::move(completionHandler);
+    // accept=".txt,image/png": the extensions, those of each MIME type included.
+    Vector<String> extensions;
+    for (auto& extension : settings.acceptFileExtensions)
+        extensions.append(extension.startsWith('.') ? extension.substring(1) : extension);
+    for (auto& type : settings.acceptMIMETypes) {
+        for (auto& extension : MIMETypeRegistry::extensionsForMIMEType(type))
+            extensions.append(extension);
+    }
+    int filters = 0;
+    if (!extensions.isEmpty()) {
+        auto pattern = makeStringByJoining(extensions, ";"_s).utf8();
+        dialog->name = "Accepted files";
+        dialog->pattern.assign(byteCast<char>(pattern.data()), pattern.length());
+        dialog->filter = { dialog->name.c_str(), dialog->pattern.c_str() };
+        filters = 1;
+    }
+    auto* raw = dialog.release();
+    if (settings.allowsDirectories)
+        SDL_ShowOpenFolderDialog(OpenDialog::done, raw, m_window, nullptr, settings.allowsMultipleFiles);
+    else
+        SDL_ShowOpenFileDialog(OpenDialog::done, raw, m_window, filters ? &raw->filter : nullptr, filters, nullptr, settings.allowsMultipleFiles);
 }
 
 void Window::setTitle(const String& title)
@@ -407,6 +469,32 @@ void Window::handleEvents()
             break;
         case SDL_EVENT_TEXT_INPUT:
             m_view->insertText(String::fromUTF8(event.text.text), modifiersFromSDL(SDL_GetModState()));
+            break;
+        case SDL_EVENT_CLIPBOARD_UPDATE:
+            sdlClipboardChanged();
+            break;
+        case SDL_EVENT_DROP_BEGIN:
+            m_drop = { };
+            break;
+        case SDL_EVENT_DROP_POSITION:
+            m_dropPoint = viewPoint(event.drop.x, event.drop.y);
+            break;
+        case SDL_EVENT_DROP_FILE:
+            m_dropPoint = viewPoint(event.drop.x, event.drop.y);
+            if (event.drop.data)
+                m_drop.files.append(String::fromUTF8(event.drop.data));
+            break;
+        case SDL_EVENT_DROP_TEXT:
+            m_dropPoint = viewPoint(event.drop.x, event.drop.y);
+            if (event.drop.data)
+                m_drop.text = String::fromUTF8(event.drop.data);
+            break;
+        case SDL_EVENT_DROP_COMPLETE:
+            // SDL tells what was dropped only at the drop: the page sees the drag
+            // arrive there, then the drop.
+            m_view->drag(View::DragEvent::Enter, m_dropPoint, m_drop);
+            m_view->drag(View::DragEvent::Drop, m_dropPoint, m_drop);
+            m_drop = { };
             break;
         default:
             if (event.type == s_wakeUpEvent)

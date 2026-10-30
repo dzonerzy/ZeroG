@@ -15,6 +15,15 @@ Engine features of roadmap phases 3 and 4:
   function: before, `window.localStorage` was null and IndexedDB never answered.
 - HTTP disk cache: `zg_context_config.http_cache_limit` (0 = 64 MB, negative =
   none), in `data_dir/HTTPCache/`.
+- Clipboard: `zg_runtime_set_clipboard` connects the application's clipboard
+  (`zg_clipboard`: write, has, read through `zg_clipboard_reply_data`); by
+  default the system's once a window exists, else one in process.
+  `navigator.clipboard` works.
+- File chooser: `zg_view_callbacks.file_chooser` and `zg_file_chooser_*`; window
+  mode shows the system's dialog when there is no callback.
+- Drag and drop: `zg_view_drag` for drags from the host (files, text, URLs);
+  window mode takes drops on the window; drags in the page (draggable elements,
+  links, images, selections) and selecting text by dragging the mouse work.
 
 ## 0.2.0
 

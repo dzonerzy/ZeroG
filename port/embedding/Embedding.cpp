@@ -9,6 +9,7 @@
 #include <WebCore/JSDOMGlobalObject.h>
 #include <WebCore/ScriptController.h>
 #include <WebCore/ColorSpace.h>
+#include <WebCore/DeprecatedGlobalSettings.h>
 #include <WebCore/Document.h>
 #include <WebCore/DocumentLoader.h>
 #include <WebCore/DocumentView.h>
@@ -80,6 +81,9 @@ void initializeProcess(const ProcessOptions& options)
         JSC::initialize();
         WTF::initializeMainThread();
         installPlatformStrategies();
+        // A page's own clipboard and drag data (DataTransfer.setData with any
+        // type, navigator.clipboard), kept as WebKit's ports keep it.
+        DeprecatedGlobalSettings::setCustomPasteboardDataEnabled(true);
         populateJITOperations();
         ProcessWarming::prewarmGlobally();
         RunLoop::setWakeUpCallback([] {

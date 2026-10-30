@@ -1,0 +1,79 @@
+diff --git a/Source/WebCore/platform/Pasteboard.cpp b/Source/WebCore/platform/Pasteboard.cpp
+index a5414389fb..594eb507b4 100644
+--- a/Source/WebCore/platform/Pasteboard.cpp
++++ b/Source/WebCore/platform/Pasteboard.cpp
+@@ -63,7 +63,7 @@ Vector<String> Pasteboard::readAllStrings(const String& type)
+ 
+ std::optional<Vector<PasteboardItemInfo>> Pasteboard::allPasteboardItemInfo() const
+ {
+-#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)
++#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN) || PLATFORM(ZEROG)
+     if (CheckedPtr strategy = platformStrategies()->pasteboardStrategy())
+         return strategy->allPasteboardItemInfo(name(), m_changeCount, context());
+ #endif
+@@ -72,7 +72,7 @@ std::optional<Vector<PasteboardItemInfo>> Pasteboard::allPasteboardItemInfo() co
+ 
+ std::optional<PasteboardItemInfo> Pasteboard::pasteboardItemInfo(size_t index) const
+ {
+-#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)
++#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN) || PLATFORM(ZEROG)
+     if (CheckedPtr strategy = platformStrategies()->pasteboardStrategy())
+         return strategy->informationForItemAtIndex(index, name(), m_changeCount, context());
+ #else
+diff --git a/Source/WebCore/platform/Pasteboard.h b/Source/WebCore/platform/Pasteboard.h
+index 1388964249..4a4b2b7c1d 100644
+--- a/Source/WebCore/platform/Pasteboard.h
++++ b/Source/WebCore/platform/Pasteboard.h
+@@ -74,6 +74,9 @@ class Element;
+ class LocalFrame;
+ class PasteboardStrategy;
+ class FragmentedSharedBuffer;
++#if PLATFORM(ZEROG)
++class PasteboardItemsZeroG;
++#endif
+ 
+ struct SimpleRange;
+
+@@ -221,6 +224,12 @@ public:
+     explicit Pasteboard(std::unique_ptr<PasteboardContext>&&, const DragDataMap&);
+ #endif
+ 
++#if PLATFORM(ZEROG)
++    // The system clipboard's items, or a drag's own.
++    explicit Pasteboard(std::unique_ptr<PasteboardContext>&&, Ref<PasteboardItemsZeroG>&&);
++    PasteboardItemsZeroG* zerogItems() const { return m_items.get(); }
++#endif
++
+     WEBCORE_EXPORT static std::unique_ptr<Pasteboard> createForCopyAndPaste(std::unique_ptr<PasteboardContext>&&);
+ 
+     static bool isSafeTypeForDOMToReadAndWrite(const String&);
+@@ -304,7 +313,7 @@ public:
+     const PasteboardCustomData& readCustomData();
+ #endif
+ 
+-#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)
++#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN) || PLATFORM(ZEROG)
+     int64_t changeCount() const;
+ #else
+     int64_t changeCount() const { return 0; }
+@@ -383,6 +392,11 @@ private:
+     int64_t m_changeCount { 0 };
+ #endif
+ 
++#if PLATFORM(ZEROG)
++    RefPtr<PasteboardItemsZeroG> m_items;
++    int64_t m_changeCount { 0 };
++#endif
++
+ #if PLATFORM(COCOA)
+     String m_pasteboardName;
+     int64_t m_changeCount;
+@@ -417,7 +431,7 @@ inline constexpr ASCIILiteral WebURLNamePboardType { "public.url-name"_s };
+ inline constexpr ASCIILiteral WebURLsWithTitlesPboardType { "WebURLsWithTitlesPboardType"_s };
+ #endif
+ 
+-#if !PLATFORM(GTK) && !PLATFORM(WPE)
++#if !PLATFORM(GTK) && !PLATFORM(WPE) && !PLATFORM(ZEROG)
+ 
+ inline Pasteboard::~Pasteboard() = default;
+ 

@@ -30,15 +30,20 @@ list(APPEND WebCore_SOURCES
     # ZeroG
     accessibility/zerog/AXObjectCacheZeroG.cpp
 
+    editing/zerog/EditorZeroG.cpp
+
     platform/graphics/zerog/FontManagerZeroG.cpp
     platform/graphics/zerog/GraphicsLayerZeroG.cpp
     platform/graphics/zerog/PlatformDisplayZeroG.cpp
+    platform/zerog/DragDataZeroG.cpp
     platform/zerog/PasteboardZeroG.cpp
     platform/zerog/PlatformKeyboardEventZeroG.cpp
     platform/zerog/UserAgentZeroG.cpp
 
     # Upstream, generic
     editing/libwpe/EditorLibWPE.cpp # only uses the generic Pasteboard API
+
+    page/glib/DragControllerGLib.cpp # no GLib in it: drag image sizes, the drop operation
 
     platform/ScrollAnimationKinetic.cpp
     platform/ScrollAnimationSmooth.cpp
@@ -47,6 +52,8 @@ list(APPEND WebCore_SOURCES
     platform/generic/KeyedEncoderGeneric.cpp
 
     platform/graphics/PlatformDisplay.cpp
+
+    platform/skia/DragImageSkia.cpp # drag images (ENABLE_DRAG_SUPPORT)
 
     platform/graphics/egl/BitmapTexture.cpp
     platform/graphics/egl/BitmapTexturePool.cpp
@@ -93,4 +100,5 @@ endif ()
 list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/zerog/FontManagerZeroG.h
     platform/graphics/zerog/PlatformDisplayZeroG.h
+    platform/zerog/PasteboardItemsZeroG.h
 )

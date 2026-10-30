@@ -11,6 +11,7 @@ set(ZeroGEmbedding_SOURCES
 
     # WebCore's clients for a ZeroG page.
     clients/ChromeClientZeroG.cpp
+    clients/DragClientZeroG.cpp
     clients/EditorClientZeroG.cpp
     clients/FrameLoaderClientZeroG.cpp
 
@@ -30,6 +31,7 @@ set(ZeroGEmbedding_SOURCES
     loader/WebSocketChannelZeroG.cpp
 
     # Window mode (SDL3).
+    window/ClipboardSDL.cpp
     window/KeyboardSDL.cpp
     window/Window.cpp
 

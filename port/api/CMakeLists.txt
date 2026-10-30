@@ -81,6 +81,14 @@ set(ZeroGStorageTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGStorageTest)
 WEBKIT_EXECUTABLE(ZeroGStorageTest)
 
+# The clipboard, the file chooser and drag and drop.
+set(ZeroGHostTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/host_test.c)
+set(ZeroGHostTest_LIBRARIES ZeroGAPI)
+set(ZeroGHostTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGHostTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGHostTest)
+WEBKIT_EXECUTABLE(ZeroGHostTest)
+
 # Creating and destroying contexts, views and windows with work in flight.
 set(ZeroGLifecycleTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/lifecycle_test.c)
 set(ZeroGLifecycleTest_LIBRARIES ZeroGAPI)
