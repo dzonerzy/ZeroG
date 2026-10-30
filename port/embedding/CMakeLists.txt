@@ -9,6 +9,9 @@ set(ZeroGEmbedding_SOURCES
     PlatformStrategiesZeroG.cpp
     View.cpp
 
+    # The accessibility tree for the OS's assistive technologies.
+    accessibility/Accessibility.cpp
+
     # WebCore's clients for a ZeroG page.
     clients/ChromeClientZeroG.cpp
     clients/DragClientZeroG.cpp
@@ -56,8 +59,18 @@ find_package(SDL3 CONFIG REQUIRED)
 set(ZeroGEmbedding_LIBRARIES SDL3::SDL3-static ZLIB::ZLIB)
 
 if (WIN32)
-    list(APPEND ZeroGEmbedding_SOURCES graphics/SurfaceD3D11.cpp)
-    list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi)
+    list(APPEND ZeroGEmbedding_SOURCES
+        accessibility/AccessibilityUIA.cpp
+        graphics/SurfaceD3D11.cpp
+    )
+    list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi ole32 oleaut32 uiautomationcore)
+else ()
+    # AT-SPI over libdbus, which is loaded at run time.
+    list(APPEND ZeroGEmbedding_SOURCES
+        accessibility/AccessibilityAtspi.cpp
+        accessibility/DBus.cpp
+    )
+    list(APPEND ZeroGEmbedding_LIBRARIES ${CMAKE_DL_LIBS})
 endif ()
 
 # The Web Inspector (dev and debug profiles): WebInspectorUI builds its frontend
@@ -203,3 +216,18 @@ set(ZeroGWindow_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIR
 WEBKIT_EXECUTABLE_DECLARE(ZeroGWindow)
 WEBKIT_EXECUTABLE(ZeroGWindow)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGWindow)
+
+# Accessibility: a UI Automation client (Windows) or an AT-SPI client over D-Bus
+# (Linux) uses the page's controls in a window.
+if (WIN32)
+    set(ZeroGAccessibility_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/accessibility_uia.cpp)
+    set(ZeroGAccessibility_LIBRARIES ZeroGEmbedding ole32 oleaut32 uiautomationcore)
+else ()
+    set(ZeroGAccessibility_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/accessibility_atspi.cpp)
+    set(ZeroGAccessibility_LIBRARIES ZeroGEmbedding ${CMAKE_DL_LIBS})
+endif ()
+set(ZeroGAccessibility_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGAccessibility_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGAccessibility)
+WEBKIT_EXECUTABLE(ZeroGAccessibility)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGAccessibility)

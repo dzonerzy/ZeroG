@@ -57,4 +57,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         fonts-dejavu-core libegl1 libegl-mesa0 libgles2 mesa-libgallium xvfb xauth weston \
     && rm -rf /var/lib/apt/lists/*
 
+# For the accessibility test only: a session bus (dbus-run-session), the AT-SPI
+# bus launcher and registry, and libdbus, which the engine loads at run time.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        dbus dbus-daemon at-spi2-core libdbus-1-3 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src

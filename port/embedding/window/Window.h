@@ -25,6 +25,10 @@ class GLContext;
 
 namespace ZeroG {
 
+namespace Accessibility {
+class Bridge;
+}
+
 class Window {
     WTF_MAKE_NONCOPYABLE(Window);
 public:
@@ -110,6 +114,8 @@ private:
     // DROP_COMPLETE; the page gets the drop then.
     View::DragItems m_drop;
     WebCore::FloatPoint m_dropPoint;
+    // The page for screen readers: UI Automation, AT-SPI (accessibility/).
+    std::unique_ptr<Accessibility::Bridge> m_accessibility;
 };
 
 } // namespace ZeroG

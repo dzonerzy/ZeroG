@@ -2,7 +2,8 @@
 # Runs the render tests in the Linux builder image (README, "Building"), on
 # whatever EGL driver the container has (Mesa llvmpipe by default; see the README
 # for the GPU through WSL 2). Every EGL display path and both window systems are
-# covered: Xvfb for X11, Weston's headless backend for Wayland.
+# covered: Xvfb for X11, Weston's headless backend for Wayland. The accessibility
+# test runs under dbus-run-session, with at-spi2-core's bus and registry.
 #
 #   docker run --rm -v zerog-linux-build:/build zerog-linux-builder \
 #       sh /src/tests/render/run_linux.sh [build dir, default /build/zerog-minimal]
@@ -41,6 +42,8 @@ run "localStorage, sessionStorage and IndexedDB" "$bin/ZeroGStorageTest"
 run "clipboard, file chooser, drag and drop" "$bin/ZeroGHostTest"
 run "Web Inspector (dev and debug builds)" "$bin/ZeroGInspector"
 run "create and destroy cycles" xvfb-run -a "$bin/ZeroGLifecycleTest"
+# A session bus of its own; the AT-SPI bus and registry start on demand.
+run "accessibility (AT-SPI)" dbus-run-session -- xvfb-run -a timeout 120 "$bin/ZeroGAccessibility"
 for target in assets requests values; do
     run "fuzz corpus: $target" "$bin/ZeroGFuzz$(echo $target | sed 's/./\U&/')" /src/tests/fuzz/corpus/$target/*
 done

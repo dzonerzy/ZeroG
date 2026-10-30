@@ -43,6 +43,13 @@ Engine features of roadmap phases 3 and 4:
   unchanged. `zg_view_set_frame_rate` gives a texture-mode view the refresh
   rate of the application's display (default 60), the rate at which these
   animations produce frames; a window follows its display's.
+- Accessibility: window mode exposes the page to screen readers, through UI
+  Automation on Windows and AT-SPI on Linux (libdbus is loaded at run time;
+  nothing without a session bus, or with `NO_AT_BRIDGE=1`). Controls have
+  their names, roles, states and bounds; buttons and links can be pressed, text
+  fields read and set, check boxes toggled, ranges read and set, and focus,
+  value, name, state and structure changes are announced. No new function;
+  texture-mode views have no bridge yet.
 - Window mode with several windows: each window gets its own events. Before,
   whichever window polled first took every window's events.
 - WebGL (standard, dev and debug profiles): WebGL and WebGL 2 in GPU views,

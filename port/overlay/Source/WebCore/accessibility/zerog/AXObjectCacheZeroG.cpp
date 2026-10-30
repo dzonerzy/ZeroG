@@ -26,14 +26,39 @@
 #include "config.h"
 #include "AXObjectCache.h"
 
+#include "AXNotifications.h"
+#include "AccessibilityClientZeroG.h"
 #include "AccessibilityObject.h"
+#include "Document.h"
+#include "DocumentPage.h"
+#include "Page.h"
+#include "RenderView.h"
 
-// WebCore builds the accessibility tree; delivering it to a screen reader needs a
-// per-OS bridge (AT-SPI, UI Automation, NSAccessibility), which ZeroG.md places
-// after version 1 ("Accessibilità"). Until then platform notifications go nowhere
-// and wrappers are placeholders (AccessibilityObjectWrapper, AXCoreObject.h).
+// WebCore builds the accessibility tree; the per-OS bridges that hand it to
+// assistive technologies (UI Automation, AT-SPI) live in the embedding layer
+// (port/embedding/accessibility) and read the tree themselves. Here platform
+// notifications become AccessibilityClientZeroG events. Objects are identified
+// by their AXID: wrappers stay placeholders (AccessibilityObjectWrapper,
+// AXCoreObject.h).
 
 namespace WebCore {
+
+static AccessibilityClientZeroG* s_client;
+
+void setAccessibilityClientZeroG(AccessibilityClientZeroG* client)
+{
+    s_client = client;
+}
+
+static void notifyClient(AccessibilityObject* object, AccessibilityEventZeroG event)
+{
+    if (!s_client || !object)
+        return;
+    RefPtr document = object->document();
+    RefPtr page = document ? document->page() : nullptr;
+    if (page)
+        s_client->accessibilityEvent(*page, *object, event);
+}
 
 void AXObjectCache::attachWrapper(AccessibilityObject& object)
 {
@@ -41,28 +66,64 @@ void AXObjectCache::attachWrapper(AccessibilityObject& object)
     object.setWrapper(wrapper.ptr());
 }
 
-void AXObjectCache::detachWrapper(AXCoreObject*, AccessibilityDetachmentType)
+void AXObjectCache::detachWrapper(AXCoreObject* object, AccessibilityDetachmentType)
 {
+    if (s_client && object)
+        s_client->accessibilityObjectDetached(object->objectID());
 }
 
-void AXObjectCache::postPlatformNotification(AccessibilityObject&, AXNotification)
+void AXObjectCache::postPlatformNotification(AccessibilityObject& object, AXNotification notification)
 {
+    switch (notification) {
+    case AXNotification::ChildrenChanged:
+        notifyClient(&object, AccessibilityEventZeroG::ChildrenChanged);
+        break;
+    case AXNotification::NameChanged:
+    case AXNotification::LabelChanged:
+        notifyClient(&object, AccessibilityEventZeroG::NameChanged);
+        break;
+    case AXNotification::ValueChanged:
+    case AXNotification::TextChanged:
+    case AXNotification::MenuListValueChanged:
+        notifyClient(&object, AccessibilityEventZeroG::ValueChanged);
+        break;
+    case AXNotification::CheckedStateChanged:
+    case AXNotification::SelectedStateChanged:
+    case AXNotification::ExpandedChanged:
+    case AXNotification::RowExpanded:
+    case AXNotification::RowCollapsed:
+    case AXNotification::PressedStateChanged:
+    case AXNotification::DisabledStateChanged:
+    case AXNotification::ReadOnlyStatusChanged:
+    case AXNotification::RequiredStatusChanged:
+        notifyClient(&object, AccessibilityEventZeroG::StateChanged);
+        break;
+    default:
+        break;
+    }
 }
 
-void AXObjectCache::nodeTextChangePlatformNotification(AccessibilityObject*, AXTextChange, unsigned, const String&)
+void AXObjectCache::nodeTextChangePlatformNotification(AccessibilityObject* object, AXTextChange, unsigned, const String&)
 {
+    notifyClient(object, AccessibilityEventZeroG::ValueChanged);
 }
 
-void AXObjectCache::frameLoadingEventPlatformNotification(RenderView*, AXLoadingEvent)
+void AXObjectCache::frameLoadingEventPlatformNotification(RenderView* renderView, AXLoadingEvent loadingEvent)
 {
+    if (!renderView || loadingEvent != AXLoadingEvent::Finished)
+        return;
+    RefPtr object = getOrCreate(*renderView);
+    if (object && object->role() == AccessibilityRole::WebArea)
+        notifyClient(object.get(), AccessibilityEventZeroG::LoadComplete);
 }
 
 void AXObjectCache::handleScrolledToAnchor(const Node&)
 {
 }
 
-void AXObjectCache::platformHandleFocusedUIElementChanged(AccessibilityObject*, AccessibilityObject*)
+void AXObjectCache::platformHandleFocusedUIElementChanged(AccessibilityObject*, AccessibilityObject* newFocus)
 {
+    notifyClient(newFocus, AccessibilityEventZeroG::FocusChanged);
 }
 
 void AXObjectCache::platformPerformDeferredCacheUpdate()

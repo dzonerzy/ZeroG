@@ -16,6 +16,7 @@ include(platform/Adwaita.cmake) # theme drawn by WebCore, the same on every OS
 include(platform/CoordinatedGraphics.cmake) # layers composited with Skia
 
 list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+    ${WEBCORE_DIR}/accessibility/zerog
     ${WEBCORE_DIR}/platform
     ${WEBCORE_DIR}/platform/generic
     ${WEBCORE_DIR}/platform/graphics/egl
@@ -108,6 +109,8 @@ else ()
 endif ()
 
 list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+    accessibility/zerog/AccessibilityClientZeroG.h
+
     platform/graphics/zerog/FontManagerZeroG.h
     platform/graphics/zerog/PlatformDisplayZeroG.h
     platform/zerog/PasteboardItemsZeroG.h

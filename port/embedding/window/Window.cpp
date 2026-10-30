@@ -3,6 +3,7 @@
 
 #include "ClipboardSDL.h"
 #include "Embedding.h"
+#include "accessibility/Accessibility.h"
 #include "graphics/Compositor.h"
 #include "graphics/Surface.h"
 #include "KeyboardSDL.h"
@@ -229,10 +230,13 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
     m_view->setCursorChangedCallback([this](PlatformCursorType type) {
         updateCursor(type);
     });
+    m_accessibility = Accessibility::createBridge(*m_view, nativeHandle(), String::fromUTF8(SDL_GetWindowTitle(m_window)));
 }
 
 Window::~Window()
 {
+    // Assistive technologies let go of the page before it goes.
+    m_accessibility = nullptr;
     windows().remove(m_window);
     // The window's context comes back to this thread.
     if (auto* compositor = m_view->compositor())
@@ -326,6 +330,8 @@ void Window::setTitle(const String& title)
 {
     auto utf8 = title.utf8();
     SDL_SetWindowTitle(m_window, byteCast<char>(utf8.data()));
+    if (m_accessibility)
+        m_accessibility->titleChanged(title);
 }
 
 void Window::setFullscreen(bool fullscreen)
