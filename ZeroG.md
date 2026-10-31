@@ -495,7 +495,7 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | libdrm, GBM | Togliere | DMA-BUF tra processi | Inutili per il trasporto tra processi; per la superficie Vulkan su Linux GBM e le ioctl DRM si caricano a runtime, senza dipendenza di build |
 | libxslt | Togliere | XSLT | `ENABLE_XSLT=OFF` |
 | lcms2 | Togliere | Profili colore ICC | Skia gestisce gli spazi colore |
-| libavif | Togliere | AVIF | Da riattivare nel profilo standard (dav1d c'è già, per i video AV1) |
+| libavif | Tenere (standard, dev, debug) | AVIF | Solo il decoder, sopra dav1d (già nel motore per i video AV1) e libyuv; nessun encoder. Il port vcpkg è ritoccato perché clang-cl unisca gli archivi statici come MSVC (`deps/ports/libavif`). Spento in minimal |
 | libjxl | Togliere | JPEG XL | Escluso: poco usato sul web (Chrome e Firefox non lo mostrano di default), e libjxl porta con sé highway e lcms2, circa 2 MB |
 | libhyphen | Togliere | `hyphens: auto` | — |
 | enchant | Togliere | Controllo ortografico | — |
@@ -525,7 +525,7 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | Cache API | `CacheAPIEnabled` (impostazione) | No | Sì |
 | Service worker | `ENABLE_SERVICE_WORKER` | No | Previsti (oggi spenti) |
 | Web Inspector remoto | `ENABLE_REMOTE_INSPECTOR` | No | Solo nei profili dev e debug |
-| AVIF | `USE_AVIF` | No | Previsto (oggi spento) |
+| AVIF | `USE_AVIF` | No | Sì |
 | JPEG XL | `USE_JPEGXL` | No | No |
 | WOFF2 | `USE_WOFF2` | Sì | Sì |
 
@@ -577,6 +577,7 @@ Questa sezione descrive il design tecnico, non è una consulenza legale. Prima d
 | Media: dav1d | BSD 2-Clause |
 | Media: dr_libs (dr_mp3, dr_flac, dr_wav) | Pubblico dominio (Unlicense) o MIT-0 |
 | Web Audio (standard, dev, debug): pffft | Licenza FFTPACK (stile BSD) |
+| AVIF (standard, dev, debug): libavif | BSD 2-Clause (parti Apache 2.0) |
 | Codice del motore | Da decidere: proposta BSD 2-Clause, coerente con WebKit |
 
 Il layer di embedding eredita la licenza del codice da cui eventualmente deriva: BSD se riprende parti di WebKitLegacy, LGPL se riprende parti del WebCore di Ultralight. Va tracciato file per file fin dall'inizio (`docs/PROVENANCE.md`). In ogni caso si linka a WTF, JSC e WebCore, quindi l'obbligo di relink copre l'intero archivio del motore: il relink kit resta lo strumento giusto, con lo stesso design.
@@ -789,7 +790,7 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 - [x] Backend WebSocket nel single-process: deciso e fatto, implementazione nel layer di embedding sopra curl.
 - [x] Cache API: decisa e fatta nei profili standard, dev e debug, con uno storage proprio nel layer di embedding; spenta in minimal.
 - [ ] Service worker: decisi per i profili standard, dev e debug (spenti in minimal), da fare.
-- [ ] AVIF nel profilo standard, dev e debug: da fare (libavif sopra dav1d).
+- [x] AVIF: fatto nei profili standard, dev e debug (libavif sopra dav1d); spento in minimal.
 - [x] JPEG XL: deciso, escluso da tutti i profili (poco diffuso, dipendenze pesanti).
 - [ ] Context menu: callback verso l'host e menu nativo in modalità finestra.
 

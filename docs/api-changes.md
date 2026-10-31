@@ -65,6 +65,9 @@ Engine features of roadmap phases 3 and 4:
 - MP4 on Windows (standard, dev and debug profiles): H.264 and AAC through the
   system's Media Foundation, where Windows has it (not in "N" editions);
   `canPlayType` says so. MP4 files with VP9, AV1 or Opus play everywhere.
+- AVIF images (standard, dev and debug profiles), through libavif and dav1d.
+  No new function. Before, AVIF images did not decode (the minimal profile
+  still does not).
 - `<video controls>` shows WebKit's native controls with their icons (before,
   the buttons had none).
 - GPU views: 2D canvases draw on the GPU, and video frames reach the GPU as YUV

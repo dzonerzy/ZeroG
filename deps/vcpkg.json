@@ -41,6 +41,7 @@
     "libvorbis",
     { "name": "drlibs", "$comment": "MP3, FLAC and WAV decoding, header-only" },
     { "name": "libyuv", "default-features": false, "$comment": "decoded YUV frames to RGBA" },
+    { "name": "libavif", "default-features": false, "features": ["dav1d"], "$comment": "AVIF images (standard, dev and debug profiles), decoded by dav1d; no encoder" },
     { "name": "pffft", "$comment": "Web Audio's FFT (AnalyserNode, ConvolverNode, PannerNode's HRTF); FFTPACK license, BSD-style" },
     {
       "name": "curl",

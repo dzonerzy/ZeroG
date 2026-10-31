@@ -134,8 +134,9 @@ set(ZEROG_FULL_WEB ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SOURCE PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)
-# Image formats and color management left out of every profile for now.
-WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_AVIF PRIVATE OFF)
+# AVIF in the full profiles (libavif over dav1d, the AV1 decoder media uses).
+# JPEG XL is left out everywhere (ZeroG.md), and so is color management.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_AVIF PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_JPEGXL PRIVATE OFF)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_LCMS PRIVATE OFF)
 # Browser features an application engine does not provide.
@@ -241,6 +242,12 @@ find_library(ZEROG_SHARPYUV_LIBRARY NAMES sharpyuv libsharpyuv REQUIRED)
 set_property(TARGET WebP::libwebp APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${ZEROG_SHARPYUV_LIBRARY})
 if (USE_WOFF2)
     set_property(TARGET WOFF2::dec APPEND PROPERTY INTERFACE_LINK_LIBRARIES WOFF2::common Brotli::dec)
+endif ()
+if (USE_AVIF)
+    find_package(AVIF 0.9.0 REQUIRED)
+    find_library(ZEROG_AVIF_DAV1D_LIBRARY NAMES dav1d libdav1d REQUIRED)
+    find_library(ZEROG_AVIF_YUV_LIBRARY NAMES yuv libyuv REQUIRED)
+    set_property(TARGET AVIF::AVIF APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${ZEROG_AVIF_DAV1D_LIBRARY} ${ZEROG_AVIF_YUV_LIBRARY})
 endif ()
 
 SET_AND_EXPOSE_TO_BUILD(USE_CURL ON)

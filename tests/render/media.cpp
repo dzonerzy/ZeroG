@@ -125,6 +125,7 @@ int main()
         "red-blue.webm"_s, "green-vp8.webm"_s, "yellow-av1.webm"_s, "tone-vorbis.webm"_s,
         "tone-opus.ogg"_s, "tone-vorbis.ogg"_s, "tone.mp3"_s, "tone.flac"_s, "tone.wav"_s,
         "magenta-cyan.mp4"_s, "tone-aac.m4a"_s, "magenta-cyan-frag.mp4"_s, "red-blue-frag.mp4"_s, "red-blue-vp9.mp4"_s,
+        "magenta-cyan.avif"_s,
     };
     auto fs = ZeroG::MemoryFS::create();
     fs->addFile("/index.html"_s, std::span { byteCast<uint8_t>(page), strlen(page) });
@@ -395,6 +396,23 @@ int main()
     evaluate("playAudio('tone.wav'); 0"_s);
     ok &= check(waitFor(5_s, [&] { return evaluate("String(audio['tone.wav'].error)"_s) != "undefined"_s; }), "an <audio> reports that it cannot play (error %s)",
         evaluate("String(audio['tone.wav'].error)"_s).utf8().data());
+#endif
+
+    // An AVIF image (standard, dev and debug): 64x32, magenta then cyan, decoded
+    // by dav1d through libavif. Minimal has no decoder for it.
+    evaluate("window.image = new Image(); image.onload = () => image.dataset.done = 'load'; image.onerror = () => image.dataset.done = 'error';"
+        "image.style.cssText = 'position: absolute; left: 0; top: 0'; document.body.replaceChildren(image); image.src = 'magenta-cyan.avif'; 0"_s);
+    bool imageDone = waitFor(5_s, [&] { return evaluate("image.dataset.done || ''"_s) != ""_s; });
+#if USE(AVIF)
+    ok &= check(imageDone && evaluate("image.dataset.done + ' ' + image.naturalWidth + 'x' + image.naturalHeight"_s) == "load 64x32"_s, "an AVIF image loads: %s",
+        evaluate("image.dataset.done + ' ' + image.naturalWidth + 'x' + image.naturalHeight"_s).utf8().data());
+    waitFor(200_ms, [] { return false; });
+    auto left = pixel(16, 16);
+    auto right = pixel(48, 16);
+    ok &= check(isColor(left, { 255, 0, 255 }) && isColor(right, { 0, 255, 255 }), "and is painted: (%d, %d, %d), (%d, %d, %d)", left[0], left[1], left[2], right[0], right[1], right[2]);
+    ok &= check(evaluate("String(CSS.supports('background-image', 'image-set(\"a.avif\" type(\"image/avif\"))'))"_s) == "true"_s, "image-set() takes image/avif");
+#else
+    ok &= check(imageDone && evaluate("image.dataset.done"_s) == "error"_s, "minimal build: an AVIF image does not decode");
 #endif
 
     view = nullptr;
