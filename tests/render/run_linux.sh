@@ -44,7 +44,7 @@ run "GPU compositing" "$bin/ZeroGCompositing"
 run "media: audio, video and AVIF images (standard, dev and debug builds)" env SDL_AUDIODRIVER=dummy "$bin/ZeroGMedia"
 run "web audio: rendering, FFT, HRTF, decodeAudioData, a live context" env SDL_AUDIODRIVER=dummy "$bin/ZeroGWebAudio"
 run "input" "$bin/ZeroGInput"
-run "resource loader" "$bin/ZeroGLoader"
+run "resource loader and service workers" "$bin/ZeroGLoader"
 run "window on X11" xvfb-run -a "$bin/ZeroGWindow"
 run "C API" xvfb-run -a "$bin/ZeroGAPITest"
 run "C API without a display" "$bin/ZeroGAPITest" --no-window

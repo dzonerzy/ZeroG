@@ -297,6 +297,16 @@ La cache su disco di WebKit vive nel network process di WebKit2, quindi non è d
 
 Anche la Cache API (`caches`, usata dalle pagine e dai worker) in WebKit2 vive nel network process. Nei profili standard, dev e debug il motore ha uno storage proprio (`storage/CacheStorageZeroG`) sul thread principale: un file per origine in `<data_dir>/CacheStorage/`, riscritto per intero a ogni modifica su una WorkQueue, nessun file nei contesti effimeri. Il matching segue `DOMCacheEngine::queryCacheMatch` (con `Vary`), le risposte opache rispettano la Cross-Origin-Resource-Policy, la quota è di 512 MB per origine. Nel profilo minimal `caches` non esiste.
 
+### Service worker
+
+In WebKit2 i service worker attraversano tre processi: la connessione della pagina (`WebSWClientConnection`) parla con un `SWServer` nel network process, che esegue ogni worker in un web process del suo sito e gli manda i fetch delle pagine che controlla. Nei profili standard, dev e debug il motore tiene tutto nel suo unico processo (`serviceworkers/ServiceWorkersZeroG`): per sessione un `SWServer` di WebCore con una connessione per lato, i worker sui thread di WebCore ciascuno in una pagina propria (con lo storage, i cookie e la Cache API della sessione), e il loader che chiede alla sessione prima di passare a curl o a uno scheme handler. Le chiamate tra i lati passano dal run loop principale, come messaggi IPC: nessun lato vede le risposte dell'altro dentro la propria chiamata.
+
+- Navigazioni e script dei worker nello scope di una registrazione la seguono; i subresource dei client controllati vanno al worker; quello a cui il worker non risponde (niente `respondWith`) prosegue come senza worker. Le regole del router che mandano alla rete saltano il worker.
+- Registrazioni nella directory dati (`ServiceWorkers/`, il database SQLite di WebCore su una work queue), in memoria per i contesti effimeri; la sessione successiva sulla stessa directory le ritrova dalla prima navigazione.
+- WebCore assume un processo per sessione; ZeroG ha più sessioni nello stesso processo, quindi la connessione dei service worker si cerca per sessione (patch 0034).
+- Solo http e https, come in WebKit. Niente push, notifiche, background fetch, navigation preload, aggiornamenti in background dello script (`softUpdate`) né `clients.openWindow`: un'applicazione non ha altre finestre del browser.
+- Nel profilo minimal `navigator.serviceWorker` non esiste.
+
 ### Schema custom `app://`
 
 - Gli asset del frontend (HTML, JS, CSS, immagini, font) sono incorporati nel binario come archivio compresso, generato a compile time.
@@ -523,7 +533,7 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | Gamepad | `ENABLE_GAMEPAD` | No | No |
 | Sintesi vocale | `ENABLE_SPEECH_SYNTHESIS` | No | No |
 | Cache API | `CacheAPIEnabled` (impostazione) | No | Sì |
-| Service worker | `ENABLE_SERVICE_WORKER` | No | Previsti (oggi spenti) |
+| Service worker | `ServiceWorkersEnabled` (impostazione) | No | Sì |
 | Web Inspector remoto | `ENABLE_REMOTE_INSPECTOR` | No | Solo nei profili dev e debug |
 | AVIF | `USE_AVIF` | No | Sì |
 | JPEG XL | `USE_JPEGXL` | No | No |
@@ -789,7 +799,7 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 
 - [x] Backend WebSocket nel single-process: deciso e fatto, implementazione nel layer di embedding sopra curl.
 - [x] Cache API: decisa e fatta nei profili standard, dev e debug, con uno storage proprio nel layer di embedding; spenta in minimal.
-- [ ] Service worker: decisi per i profili standard, dev e debug (spenti in minimal), da fare.
+- [x] Service worker: fatti nei profili standard, dev e debug, tutti nel processo del motore; spenti in minimal. Restano fuori push, notifiche, background fetch, navigation preload e gli aggiornamenti in background dello script.
 - [x] AVIF: fatto nei profili standard, dev e debug (libavif sopra dav1d); spento in minimal.
 - [x] JPEG XL: deciso, escluso da tutti i profili (poco diffuso, dipendenze pesanti).
 - [ ] Context menu: callback verso l'host e menu nativo in modalità finestra.

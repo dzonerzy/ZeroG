@@ -17,6 +17,13 @@ Engine features of roadmap phases 3 and 4:
   kept in `data_dir/CacheStorage/` (in memory for ephemeral contexts), 512 MB
   per origin. No new function. Before, `caches` was absent (the minimal profile
   still has none).
+- Service workers (standard, dev and debug profiles) for http and https pages:
+  registration, install and activate, fetch events for navigations and
+  subresources (answered or left to the network), messages, the Cache API
+  inside them. Registrations are kept in `data_dir/ServiceWorkers/` (in memory
+  for ephemeral contexts). No push, notifications, background fetch or
+  navigation preload. No new function. Before, `navigator.serviceWorker` was
+  absent (the minimal profile still has none).
 - HTTP disk cache: `zg_context_config.http_cache_limit` (0 = 64 MB, negative =
   none), in `data_dir/HTTPCache/`.
 - Clipboard: `zg_runtime_set_clipboard` connects the application's clipboard

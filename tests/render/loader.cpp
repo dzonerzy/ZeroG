@@ -68,6 +68,29 @@ constexpr auto indexPage = R"HTML(<!DOCTYPE html>
   <script type="module" src="app.js"></script>
 </head><body><div id="box"></div></body></html>)HTML";
 
+// A service worker: it fills a cache when installed, takes the pages at once,
+// answers some requests itself (a made-up response, one from its cache, a blob,
+// a whole page) and leaves the others to the network; it answers messages.
+constexpr auto serviceWorkerScript = R"JS(
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open('sw').then(cache => cache.put('/sw/cached.txt', new Response('from the cache'))));
+  self.skipWaiting();
+});
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', event => {
+  const path = new URL(event.request.url).pathname;
+  if (path === '/sw/synthetic.txt')
+    event.respondWith(new Response('made by the worker'));
+  else if (path === '/sw/cached.txt')
+    event.respondWith(caches.match(event.request));
+  else if (path === '/sw/blob.txt')
+    event.respondWith(new Response(new Blob(['a blob'])));
+  else if (path === '/sw/offline.html')
+    event.respondWith(new Response('<!DOCTYPE html><title>offline page</title>', { headers: { 'Content-Type': 'text/html' } }));
+});
+self.addEventListener('message', event => event.source.postMessage('pong ' + event.data));
+)JS";
+
 // ---- An archive in tools/assets.py's format ----
 
 void appendLittleEndian(Vector<uint8_t>& out, uint64_t value, size_t size)
@@ -547,6 +570,13 @@ private:
             return response("302 Found", "text/plain", "", "Location: /api.json\r\nAccess-Control-Allow-Origin: *\r\n");
         if (path == "/to-app")
             return response("302 Found", "text/plain", "", "Location: app://localhost/data.json\r\nAccess-Control-Allow-Origin: *\r\n");
+        // Service workers: a page in /sw/, its worker, and what only the network has.
+        if (path == "/sw/page.html")
+            return response("200 OK", "text/html; charset=utf-8", "<!DOCTYPE html><title>sw page</title>");
+        if (path == "/sw/worker.js")
+            return response("200 OK", "text/javascript", serviceWorkerScript);
+        if (path == "/sw/network.txt")
+            return response("200 OK", "text/plain", "from the network " + count());
         return response("404 Not Found", "text/plain", "missing");
     }
 
@@ -1058,6 +1088,76 @@ int main()
         });
         passed &= check(server.hits("/cache/big?12") == 1 && server.hits("/cache/big?1") == 2, "the newest entry stays, the oldest went: %d, %d requests",
             server.hits("/cache/big?12"), server.hits("/cache/big?1"));
+        FileSystem::deleteNonEmptyDirectory(directory);
+    }
+
+    // Service workers (standard, dev and debug profiles): registered by a page
+    // of a session with a directory, they answer its fetches and navigations,
+    // and the next session on that directory finds them; another session has
+    // none.
+    {
+        auto* temporary = std::getenv("TEMP") ? std::getenv("TEMP") : std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp";
+        auto directory = FileSystem::pathByAppendingComponent(String::fromUTF8(temporary), "zerog-service-worker-test"_s);
+        FileSystem::deleteNonEmptyDirectory(directory);
+        auto withSession = [&](const String& sessionDirectory, auto&& body) {
+            auto workerSession = ZeroG::Session::create({ }, sessionDirectory, 0);
+            {
+                ZeroG::View::Configuration configuration;
+                configuration.session = workerSession.copyRef();
+                auto view = ZeroG::View::create(WTF::move(configuration));
+                Client client;
+                view->setClient(&client);
+                body(*view, client);
+                // The registration store writes after a turn of the run loop.
+                runUntil([] { return false; }, std::chrono::milliseconds(500));
+            }
+            workerSession->close();
+            runUntil([] { return false; }, std::chrono::milliseconds(200));
+        };
+        auto fetchText = [](ZeroG::View& view, ASCIILiteral path) {
+            return await(view, makeString("fetch('"_s, path, "').then(r => r.text())"_s));
+        };
+#if defined(ZEROG_FULL_WEB)
+        withSession(directory, [&](ZeroG::View& view, Client& client) {
+            passed &= check(load(view, client, makeString(http, "/sw/page.html"_s)), "a page for a service worker loads");
+            // ready resolves once there is an active worker, activating or activated.
+            auto state = await(view, "navigator.serviceWorker.register('/sw/worker.js').then(() => navigator.serviceWorker.ready).then(r => r.active.state === 'activated' ? 'activated'"
+                " : new Promise(resolve => r.active.onstatechange = () => r.active.state === 'activated' && resolve('activated')))"_s);
+            passed &= check(state == "activated"_s, "a service worker registers, installs and activates: %s", state.utf8().data());
+            auto controlled = await(view, "navigator.serviceWorker.controller ? 'yes' : new Promise(r => navigator.serviceWorker.oncontrollerchange = () => r('after claim()'))"_s);
+            passed &= check(controlled == "yes"_s || controlled == "after claim()"_s, "it controls the page: %s", controlled.utf8().data());
+            auto synthetic = fetchText(view, "/sw/synthetic.txt"_s);
+            passed &= check(synthetic == "made by the worker"_s && !server.hits("/sw/synthetic.txt"), "a fetch is answered by the worker: %s", synthetic.utf8().data());
+            auto cached = fetchText(view, "/sw/cached.txt"_s);
+            passed &= check(cached == "from the cache"_s, "from the Cache API it filled when installed: %s", cached.utf8().data());
+            auto blob = fetchText(view, "/sw/blob.txt"_s);
+            passed &= check(blob == "a blob"_s, "with a blob for a body: %s", blob.utf8().data());
+            auto network = fetchText(view, "/sw/network.txt"_s);
+            passed &= check(network == "from the network 1"_s, "what it does not answer goes to the network: %s", network.utf8().data());
+            auto reply = await(view, "new Promise(r => { navigator.serviceWorker.onmessage = e => r(e.data); navigator.serviceWorker.controller.postMessage('ping'); })"_s);
+            passed &= check(reply == "pong ping"_s, "messages go both ways: %s", reply.utf8().data());
+            passed &= check(load(view, client, makeString(http, "/sw/offline.html"_s)) && view.evaluateScript("document.title"_s) == "offline page"_s && !server.hits("/sw/offline.html"),
+                "a navigation in its scope is answered by it: %s", view.evaluateScript("document.title"_s).utf8().data());
+        });
+        withSession(directory, [&](ZeroG::View& view, Client& client) {
+            passed &= check(load(view, client, makeString(http, "/sw/offline.html"_s)) && view.evaluateScript("document.title"_s) == "offline page"_s && !server.hits("/sw/offline.html"),
+                "a new session on the directory has it, from the first navigation: %s", view.evaluateScript("document.title"_s).utf8().data());
+            auto synthetic = fetchText(view, "/sw/synthetic.txt"_s);
+            passed &= check(synthetic == "made by the worker"_s, "and its fetches: %s", synthetic.utf8().data());
+            auto unregistered = await(view, "navigator.serviceWorker.getRegistration('/sw/').then(r => r.unregister())"_s);
+            passed &= check(unregistered == "true"_s, "it unregisters: %s", unregistered.utf8().data());
+        });
+        withSession({ }, [&](ZeroG::View& view, Client& client) {
+            load(view, client, makeString(http, "/sw/offline.html"_s));
+            passed &= check(view.evaluateScript("document.title"_s) != "offline page"_s && server.hits("/sw/offline.html") == 1, "another session has none: the page comes from the server (404)");
+        });
+#else
+        withSession({ }, [&](ZeroG::View& view, Client& client) {
+            load(view, client, makeString(http, "/sw/page.html"_s));
+            passed &= check(view.evaluateScript("typeof navigator.serviceWorker"_s) == "undefined"_s, "the minimal profile has no service workers");
+        });
+        UNUSED_PARAM(fetchText);
+#endif
         FileSystem::deleteNonEmptyDirectory(directory);
     }
 

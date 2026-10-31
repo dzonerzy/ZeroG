@@ -83,6 +83,9 @@ static Ref<Page> createPage(View& view)
     configuration.databaseProvider = view.session().databaseProvider();
 #if defined(ZEROG_FULL_WEB)
     configuration.cacheStorageProvider = Ref { view.session().cacheStorageProvider() };
+    // The session's service workers exist before its first document asks
+    // WebCore for their connection.
+    view.session().serviceWorkers();
 #endif
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
@@ -132,6 +135,8 @@ View::View(Configuration&& configuration)
 #if defined(ZEROG_FULL_WEB)
     // The Cache API (standard, dev and debug profiles; the session's storage).
     settings.setCacheAPIEnabled(true);
+    // Service workers (serviceworkers/ServiceWorkersZeroG.h).
+    settings.setServiceWorkersEnabled(true);
 #endif
     // navigator.clipboard (the clipboard is the application's, PasteboardZeroG.cpp);
     // reading it asks the editor client, which grants it during a user gesture.

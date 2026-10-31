@@ -44,6 +44,7 @@ namespace ZeroG {
 class Download;
 class HTTPCache;
 class SchemeHandler;
+class ServiceWorkerSession;
 class View;
 
 // A load in flight, kept by the loader strategy until WebCore removes its loader.
@@ -199,6 +200,9 @@ public:
     WebCore::CacheStorageProvider& cacheStorageProvider();
     // The HTTP disk cache (HTTPCache.h); null without a directory.
     HTTPCache* httpCache() const { return m_httpCache.get(); }
+    // Service workers (serviceworkers/ServiceWorkersZeroG.h), registrations
+    // under ServiceWorkers/; null in the minimal profile and once closed.
+    ServiceWorkerSession* serviceWorkers();
 
 private:
     Session(const String& cookieDatabasePath, const String& storageDirectory, uint64_t httpCacheCapacity);
@@ -208,6 +212,8 @@ private:
     RefPtr<WebCore::StorageNamespaceProvider> m_storageNamespaceProvider;
     RefPtr<WebCore::DatabaseProvider> m_databaseProvider;
     RefPtr<WebCore::CacheStorageProvider> m_cacheStorageProvider;
+    RefPtr<ServiceWorkerSession> m_serviceWorkers;
+    bool m_isClosed { false };
     HashMap<String, Ref<SchemeHandler>> m_schemeHandlers;
     std::unique_ptr<WebCore::CookieJarDB> m_cookieDatabase;
     RefPtr<WebCore::UserContentProvider> m_userContentProvider;

@@ -35,6 +35,7 @@
 #include "Download.h"
 #include "HTTPCache.h"
 #include "View.h"
+#include "serviceworkers/ServiceWorkersZeroG.h"
 #include "storage/CacheStorageZeroG.h"
 #include "storage/DatabaseProviderZeroG.h"
 #include "storage/WebStorageNamespaceProvider.h"
@@ -441,6 +442,17 @@ DatabaseProvider& Session::databaseProvider()
     return *m_databaseProvider;
 }
 
+ServiceWorkerSession* Session::serviceWorkers()
+{
+#if defined(ZEROG_FULL_WEB)
+    if (!m_serviceWorkers && !m_isClosed) {
+        m_serviceWorkers = ServiceWorkerSession::create(*this, m_storageDirectory.isEmpty()
+            ? String() : FileSystem::pathByAppendingComponent(m_storageDirectory, "ServiceWorkers"_s));
+    }
+#endif
+    return m_serviceWorkers.get();
+}
+
 Session::~Session()
 {
     // Cached responses keep their files alive; a session's go with it.
@@ -456,6 +468,10 @@ CredentialStorage& Session::credentials()
 
 void Session::close()
 {
+    m_isClosed = true;
+    // The workers hold the session; they stop and let it go.
+    if (RefPtr serviceWorkers = std::exchange(m_serviceWorkers, nullptr))
+        serviceWorkers->close();
     m_schemeHandlers.clear();
     MemoryCache::singleton().evictResources(m_sessionID);
 }
@@ -604,6 +620,11 @@ Session& sessionForFrame(LocalFrame* frame)
             if (auto* view = View::fromPage(*page))
                 return view->session();
         }
+#if defined(ZEROG_FULL_WEB)
+        // A service worker's page.
+        if (auto* session = sessionForServiceWorkerFrameLoaderClient(frame->loader().client()))
+            return *session;
+#endif
     }
     return Session::defaultSession();
 }
@@ -611,6 +632,19 @@ Session& sessionForFrame(LocalFrame* frame)
 // ---- The loader strategy ----
 
 namespace {
+
+// Blobs, the session's schemes, http and https.
+RefPtr<LoadTask> createDirectTask(ResourceLoader& loader)
+{
+    auto& url = loader.request().url();
+    if (url.protocolIsBlob())
+        return createBlobTask(loader);
+    if (auto* handler = sessionForFrame(loader.frame()).schemeHandler(url.protocol()))
+        return SchemeTask::create(loader, *handler);
+    if (url.protocolIsInHTTPFamily())
+        return createNetworkTask(loader);
+    return nullptr;
+}
 
 class LoaderStrategyZeroG final : public LoaderStrategy {
 public:
@@ -641,13 +675,16 @@ private:
             return;
         }
 
+        // A service worker answers first, for what it controls; what it does
+        // not answer goes on as below.
         RefPtr<LoadTask> task;
-        if (url.protocolIsBlob())
-            task = createBlobTask(loader);
-        else if (auto* handler = sessionForFrame(loader.frame()).schemeHandler(url.protocol()))
-            task = SchemeTask::create(loader, *handler);
-        else if (url.protocolIsInHTTPFamily())
-            task = createNetworkTask(loader);
+        if (auto* serviceWorkers = sessionForFrame(loader.frame()).serviceWorkers()) {
+            task = serviceWorkers->createLoadTask(loader, [loader = Ref { loader }] {
+                return createDirectTask(loader);
+            });
+        }
+        if (!task)
+            task = createDirectTask(loader);
 
         if (!task) {
             RunLoop::mainSingleton().dispatch([loader = Ref { loader }] {

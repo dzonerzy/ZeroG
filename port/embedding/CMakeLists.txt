@@ -88,6 +88,11 @@ add_custom_command(
     VERBATIM)
 list(APPEND ZeroGEmbedding_SOURCES media/MediaControlsIcons.cpp ${_zerog_media_icons})
 
+# Service workers (standard, dev and debug profiles).
+if (ZEROG_FULL_WEB)
+    list(APPEND ZeroGEmbedding_SOURCES serviceworkers/ServiceWorkersZeroG.cpp)
+endif ()
+
 # Media (standard, dev and debug profiles): the engine and its codecs, all
 # royalty-free and permissively licensed, from the sysroot.
 if (ZEROG_MEDIA)
@@ -276,6 +281,9 @@ WEBKIT_EXECUTABLE(ZeroGLoader)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGLoader)
 # Test fonts from the WebKit checkout's Skia (Ahem: public domain; Roboto: Apache 2.0).
 target_compile_definitions(ZeroGLoader PRIVATE ZEROG_TEST_FONTS="${CMAKE_SOURCE_DIR}/Source/ThirdParty/skia")
+if (ZEROG_FULL_WEB)
+    target_compile_definitions(ZeroGLoader PRIVATE ZEROG_FULL_WEB=1)
+endif ()
 
 # GPU compositing: animations on the compositor thread, frames against the CPU render.
 set(ZeroGCompositing_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/compositing.cpp)
