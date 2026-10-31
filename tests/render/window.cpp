@@ -25,6 +25,8 @@
 #if OS(WINDOWS)
 #include <windows.h>
 #include <powrprof.h>
+#else
+extern "C" int zerog_test_x11_input_shape_contains(void* display, unsigned long window, int x, int y); // window_x11.c
 #endif
 
 using namespace WebCore;
@@ -409,6 +411,15 @@ int main()
                 SDL_ReadSurfacePixel(shape, static_cast<int>(50 * scale), static_cast<int>(20 * scale), &r, &g, &b, &headerAlpha);
             }
             ok &= check(shape && !emptyAlpha && headerAlpha == 255, "its input shape is the page's alpha: %d, %d", emptyAlpha, headerAlpha);
+            // And the X server has it: clicks on the empty part go through.
+            auto properties = SDL_GetWindowProperties(sdl);
+            auto* display = SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+            auto window = static_cast<unsigned long>(SDL_GetNumberProperty(properties, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+            if (display && window) {
+                int empty = zerog_test_x11_input_shape_contains(display, window, static_cast<int>(200 * scale), static_cast<int>(150 * scale));
+                int header = zerog_test_x11_input_shape_contains(display, window, static_cast<int>(50 * scale), static_cast<int>(20 * scale));
+                ok &= check(!empty && header == 1, "the X server's input shape lets the empty part's clicks through: %d, %d", empty, header);
+            }
         }
 #endif
     }

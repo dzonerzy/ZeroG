@@ -81,7 +81,7 @@ under `patches/` is listed here when it is created.
 | `tests/media/*` | Original: colours and a 440 Hz tone, made with FFmpeg for the test | BSD-2-Clause |
 | `deps/ports/libavif/*` | vcpkg's libavif port (its patches taken from the vcpkg checkout), with clang-cl merging the static archives as MSVC does (`clang-cl-merge-static-libs.patch`) | MIT (vcpkg); the patch BSD-2-Clause, as libavif |
 | `deps/ports/libwebm/*` | vcpkg's libwebm port, with libwebm's callback parser built into the library (feature `parser`, `parser-objects-in-library.patch`) | MIT (vcpkg); the patch BSD-3-Clause, as libwebm |
-| `deps/ports/sdl3/*` | vcpkg's SDL3 port, with SDL's sound backends (ALSA, PulseAudio, PipeWire) loaded at run time (feature `system-audio`) | MIT (vcpkg) |
+| `deps/ports/sdl3/*` | vcpkg's SDL3 port, with SDL's sound backends (ALSA, PulseAudio, PipeWire) loaded at run time (feature `system-audio`), the X11 shape extension on, the subsystems ZeroG does not use off, and SDL's dynamic API off (`zerog-static-no-dynapi.patch`) | MIT (vcpkg); the patch Zlib, as SDL |
 | `patches/0029-webcore-media-engine-for-zerog.patch` | Original, modifies `MediaPlayer.h` and `MediaPlayerEnums.h` (the ZeroG engine's type and identifier) | Same as the modified files; upstream candidate |
 | `port/overlay/Source/WebCore/platform/audio/zerog/FFTFrameZeroG.cpp` | Original; the packed spectrum layout follows `FFTFrame.h` and the Cocoa port's `FFTFrameMac.cpp` (vDSP's convention), the transform is pffft from the sysroot | BSD-2-Clause |
 | `port/embedding/media/MediaFoundationFile.cpp`, `port/embedding/media/MediaFoundationDecoders.cpp`, `port/embedding/media/MediaFoundation.h` | Original; Media Foundation's interfaces and constants are the Windows SDK's public API | BSD-2-Clause |

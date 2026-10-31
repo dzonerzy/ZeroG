@@ -6,7 +6,10 @@ vcpkg_from_github(
     HEAD_REF main
     PATCHES
         fix-freebsd.patch
+        zerog-static-no-dynapi.patch
 )
+string(APPEND VCPKG_C_FLAGS " -DSDL_ZEROG_NO_DYNAPI")
+string(APPEND VCPKG_CXX_FLAGS " -DSDL_ZEROG_NO_DYNAPI")
 
 string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "static" SDL_STATIC)
 string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "dynamic" SDL_SHARED)
@@ -79,6 +82,16 @@ vcpkg_cmake_configure(
         -DSDL_SHARED=${SDL_SHARED}
         -DSDL_FORCE_STATIC_VCRT=${FORCE_STATIC_VCRT}
         -DSDL_LIBC=ON
+        # ZeroG uses SDL's video, events, audio, clipboard and dialogs (and the
+        # renderer, which builds window framebuffers where there is no native
+        # one, as on Wayland); the other subsystems are left out.
+        -DSDL_GPU=OFF
+        -DSDL_CAMERA=OFF
+        -DSDL_JOYSTICK=OFF
+        -DSDL_HAPTIC=OFF
+        -DSDL_HIDAPI=OFF
+        -DSDL_POWER=OFF
+        -DSDL_SENSOR=OFF
         # Prevent host-installed Unix libraries from silently changing SDL's capabilities.
         -DSDL_FRIBIDI=OFF
         -DSDL_JACK=OFF
@@ -99,7 +112,9 @@ vcpkg_cmake_configure(
         -DSDL_X11_XFIXES=OFF
         -DSDL_X11_XINPUT=OFF
         -DSDL_X11_XRANDR=OFF
-        -DSDL_X11_XSHAPE=OFF
+        # The shape extension (libXext, loaded at run time like libX11):
+        # SDL_SetWindowShape, click-through windows on X11.
+        -DSDL_X11_XSHAPE=ON
         -DSDL_X11_XSCRNSAVER=OFF
         -DSDL_X11_XSYNC=OFF
         -DSDL_X11_XTEST=OFF

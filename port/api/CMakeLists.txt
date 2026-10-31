@@ -56,6 +56,11 @@ set(ZeroGHello_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
 set(ZeroGHello_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGHello)
 WEBKIT_EXECUTABLE(ZeroGHello)
+# The linker's map, for tools/size.py: what each library brings to an application.
+# Windows only: zig cc passes no -Map to its linker.
+if (WIN32)
+    target_link_options(ZeroGHello PRIVATE "/MAP:$<TARGET_FILE_DIR:ZeroGHello>/ZeroGHello.map")
+endif ()
 
 # Value conversions, every type, both ways.
 set(ZeroGValuesTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/values_test.c)

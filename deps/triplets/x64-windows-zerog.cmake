@@ -6,6 +6,10 @@ set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_BUILD_TYPE release)
+# Data in sections of their own, as the engine (OptionsZeroG.cmake): an
+# application's /OPT:REF then drops the unused parts of each library.
+set(VCPKG_C_FLAGS "/Gw /Gy")
+set(VCPKG_CXX_FLAGS "/Gw /Gy")
 set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/../toolchains/windows-clang-cl.cmake)
 # A chainloaded toolchain turns the vcvars environment off by default; the SDK
 # (rc.exe, headers, import libraries) is still needed.

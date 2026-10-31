@@ -349,6 +349,16 @@ set(ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window.cpp)
 set(ZeroGWindow_LIBRARIES ZeroGEmbedding SDL3::SDL3-static)
 if (WIN32)
     list(APPEND ZeroGWindow_LIBRARIES powrprof) # the display's power state
+else ()
+    # The X server's input shape of click-through windows (the test only; SDL
+    # loads libX11 and libXext at run time).
+    find_package(X11 REQUIRED)
+    list(APPEND ZeroGWindow_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/window_x11.c)
+    list(APPEND ZeroGWindow_LIBRARIES ${X11_X11_LIB} ${X11_Xext_LIB})
+    # The system's headers after the compiler's libc (zig's glibc), so only
+    # X11's come from there.
+    set_source_files_properties(${ZEROG_SOURCE_DIR}/tests/render/window_x11.c PROPERTIES
+        COMPILE_OPTIONS "-idirafter;${X11_INCLUDE_DIR}")
 endif ()
 set(ZeroGWindow_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
 set(ZeroGWindow_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})

@@ -38,9 +38,11 @@ TRIPLET = "x64-windows-zerog" if IS_WINDOWS else "x64-linux-zerog"
 
 # Per-profile CMake options (ZeroG.md, "Profili di build"). Only flags that
 # exist for the selected port are passed; the rest arrive with WebCore.
+# WebKit options set here, rather than only as port defaults in OptionsZeroG.cmake,
+# are ones whose default changed: CMake keeps an option's cached value otherwise.
 PROFILES = {
-    "minimal": {"CMAKE_BUILD_TYPE": "Release"},
-    "standard": {"CMAKE_BUILD_TYPE": "Release"},
+    "minimal": {"CMAKE_BUILD_TYPE": "Release", "ENABLE_SAMPLING_PROFILER": "OFF"},
+    "standard": {"CMAKE_BUILD_TYPE": "Release", "ENABLE_SAMPLING_PROFILER": "OFF"},
     # Release engine for app development; the Web Inspector is added with WebCore.
     "dev": {"CMAKE_BUILD_TYPE": "Release"},
     # Engine work: assertions (NDEBUG unset) and full symbols.

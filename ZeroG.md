@@ -260,7 +260,28 @@ Su Windows e macOS va deciso se usare lo stesso stack FreeType per coerenza visi
 
 ### ICU e dimensioni del binario
 
-I dati ICU completi pesano decine di MB e dominano la dimensione di un binario statico. Il build system usa il filtro dei dati ICU per includere solo le lingue e le funzioni necessarie, con un profilo "minimo" e uno "completo" selezionabili a compile time.
+I dati ICU completi pesano decine di MB e dominano la dimensione di un binario statico. Il build system usa il filtro dei dati ICU per includere solo le lingue e le funzioni necessarie, con un profilo "minimo" e uno "completo" selezionabili a compile time. In tutti i profili mancano i dati dei servizi ICU che il motore non chiama mai (traslitterazione, nomi dei caratteri, controlli anti-spoofing, StringPrep, normalizzatori NFKC_Casefold): 1,8 MB in meno.
+
+### Dimensione del binario
+
+`tools/size.py` misura l'app di esempio (`ZeroGHello`, che linka tutto il motore) come la spedirebbe un'applicazione, senza simboli: dimensione, sezioni e, su Windows, quanto porta ogni libreria (dalla map del linker). Fuori dal profilo debug il build riduce il binario senza togliere funzioni:
+
+- ogni funzione e ogni dato in una sezione propria (`/Gw` su Windows, `-ffunction-sections -fdata-sections` su Linux, anche nelle dipendenze di vcpkg), così il link di un'applicazione scarta quello che non raggiunge (`/OPT:REF`, `--gc-sections`);
+- su Windows identical code folding sicuro (`/OPT:SAFEICF`): fonde solo le funzioni di cui nessuno prende l'indirizzo, quindi i confronti tra puntatori a funzione restano veri (WebKit lo spegne del tutto per questo). zig non passa `--icf` al linker, su Linux niente folding;
+- nei profili minimal e standard niente disassembler del JIT (Zydis) né sampling profiler, che servono solo a lavorare sul motore e restano dove c'è il Web Inspector;
+- SDL3 senza i sottosistemi che ZeroG non usa (API GPU, camera, joystick, haptic, HIDAPI, power, sensori) e senza la sua API dinamica, che con la variabile `SDL_DYNAMIC_API` permetterebbe di sostituire SDL a runtime e, con la sua tabella di tutte le funzioni, impedirebbe al linker di scartarne qualcuna.
+
+Misure di `ZeroGHello` senza simboli:
+
+| Profilo | Windows prima | Windows | Linux |
+| --- | --- | --- | --- |
+| minimal | 104,4 MB | 93,1 MB | 90,2 MB |
+| standard | — | 123,0 MB | — |
+| dev | 137,8 MB | 125,5 MB | 126,6 MB |
+
+Nel minimal su Windows: WebCore 39,4 MB, JavaScriptCore 18,7, dati ICU 11,4, ANGLE 4,0, Skia 3,6, il resto sotto 1,6 MB a libreria. Nello standard i dati ICU completi pesano 26,5 MB. Compresso per il download (xz) il minimal pesa 26,5 MB. UPX lo porterebbe a 25,8 MB, ma il binario compresso va in crash all'avvio e in ogni caso costa a ogni lancio la decompressione e la memoria non condivisa del codice.
+
+Restano possibili, con un costo: compilare per dimensione (`/O1`, `-Os`) invece che per velocità, togliere il JIT DFG dal minimal (3-4 MB), ridurre le lingue dei dati ICU nello standard. WebCore nel minimal ha già spente tutte le funzioni che si spengono da CMake; il resto è il motore stesso o richiederebbe patch upstream per pochi MB.
 
 ## Rete, storage e risorse
 
@@ -715,7 +736,7 @@ Ogni metrica si misura in CI a ogni commit, sulla stessa app di esempio, e si co
 
 | Metrica | Come si misura | Obiettivo |
 | --- | --- | --- |
-| Dimensione del binario | Hello world nel profilo minimal, dopo lo strip dei simboli | Da fissare dopo la fase 1 |
+| Dimensione del binario | Hello world nel profilo minimal, dopo lo strip dei simboli (`tools/size.py`) | Misurata: 93,1 MB su Windows, 90,2 MB su Linux ("Dimensione del binario"); non oltre |
 | Memoria a riposo | RSS con una view vuota caricata | Da fissare dopo la fase 1 |
 | Memoria con app di esempio | RSS con la demo React aperta | Da fissare dopo la fase 1 |
 | Tempo di avvio | Dall'avvio del processo al primo frame mostrato | Da fissare dopo la fase 1 |

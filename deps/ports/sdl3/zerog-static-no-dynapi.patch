@@ -1,0 +1,15 @@
+The dynamic API lets SDL_DYNAMIC_API in the environment replace SDL with
+another library at run time, and its jump table references every function, so
+no linker can drop the unused ones. Inside ZeroG's static engine neither is
+wanted: the portfile defines SDL_ZEROG_NO_DYNAPI.
+
+--- a/src/dynapi/SDL_dynapi.h
++++ b/src/dynapi/SDL_dynapi.h
+@@ -66,5 +66,7 @@
+ #elif defined(SDL_PLATFORM_NGAGE)
+ #define SDL_DYNAMIC_API 0
+ #elif defined(DYNAPI_NEEDS_DLOPEN) && !defined(HAVE_DLOPEN)
+ #define SDL_DYNAMIC_API 0 // we need dlopen(), but don't have it....
++#elif defined(SDL_ZEROG_NO_DYNAPI)
++#define SDL_DYNAMIC_API 0
+ #endif

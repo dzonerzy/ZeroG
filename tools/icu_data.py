@@ -12,7 +12,8 @@ What is removed:
     (root, lang, region, curr, unit, zone, coll, rbnf, brkitr), with res_index
     rewritten so Intl does not advertise them;
   - every converter table except those WebCore routes to ICU, read from
-    Source/WebCore/PAL/pal/text/TextCodecICU.cpp.
+    Source/WebCore/PAL/pal/text/TextCodecICU.cpp;
+  - the data of ICU services the engine never calls (UNUSED_SERVICES).
 Everything else (normalization, break rules and dictionaries, time zones,
 properties) is kept.
 """
@@ -30,6 +31,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOCALE_TREES = ["", "lang", "region", "curr", "unit", "zone", "coll", "rbnf", "brkitr"]
 # Deprecated language codes still shipped as alias bundles, mapped to the current code.
+# Data of ICU services nothing in WTF, JavaScriptCore or WebCore calls, removed in
+# every profile: transliteration (utrans), character names (u_charName), spoof
+# checks (uspoof), StringPrep (usprep; IDNA is UTS #46, uts46.nrm) and the
+# NFKC_Casefold normalizers. Anything that turns out to depend on them is
+# restored like any other missing dependency.
+UNUSED_SERVICES = [r"translit/.*", r"unames\.icu", r"confusables\.cfu", r".*\.spp", r"nfkc_s?cf\.nrm"]
 LANGUAGE_ALIASES = {"in": "id", "iw": "he", "ji": "yi", "mo": "ro", "no": "nb", "sh": "sr",
                     "tl": "fil", "ars": "ar"}
 
@@ -183,6 +190,7 @@ def build(args):
 
     keep_cnv = converter_files(uconv, webcore_encodings())
     removed |= {i for i in all_items if i.endswith(".cnv") and i[:-4] not in keep_cnv}
+    removed |= {i for i in all_items if any(re.fullmatch(p, i) for p in UNUSED_SERVICES)}
 
     filtered = work / "out" / package.name
     filtered.parent.mkdir()

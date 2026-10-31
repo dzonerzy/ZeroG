@@ -30,6 +30,18 @@ if (MSVC)
     if (NOT ZEROG_PROFILE STREQUAL "debug")
         MSVC_ADD_COMPILE_OPTIONS(-gline-tables-only)
     endif ()
+    # Size (ZeroG.md, "Metriche"): data in sections of their own (/Gw; /O2 gives
+    # functions theirs), so an application's /OPT:REF drops what it never
+    # reaches. OptionsMSVC turns identical code folding off because folded
+    # functions compare equal; safe ICF folds only those whose address is never
+    # taken (clang's address-significance tables), which keeps that true.
+    if (NOT ZEROG_PROFILE STREQUAL "debug")
+        MSVC_ADD_COMPILE_OPTIONS(/Gw)
+        get_directory_property(_zerog_link_options LINK_OPTIONS)
+        list(REMOVE_ITEM _zerog_link_options /OPT:NOICF)
+        set_directory_properties(PROPERTIES LINK_OPTIONS "${_zerog_link_options}")
+        add_link_options(/OPT:SAFEICF)
+    endif ()
 else ()
     set(CMAKE_C_VISIBILITY_PRESET hidden)
     set(CMAKE_CXX_VISIBILITY_PRESET hidden)
@@ -46,6 +58,20 @@ if (ZEROG_ZIG AND WTF_CPU_X86_64)
     # AVX-512 kernels then fail to compile. -mevex512 only permits 512-bit vectors
     # in functions that opt into AVX-512; baseline code generation is unchanged.
     add_compile_options(-mevex512)
+endif ()
+if (ZEROG_ZIG AND WTF_CPU_X86_64 AND NOT CMAKE_LIBRARY_ARCHITECTURE)
+    # CMake takes the multiarch directory (/usr/lib/x86_64-linux-gnu) from the
+    # compiler, which zig does not report; the system libraries a test links
+    # (X11 in ZeroGWindow) are there. The sysroot is still searched first.
+    set(CMAKE_LIBRARY_ARCHITECTURE x86_64-linux-gnu)
+endif ()
+if (NOT MSVC AND NOT ZEROG_PROFILE STREQUAL "debug")
+    # Size (ZeroG.md, "Metriche"): every function and datum in a section of its
+    # own, so the link drops what nothing reaches. OptionsCommon does this only
+    # when the linker's --help mentions --gc-sections, which zig's does not
+    # print. (zig cc passes no --icf to its linker: no code folding here.)
+    add_compile_options(-ffunction-sections -fdata-sections)
+    add_link_options("LINKER:--gc-sections")
 endif ()
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ZEROG_ZIG)
     # Executables built in the port (jsc, tests) carry the C++ runtime: only glibc
@@ -122,6 +148,13 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY_OMGJIT PRIVATE ${_zerog_full
 # and DFG (smaller, less JIT attack surface); other profiles have both.
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_FTL_JIT PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE ${_zerog_inspector})
+# Tools for engine work only, kept where the Web Inspector is: the sampling
+# profiler (the inspector's JavaScript timelines) and JSC's disassembler of
+# generated code (Zydis, for JSC_dumpDisassembly).
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_SAMPLING_PROFILER PRIVATE ${_zerog_inspector})
+if (NOT _zerog_inspector)
+    add_definitions(-DENABLE_ZYDIS=0)
+endif ()
 # Media (ZeroG.md, "Media"): ENABLE_VIDEO stays on in every profile (no upstream
 # port builds without it and WebCore compiles media code unguarded). The standard,
 # dev and debug profiles have ZeroG's media engine (port/embedding/media: WebM,
