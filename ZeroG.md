@@ -198,7 +198,7 @@ Con un solo processo il problema del trasporto dei frame sparisce: **Skia render
 
 | Piattaforma | Backend Skia | Note |
 | --- | --- | --- |
-| Linux | OpenGL (EGL) o Vulkan | Driver caricati dal sistema con `dlopen` |
+| Linux | OpenGL (EGL) | Driver caricati dal sistema con `dlopen`. Per gli host Vulkan il motore renderizza su GL in buffer dma-buf che l'host importa (`ZG_SURFACE_VULKAN`, `zg_surface_dmabuf`); GBM e il device DRM sono caricati a runtime solo per questo |
 | Windows | OpenGL tramite ANGLE su D3D11 | Il percorso Skia più collaudato su Windows; condivisione diretta delle texture con i giochi D3D11; WebGL incluso |
 | macOS | Metal | Il backend Metal di Skia è maturo |
 
@@ -206,8 +206,8 @@ Con un solo processo il problema del trasporto dei frame sparisce: **Skia render
 
 WebCore separa le parti della pagina in layer (trasformazioni CSS, animazioni, video, canvas WebGL) e si aspetta un compositor che li unisca. È la parte più impegnativa del layer di piattaforma.
 
-- **Versione 1**: compositing accelerato disattivato. WebCore disegna tutto in una sola superficie Skia, con aggiornamento delle sole regioni modificate. È più semplice e basta per la maggior parte delle UI.
-- **Versione 2**: compositor proprio sopra Skia, oppure riuso di TextureMapper (il compositor dei port GTK e WPE). Serve per animazioni CSS fluide su pagine complesse e per WebGL.
+- **Viste CPU**: compositing accelerato disattivato. WebCore disegna tutto in una sola superficie Skia, con aggiornamento delle sole regioni modificate.
+- **Viste GPU** (texture, finestra, Vulkan; deciso e fatto): il compositor Skia upstream dei port GTK e WPE (coordinated graphics, senza TextureMapper), guidato da un thread compositor proprio del motore (`graphics/Compositor`), l'equivalente single-process di `LayerTreeHost` e `ThreadedCompositor` di WebKit2. I tile si dipingono sui worker, le animazioni CSS di transform e opacity producono frame senza aggiornare il rendering della pagina, al ritmo dei frame dell'applicazione. WebGL, i canvas 2D (disegnati sulla GPU) e i video (frame come piani YUV convertiti dalla GPU) sono layer propri.
 
 ### Ciclo di un frame
 
@@ -283,7 +283,7 @@ In un'applicazione quasi tutte le risorse arrivano da `app://`, servite dalla me
 
 ### Certificati
 
-BoringSSL non usa da solo gli store di sistema. Il motore carica le CA radice all'avvio: dai percorsi standard su Linux, dallo store di sistema di Windows (CryptoAPI) e dal Keychain su macOS. In alternativa si può incorporare un bundle di CA nel binario, utile per ambienti embedded.
+BoringSSL non usa da solo gli store di sistema. Il motore usa le CA radice del sistema: il bundle dai percorsi standard su Linux, lo store di Windows tramite curl (`CURLSSLOPT_NATIVE_CA`), il Keychain su macOS (da fare con il port macOS). L'applicazione aggiunge CA proprie con `zg_runtime_add_ca_certificates` (PEM, anche un bundle incorporato nel binario per ambienti embedded); valgono anche su Windows e per `wss://` (patch 0022). Un certificato rifiutato dà un errore leggibile ("certificate not trusted").
 
 ### Loader delle risorse
 
@@ -291,7 +291,7 @@ Il layer di embedding implementa il caricamento: `app://` e gli schemi custom ri
 
 ### Cache HTTP
 
-La cache su disco di WebKit vive nel network process di WebKit2, quindi non è disponibile. Nella versione 1 c'è solo la cache in memoria di WebCore; una cache su disco propria arriva nella versione 2, se serve.
+La cache su disco di WebKit vive nel network process di WebKit2, quindi non è disponibile. Il motore ha una cache su disco propria (`loader/HTTPCache`) accanto a quella in memoria di WebCore: per sessione nella directory dati (nessuna nei contesti effimeri), con limite configurabile (`zg_context_config.http_cache_limit`), freschezza e validazione HTTP (max-age, ETag, Last-Modified, `Vary`), eviction dei meno usati.
 
 ### Schema custom `app://`
 
@@ -302,7 +302,7 @@ La cache su disco di WebKit vive nel network process di WebKit2, quindi non è d
 
 ### Dev mode
 
-In sviluppo la view carica direttamente il dev server del frontend (per esempio Vite su `http://localhost:5173`), e il passaggio a `app://` avviene solo nella build di release. L'hot reload passa da HTTP e **WebSocket**, e qui c'è lavoro da fare: senza il network process di WebKit2 il backend WebSocket va fornito dal layer di embedding, sopra curl (che supporta WebSocket nelle versioni recenti) o riusando il codice curl di WebCore se è ancora presente nella revisione scelta. Va verificato presto, perché senza WebSocket il dev mode perde l'hot reload.
+In sviluppo la view carica direttamente il dev server del frontend (per esempio Vite su `http://localhost:5173`), e il passaggio a `app://` avviene solo nella build di release. L'hot reload passa da HTTP e **WebSocket**: senza il network process di WebKit2 il backend WebSocket lo fornisce il layer di embedding, sopra curl (`loader/WebSocketChannelZeroG`), con subprotocol, cookie dell'handshake, messaggi di testo e binari e `wss://`. Il dev server è fidato solo nel profilo dev (`dev_server_url`).
 
 ### Storage
 
@@ -326,13 +326,13 @@ Il supporto agli input method (cinese, giapponese, coreano, emoji) è obbligator
 
 ### Clipboard, drag and drop, dialog
 
-- Clipboard di sistema in lettura e scrittura, con testo, HTML e immagini.
-- Drag and drop di file verso la view nella versione 1; trascinamento fuori dalla view più avanti.
-- Context menu, file chooser e dialog JS (`alert`, `confirm`, `prompt`) diventano callback verso l'host, con un'implementazione nativa di default in modalità finestra.
+- Clipboard di sistema in lettura e scrittura, con testo, HTML e immagini (`zg_runtime_set_clipboard`, oppure quella di SDL3 in modalità finestra); `navigator.clipboard` incluso.
+- Drag and drop di file, testo e URL verso la view (`zg_view_drag`), e drag HTML5 dentro la pagina; trascinamento fuori dalla view più avanti.
+- File chooser e dialog JS (`alert`, `confirm`, `prompt`) sono callback verso l'host, con un'implementazione nativa di default in modalità finestra. Il context menu non c'è ancora.
 
 ### Accessibilità
 
-WebCore costruisce l'albero di accessibilità, ma il ponte verso lo screen reader è specifico di ogni OS: AT-SPI su Linux (che nei port upstream dipende da GLib e D-Bus), UI Automation su Windows, NSAccessibility su macOS. Nel port proprio questi ponti vanno scritti. Sono fuori dalla versione 1 e restano una questione aperta, insieme all'accessibilità in modalità texture.
+WebCore costruisce l'albero di accessibilità, ma il ponte verso lo screen reader è specifico di ogni OS, e nel port proprio va scritto. Fatti (modalità finestra): **UI Automation** su Windows, un provider scritto da zero (nomi, ruoli, stati, Invoke, Value, Toggle, Text, eventi); **AT-SPI** su Linux, un ponte proprio su libdbus caricata a runtime, senza GLib (Accessible, Application, Component, Action, Value, Text, eventi). Restano NSAccessibility con il port macOS e l'accessibilità in modalità texture, dove la finestra è dell'host.
 
 ## API pubblica C
 
@@ -437,13 +437,13 @@ Senza GLib, libsoup e GStreamer spariscono anche i moduli caricati a runtime, ch
 
 WebCore ha bisogno di un backend di riproduzione per `<video>`, `<audio>` e Web Audio, e nei port upstream è GStreamer o AVFoundation. Il port proprio ne deve fornire uno.
 
-- **Versione 1**: nessun backend media, quindi niente riproduzione. `ENABLE_VIDEO` resta acceso senza backend: nessun port upstream compila con video spento e WebCore compila il codice media senza guardie, quindi spegnerlo vorrebbe dire una serie di patch crescente. Gli elementi `<video>` e `<audio>` esistono e segnalano che non possono riprodurre. `ENABLE_WEB_AUDIO` è spento (combinazione già usata dal port PlayStation).
-- **Dopo** (deciso): nei profili standard, dev e debug un motore proprio (`port/embedding/media`) su librerie separate, tutte senza royalty e con licenze permissive, al posto di FFmpeg: libwebm per WebM, libvpx (VP8, VP9), dav1d (AV1), libopus, libogg/opusfile/libvorbis per Ogg, dr_libs per MP3, FLAC e WAV, libyuv per la conversione dei frame. Nessun codec brevettato nel binario: H.264 e AAC in MP4 passano dal sistema operativo dove c'è (Media Foundation su Windows, con i decoder del sistema; su Linux non si riproducono). I file MP4 con VP9, AV1 e Opus si riproducono ovunque con i decoder del motore (le sample table del moov, o i moof di un file frammentato). I controlli nativi sono i modern media controls di WebKit con le icone Adwaita compilate nel motore (patch 0033). Media Source Extensions per WebM e MP4 frammentato: MediaSource e SourceBuffer di WebCore tengono i frame, il port analizza il byte stream (WebM con il parser a callback di libwebm, MP4 con un parser di box proprio) e riproduce i frame accodati con gli stessi decoder; H.264 e AAC da MSE passano dai decoder di Media Foundation su Windows (patch 0031). Nelle viste composite il video è un layer suo: i frame vanno al compositor senza ridipingere la pagina (patch 0032), come piani YUV che la GPU converte in uno shader (nessuna conversione sulla CPU). Su Windows H.264 si decodifica sulla GPU (DXVA, con un device D3D11 condiviso dai decoder di Media Foundation) dove la GPU lo consente. Nelle viste GPU anche i canvas 2D disegnano sulla GPU (Ganesh) come layer propri. L'audio esce con SDL3 (WASAPI; ALSA, PulseAudio, PipeWire caricati a runtime). Web Audio usa lo stesso motore: la destinazione è uno stream SDL3, `decodeAudioData` passa dai decoder dei media, la FFT è pffft (patch 0030), le risposte HRTF di WebKit sono compilate nel motore. Il profilo minimal resta senza motore e senza Web Audio.
+- **Profilo minimal**: nessun backend media, quindi niente riproduzione. `ENABLE_VIDEO` resta acceso senza backend: nessun port upstream compila con video spento e WebCore compila il codice media senza guardie, quindi spegnerlo vorrebbe dire una serie di patch crescente. Gli elementi `<video>` e `<audio>` esistono e segnalano che non possono riprodurre. `ENABLE_WEB_AUDIO` e `ENABLE_MEDIA_SOURCE` sono spenti (combinazione già usata dal port PlayStation).
+- **Profili standard, dev e debug** (fatto): nei profili standard, dev e debug un motore proprio (`port/embedding/media`) su librerie separate, tutte senza royalty e con licenze permissive, al posto di FFmpeg: libwebm per WebM, libvpx (VP8, VP9), dav1d (AV1), libopus, libogg/opusfile/libvorbis per Ogg, dr_libs per MP3, FLAC e WAV, libyuv per la conversione dei frame. Nessun codec brevettato nel binario: H.264 e AAC in MP4 passano dal sistema operativo dove c'è (Media Foundation su Windows, con i decoder del sistema; su Linux non si riproducono). I file MP4 con VP9, AV1 e Opus si riproducono ovunque con i decoder del motore (le sample table del moov, o i moof di un file frammentato). I controlli nativi sono i modern media controls di WebKit con le icone Adwaita compilate nel motore (patch 0033). Media Source Extensions per WebM e MP4 frammentato: MediaSource e SourceBuffer di WebCore tengono i frame, il port analizza il byte stream (WebM con il parser a callback di libwebm, MP4 con un parser di box proprio) e riproduce i frame accodati con gli stessi decoder; H.264 e AAC da MSE passano dai decoder di Media Foundation su Windows (patch 0031). Nelle viste composite il video è un layer suo: i frame vanno al compositor senza ridipingere la pagina (patch 0032), come piani YUV che la GPU converte in uno shader (nessuna conversione sulla CPU). Su Windows H.264 si decodifica sulla GPU (DXVA, con un device D3D11 condiviso dai decoder di Media Foundation) dove la GPU lo consente. Nelle viste GPU anche i canvas 2D disegnano sulla GPU (Ganesh) come layer propri. L'audio esce con SDL3 (WASAPI; ALSA, PulseAudio, PipeWire caricati a runtime). Web Audio usa lo stesso motore: la destinazione è uno stream SDL3, `decodeAudioData` passa dai decoder dei media, la FFT è pffft (patch 0030), le risposte HRTF di WebKit sono compilate nel motore. Il profilo minimal resta senza motore e senza Web Audio.
 
 ### Profili di build
 
 - **minimal**: niente media, niente WebGL, dati ICU ridotti. L'obiettivo è il binario più piccolo possibile per UI di applicazione.
-- **standard**: aggiunge WebGL e, quando esiste, il backend media.
+- **standard**: aggiunge WebGL, WebAssembly, il JIT FTL, il motore media, Web Audio e Media Source Extensions.
 - **dev**: motore in release con il Web Inspector abilitato. È il profilo di `zerog dev`, per sviluppare l'applicazione.
 - **debug**: simboli completi e assert attive (build Debug di WebKit). Per lavorare sul motore stesso; più lento e molto più grande.
 
@@ -485,18 +485,18 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | libsoup, glib-networking | Sostituire | Rete e TLS dei port GLib; il TLS è un modulo caricato a runtime | curl e BoringSSL |
 | libgcrypt, libtasn1 | Sostituire | WebCrypto dei port GLib | [Backend OpenSSL di WebCore](https://webkit.googlesource.com/WebKit/+/7f131dee9ca99449765f131be8dfd81c800dce88/Source/WebCore/crypto/openssl), scritto da Sony per i suoi port, compilato contro BoringSSL |
 | Fontconfig, expat | Sostituire | Ricerca e fallback dei font su Linux | Font manager di Skia per font incorporati o letti da directory, più una tabella di fallback propria |
-| GTK, Wayland, X11 | Sostituire | Finestra e input | Core senza finestra; modalità finestra con SDL3 statico, che carica X11 e Wayland a runtime con `dlopen`, oppure layer finestra proprio |
+| GTK, Wayland, X11 | Sostituire | Finestra e input | Core senza finestra; modalità finestra con SDL3 statico, che carica X11 e Wayland a runtime con `dlopen` (e nei profili con media l'audio: ALSA, PulseAudio, PipeWire, anch'essi a runtime) |
 | libepoxy | Sostituire | Caricamento delle funzioni OpenGL | Skia carica le funzioni GL e Vulkan con `eglGetProcAddress` e `vkGetInstanceProcAddr` |
-| GStreamer | Togliere | Audio e video tramite plugin | Media disattivati nella versione 1 |
-| libdrm, GBM | Togliere | DMA-BUF tra processi | Inutili con un solo processo |
+| GStreamer | Sostituire | Audio e video tramite plugin | Motore media proprio su librerie separate (vedi Media): libwebm, libvpx, dav1d, libopus, libogg, opusfile, libvorbis, dr_libs, libyuv, pffft per Web Audio; H.264 e AAC dai decoder del sistema su Windows |
+| libdrm, GBM | Togliere | DMA-BUF tra processi | Inutili per il trasporto tra processi; per la superficie Vulkan su Linux GBM e le ioctl DRM si caricano a runtime, senza dipendenza di build |
 | libxslt | Togliere | XSLT | `ENABLE_XSLT=OFF` |
 | lcms2 | Togliere | Profili colore ICC | Skia gestisce gli spazi colore |
-| libavif, dav1d, libjxl | Togliere | AVIF e JPEG XL | Riattivabili nel profilo standard |
+| libavif, libjxl | Togliere | AVIF e JPEG XL | Da riattivare nel profilo standard (dav1d c'è già, per i video AV1) |
 | libhyphen | Togliere | `hyphens: auto` | — |
 | enchant | Togliere | Controllo ortografico | — |
 | libmanette | Togliere | Gamepad API | — |
 | libsecret | Togliere | Archivio credenziali | — |
-| ATK, AT-SPI | Togliere | Accessibilità su Linux | Ponti propri dopo la versione 1 |
+| ATK, AT-SPI | Sostituire | Accessibilità su Linux | Ponte AT-SPI proprio su libdbus caricata a runtime, senza ATK né GLib |
 | libsystemd, libseccomp, bubblewrap, xdg-dbus-proxy | Togliere | Logging e sandbox dei port multi-processo | — |
 | libidn2 | Togliere | Domini internazionalizzati in curl | WebCore converte già gli host in punycode con ICU |
 | c-ares | Togliere | DNS asincrono | Basta il resolver a thread di curl |
@@ -519,7 +519,7 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | Sintesi vocale | `ENABLE_SPEECH_SYNTHESIS` | No | No |
 | Service worker | `ENABLE_SERVICE_WORKER` | No | Da valutare |
 | Web Inspector remoto | `ENABLE_REMOTE_INSPECTOR` | No | Solo nei profili dev e debug |
-| AVIF e JPEG XL | `USE_AVIF`, `USE_JPEGXL` | No | Sì |
+| AVIF e JPEG XL | `USE_AVIF`, `USE_JPEGXL` | No | Previsti (oggi spenti) |
 | WOFF2 | `USE_WOFF2` | Sì | Sì |
 
 I nomi dei flag vanno verificati sulla revisione scelta: cambiano tra versioni, e alcuni sono `ENABLE_` mentre altri sono `USE_`.
@@ -751,8 +751,8 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 | API interne di WebCore che cambiano a ogni rebase | Alto | Layer di embedding piccolo, rebase regolari, test del layer a ogni rebase |
 | Contenuto web senza sandbox nel processo dell'app | Alto | Contenuto esterno disattivato di default, profilo minimal, JIT disattivabile |
 | Applicazioni statiche con WebKit vulnerabile | Alto | Politica di aggiornamento, controllo di versione nel framework |
-| Compositing accelerato da scrivere | Medio | Versione 1 senza compositing, compositor nella versione 2 |
-| Backend media da scrivere | Medio | Media disattivati nella versione 1 |
+| Compositing accelerato da mantenere | Medio | Compositor Skia upstream (coordinated graphics) con un thread compositor proprio piccolo; viste CPU senza compositing |
+| Motore media da mantenere | Medio | Librerie separate e stabili, decoder condivisi tra file e MSE, test con fixture per ogni formato e un sito reale (`ZeroGSite`) |
 | Backend GPU di Skia su Windows | Medio | Prototipo Windows presto, come gate della roadmap |
 | Nessun isolamento dei crash | Medio | Fuzzing del codice del progetto, ASan nella CI |
 | Dimensione del binario | Medio | Filtro dei dati ICU, profilo minimal; da misurare al primo milestone |
@@ -766,20 +766,23 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 - [ ] Nome: deciso, ZeroG (ricerca sui marchi in EUIPO da fare). Licenza del codice del motore ancora da decidere.
 - [x] Ramo upstream: deciso, `main` con commit fissato e aggiornamenti regolari.
 - [x] Windows: deciso, Skia su ANGLE (GL su D3D11).
-- [ ] Compositing nella versione 2: compositor proprio o riuso di TextureMapper?
-- [ ] Backend media: FFmpeg unico o backend nativi per OS?
-- [ ] `ENABLE_STATIC_JSC` funziona con il port nuovo senza patch?
-- [ ] Font: FreeType ovunque o font manager nativo su Windows e macOS?
-- [ ] Accessibilità: ponti AT-SPI, UI Automation e NSAccessibility.
+- [x] Compositing: deciso e fatto, il compositor Skia upstream (coordinated graphics) con un thread compositor proprio; niente TextureMapper.
+- [x] Backend media: deciso e fatto, librerie separate senza royalty al posto di FFmpeg, più i decoder del sistema per H.264 e AAC (Media Foundation su Windows).
+- [x] JSC statico: WTF, JavaScriptCore e PAL si compilano come archivi statici (`*_LIBRARY_TYPE STATIC` nel port), senza patch.
+- [x] Font: per ora FreeType ovunque, con il font manager custom di Skia; il font manager nativo resta un'opzione non fatta.
+- [ ] Accessibilità: AT-SPI e UI Automation fatti (modalità finestra); restano NSAccessibility e la modalità texture.
 
 * [x] Allocatore: deciso, mimalloc su tutte le piattaforme; modalità secure disponibile (`ZEROG_MIMALLOC_SECURE`), spenta di default.
 * [x] CRT su Windows: deciso, solo `/MT`.
 * [x] Binding: decise, sincrone di default, asincrone supportate se dichiarate (`async_methods`).
 * [x] Licenze: WTF va trattata come LGPL; l'obbligo di relink copre l'intero archivio, il design del relink kit resta invariato.
-* [ ] Segnale di default per il GC di JSC su Linux, e test con i runtime host più comuni.
+* [ ] Segnale per il GC di JSC su Linux: configurabile (`zg_runtime_config.gc_signal`, default un segnale real-time libero); mancano i test con i runtime host più comuni e con un crash handler con stack alternativo.
 * [ ] Integrazione con il crash reporter dell'host: quali supportare ufficialmente?
 
-- [ ] Backend WebSocket nel single-process: codice curl di WebCore ancora presente, o implementazione nel layer di embedding?
+- [x] Backend WebSocket nel single-process: deciso e fatto, implementazione nel layer di embedding sopra curl.
+- [ ] Service worker: da valutare per il profilo standard.
+- [ ] AVIF e JPEG XL nel profilo standard (la tabella delle funzioni li prevede accesi, oggi sono spenti ovunque).
+- [ ] Context menu: callback verso l'host e menu nativo in modalità finestra.
 
 ## Fonti
 
