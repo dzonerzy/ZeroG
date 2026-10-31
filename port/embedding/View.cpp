@@ -120,6 +120,11 @@ View::View(Configuration&& configuration)
     // Off in WebCore's defaults, on in every WebKit port: the session provides them.
     settings.setLocalStorageEnabled(true);
     settings.setSessionStorageEnabled(true);
+    // <img> and CSS images (off in WebCore's defaults: without it no image
+    // element ever starts loading, from any scheme).
+    settings.setLoadsImagesAutomatically(true);
+    // window.visualViewport (on in WebKit's defaults, off in WebCore's).
+    settings.setVisualViewportAPIEnabled(true);
     // navigator.clipboard (the clipboard is the application's, PasteboardZeroG.cpp);
     // reading it asks the editor client, which grants it during a user gesture.
     settings.setAsyncClipboardAPIEnabled(true);

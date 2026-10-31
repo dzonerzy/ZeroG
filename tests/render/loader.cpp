@@ -534,6 +534,11 @@ private:
         }
         if (path == "/page.html")
             return response("200 OK", "text/html; charset=utf-8", "<!DOCTYPE html><title>From HTTP</title><p>remote");
+        if (path.starts_with("/red.png")) {
+            // A 2x2 red PNG, cacheable as a site's images are.
+            static const char png[] = "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x02\x08\x02\x00\x00\x00\xfd\xd4\x9a\x73\x00\x00\x00\x10\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\x00\x44\x0c\x10\x0a\x00\x1f\xee\x03\xfd\x8b\x5f\x14\xd4\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+            return response("200 OK", "image/png", std::string(png, sizeof(png) - 1), "Cache-Control: max-age=600\r\n");
+        }
         if (path == "/api.json")
             return response("200 OK", "application/json", "{\"remote\":true}", "Access-Control-Allow-Origin: *\r\n");
         if (path == "/private.json")
@@ -794,6 +799,20 @@ int main()
         passed &= check(blocked.startsWith("error:"_s), "no CORS header, no read: %s", blocked.utf8().data());
         auto intoApp = await(*view, makeString("fetch('"_s, http, "/to-app').then(r => r.status)"_s));
         passed &= check(intoApp.startsWith("error:"_s), "a server cannot redirect into app://: %s", intoApp.utf8().data());
+        // Images over http: cross-origin (no-cors, as pages show them), with
+        // CORS, and twice (the second from the cache).
+        auto imageLoad = [&](const String& query, bool cors) {
+            return await(*view, makeString("new Promise(resolve => { const i = new Image(); "_s, cors ? "i.crossOrigin = 'anonymous'; "_s : ""_s,
+                "i.onload = () => resolve('load ' + i.naturalWidth + 'x' + i.naturalHeight); i.onerror = () => resolve('error'); i.src = '"_s, http, "/red.png"_s, query, "'; })"_s));
+        };
+        auto image = imageLoad("?a"_s, false);
+        passed &= check(image == "load 2x2"_s, "an http image loads: %s", image.utf8().data());
+        auto imageAgain = imageLoad("?a"_s, false);
+        passed &= check(imageAgain == "load 2x2"_s, "and again, from the cache: %s", imageAgain.utf8().data());
+        auto corsImage = imageLoad("?b"_s, true);
+        passed &= check(corsImage == "error"_s, "a crossorigin image without CORS headers fails: %s", corsImage.utf8().data());
+        auto visualViewport = view->evaluateScript("typeof window.visualViewport"_s);
+        passed &= check(visualViewport == "object"_s, "window.visualViewport: %s", visualViewport.utf8().data());
 
         // Iframes.
         passed &= check(load(*view, client, "app://localhost/frames.html"_s), "a page with an iframe loads");
