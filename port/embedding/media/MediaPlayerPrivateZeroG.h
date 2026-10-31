@@ -15,6 +15,10 @@
 
 #include "media/MediaFile.h"
 #include <WebCore/PlatformMediaResourceLoader.h>
+#if ENABLE(WEB_AUDIO)
+#include <WebCore/AudioSourceProvider.h>
+#include <WebCore/AudioSourceProviderClient.h>
+#endif
 #include <deque>
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
@@ -77,6 +81,26 @@ private:
     bool m_hasVideo WTF_GUARDED_BY_LOCK(m_lock) { false };
 };
 
+#if ENABLE(WEB_AUDIO)
+// A MediaElementAudioSourceNode's input: while it is attached, the player's
+// sound goes into the audio graph instead of the device.
+class AudioProvider final : public WebCore::AudioSourceProvider {
+public:
+    // Web Audio's rendering thread.
+    void provideInput(WebCore::AudioBus&, size_t framesToProcess) final;
+    // Engine thread.
+    void setClient(WeakPtr<WebCore::AudioSourceProviderClient>&&) final;
+    // The current load's sound (null between loads), engine thread.
+    void setOutput(AudioOutput*);
+
+private:
+    WeakPtr<WebCore::AudioSourceProviderClient> m_client;
+    Lock m_lock;
+    AudioOutput* m_output WTF_GUARDED_BY_LOCK(m_lock) { nullptr };
+    Vector<float> m_interleaved; // the rendering thread's
+};
+#endif
+
 class MediaPlayerPrivateZeroG final : public WebCore::MediaPlayerPrivateInterface, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaPlayerPrivateZeroG, WTF::DestructionThread::Main> {
 public:
     static Ref<MediaPlayerPrivateZeroG> create(WebCore::MediaPlayer& player) { return adoptRef(*new MediaPlayerPrivateZeroG(player)); }
@@ -125,6 +149,9 @@ public:
     void paint(WebCore::GraphicsContext&, const WebCore::FloatRect&) final;
     RefPtr<WebCore::NativeImage> nativeImageForCurrentTime() final;
     WebCore::ColorSpace colorSpace() final;
+#if ENABLE(WEB_AUDIO)
+    WebCore::AudioSourceProvider* audioSourceProvider() final { return &m_audioProvider; }
+#endif
 
     // From the pipeline, on the engine thread.
     void didOpen(const MediaInfo&);
@@ -169,6 +196,9 @@ private:
     uint64_t m_seekIdentifier { 0 };
 
     RefPtr<WebCore::NativeImage> m_currentFrame;
+#if ENABLE(WEB_AUDIO)
+    AudioProvider m_audioProvider;
+#endif
     mutable uint64_t m_lastLoadedBytes { 0 };
     mutable WebCore::PlatformTimeRanges m_buffered;
 };

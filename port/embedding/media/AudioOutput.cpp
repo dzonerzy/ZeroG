@@ -74,10 +74,41 @@ void AudioOutput::clear()
 
 void AudioOutput::setPlaying(bool playing)
 {
-    if (playing)
+    m_playing = playing;
+    updateDevice();
+}
+
+void AudioOutput::setTapped(bool tapped)
+{
+    m_tapped = tapped;
+    updateDevice();
+}
+
+void AudioOutput::updateDevice()
+{
+    // The device plays the stream unless Web Audio takes it.
+    if (m_playing && !m_tapped)
         SDL_ResumeAudioStreamDevice(m_stream);
     else
         SDL_PauseAudioStreamDevice(m_stream);
+}
+
+AudioOutput::Format AudioOutput::readFormat() const
+{
+    // The stream's output side is the device's, set when SDL bound it.
+    SDL_AudioSpec spec { };
+    if (!SDL_GetAudioStreamFormat(m_stream, nullptr, &spec) || spec.channels <= 0 || spec.freq <= 0)
+        return { m_channels, m_sampleRate };
+    return { static_cast<unsigned>(spec.channels), static_cast<unsigned>(spec.freq) };
+}
+
+size_t AudioOutput::read(float* samples, size_t frames)
+{
+    if (!m_playing || !m_tapped)
+        return 0;
+    size_t frameBytes = readFormat().channels * sizeof(float);
+    int bytes = SDL_GetAudioStreamData(m_stream, samples, frames * frameBytes);
+    return bytes > 0 ? bytes / frameBytes : 0;
 }
 
 void AudioOutput::setVolume(float volume)

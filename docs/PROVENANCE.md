@@ -80,6 +80,10 @@ under `patches/` is listed here when it is created.
 | `tests/media/*` | Original: colours and a 440 Hz tone, made with FFmpeg for the test | BSD-2-Clause |
 | `deps/ports/sdl3/*` | vcpkg's SDL3 port, with SDL's sound backends (ALSA, PulseAudio, PipeWire) loaded at run time (feature `system-audio`) | MIT (vcpkg) |
 | `patches/0029-webcore-media-engine-for-zerog.patch` | Original, modifies `MediaPlayer.h` and `MediaPlayerEnums.h` (the ZeroG engine's type and identifier) | Same as the modified files; upstream candidate |
+| `port/overlay/Source/WebCore/platform/audio/zerog/FFTFrameZeroG.cpp` | Original; the packed spectrum layout follows `FFTFrame.h` and the Cocoa port's `FFTFrameMac.cpp` (vDSP's convention), the transform is pffft from the sysroot | BSD-2-Clause |
+| `patches/0030-webcore-fft-frame-for-zerog.patch` | Original, modifies `FFTFrame.h` (pffft's setup and buffers in a ZeroG `FFTFrame`) | Same as the modified file; upstream candidate |
+| `port/embedding/media/WebAudioZeroG.cpp`, `port/embedding/media/EmbedFile.cmake`, `tests/render/webaudio.cpp` | Original; the destination follows the Cocoa port's `AudioDestinationCocoa` over `AudioDestinationResampler` | BSD-2-Clause |
+| HRTF responses (built in from `Source/WebCore/platform/audio/resources/Composite.wav`) | WebKit's resource, unchanged, compiled into the engine as a C array | Same as WebKit's resource (BSD) |
 | `port/embedding/graphics/SurfaceDMABuf.cpp`, `tests/render/texture_dmabuf.cpp` | Original; DRM's ioctls and structures (`drm.h`, `drm_mode.h`), GBM's functions and Vulkan's types and values are those projects' public ABI, declared by hand | BSD-2-Clause |
 | `port/embedding/accessibility/Accessibility.*` | Original; the name and description follow upstream's `accessibility/atspi/AccessibilityObjectAtspi.cpp` (the first text alternative that is not help or summary text) | BSD-2-Clause |
 | `port/embedding/inspector/InspectorZeroG.*`, `tests/render/inspector.cpp` | Original; the local frontend follows WebKitLegacy's `mac/WebCoreSupport/WebInspectorClient.mm` | BSD-2-Clause |

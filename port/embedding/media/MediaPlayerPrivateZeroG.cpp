@@ -15,6 +15,10 @@
 #include <WebCore/SharedBuffer.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#if ENABLE(WEB_AUDIO)
+#include <WebCore/AudioBus.h>
+#include <WebCore/AudioChannel.h>
+#endif
 
 namespace ZeroG::Media {
 
@@ -318,6 +322,60 @@ void Pipeline::run()
     }
 }
 
+#if ENABLE(WEB_AUDIO)
+
+// ---- Web Audio's input from the player ----
+
+void AudioProvider::setClient(WeakPtr<AudioSourceProviderClient>&& client)
+{
+    m_client = WTF::move(client);
+    Locker locker { m_lock };
+    if (!m_output)
+        return;
+    m_output->setTapped(!!m_client);
+    if (RefPtr client = m_client.get()) {
+        auto format = m_output->readFormat();
+        client->setFormat(format.channels, format.sampleRate);
+    }
+}
+
+void AudioProvider::setOutput(AudioOutput* output)
+{
+    Locker locker { m_lock };
+    m_output = output;
+    if (!m_output || !m_client)
+        return;
+    m_output->setTapped(true);
+    if (RefPtr client = m_client.get()) {
+        auto format = m_output->readFormat();
+        client->setFormat(format.channels, format.sampleRate);
+    }
+}
+
+void AudioProvider::provideInput(AudioBus& bus, size_t framesToProcess)
+{
+    // Never waits on the engine thread: silence while it changes the output.
+    if (!m_lock.tryLock()) {
+        bus.zero();
+        return;
+    }
+    Locker locker { AdoptLock, m_lock };
+    if (!m_output) {
+        bus.zero();
+        return;
+    }
+    unsigned channels = m_output->readFormat().channels;
+    m_interleaved.resize(framesToProcess * channels);
+    size_t frames = m_output->read(m_interleaved.mutableSpan().data(), framesToProcess);
+    for (unsigned channel = 0; channel < bus.numberOfChannels(); ++channel) {
+        auto destination = bus.channel(channel)->mutableSpan();
+        for (size_t frame = 0; frame < framesToProcess; ++frame)
+            destination[frame] = channel < channels && frame < frames ? m_interleaved[frame * channels + channel] : 0;
+    }
+}
+
+#endif // ENABLE(WEB_AUDIO)
+
 // ---- The player, on the engine thread ----
 
 MediaPlayerPrivateZeroG::MediaPlayerPrivateZeroG(MediaPlayer& player)
@@ -373,6 +431,9 @@ void MediaPlayerPrivateZeroG::cancelLoad()
         resource->shutdown();
         resource->setClient(nullptr);
     }
+#if ENABLE(WEB_AUDIO)
+    m_audioProvider.setOutput(nullptr);
+#endif
     if (auto pipeline = std::exchange(m_pipeline, nullptr))
         pipeline->stop();
     if (auto producer = std::exchange(m_seekProducer, std::nullopt))
@@ -565,6 +626,9 @@ void MediaPlayerPrivateZeroG::didOpen(const MediaInfo& info)
     if (auto* output = m_pipeline ? m_pipeline->output() : nullptr) {
         output->setRate(m_rate);
         output->setPlaying(!m_paused);
+#if ENABLE(WEB_AUDIO)
+        m_audioProvider.setOutput(output);
+#endif
     }
     setReadyState(MediaPlayer::ReadyState::HaveMetadata);
     if (RefPtr player = m_player.get()) {

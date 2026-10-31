@@ -1,0 +1,30 @@
+diff --git a/Source/WebCore/platform/audio/FFTFrame.h b/Source/WebCore/platform/audio/FFTFrame.h
+index b0be3c050f..467830491b 100644
+--- a/Source/WebCore/platform/audio/FFTFrame.h
++++ b/Source/WebCore/platform/audio/FFTFrame.h
+@@ -39,6 +39,10 @@
+ #include <Accelerate/Accelerate.h>
+ #endif
+ 
++#if PLATFORM(ZEROG)
++struct PFFFT_Setup;
++#endif
++
+ #include <memory>
+ #include <wtf/Forward.h>
+ #include <wtf/TZoneMalloc.h>
+@@ -111,6 +115,14 @@ private:
+     Vector<GstFFTF32Complex> m_complexData;
+ #endif // USE(GSTREAMER)
+ 
++#if PLATFORM(ZEROG)
++    // pffft's real transform (FFTFrameZeroG.cpp): its setup, its aligned
++    // ordered spectrum and work area.
++    PFFFT_Setup* m_setup { nullptr };
++    float* m_spectrum { nullptr };
++    float* m_work { nullptr };
++#endif
++
+     AudioFloatArray m_realData;
+     AudioFloatArray m_imagData;
+ };

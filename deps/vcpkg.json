@@ -40,6 +40,7 @@
     "libvorbis",
     { "name": "drlibs", "$comment": "MP3, FLAC and WAV decoding, header-only" },
     { "name": "libyuv", "default-features": false, "$comment": "decoded YUV frames to RGBA" },
+    { "name": "pffft", "$comment": "Web Audio's FFT (AnalyserNode, ConvolverNode, PannerNode's HRTF); FFTPACK license, BSD-style" },
     {
       "name": "curl",
       "$comment": "HTTP/1.1 and HTTP/2 over BoringSSL; brotli/zstd decoding; WebSocket for dev-mode hot reload. Cookies and the PSL are handled by WebCore.",

@@ -58,6 +58,12 @@ Engine features of roadmap phases 3 and 4:
   from any scheme the page loads from; sound goes to the system's default
   device. No new function. Before, media elements reported that they could not
   play (the minimal profile still does).
+- Web Audio (standard, dev and debug profiles): `AudioContext` plays on the
+  system's default device, `OfflineAudioContext` renders, `decodeAudioData`
+  takes the formats `<audio>` plays, `AnalyserNode`, `ConvolverNode` and
+  `PannerNode` (HRTF too) work, and `createMediaElementSource` takes an
+  `<audio>` or `<video>`'s sound into the graph. No new function. Before, Web Audio was absent
+  (the minimal profile still has none).
 - dma-buf frames (Linux): `ZG_SURFACE_VULKAN` views render on the engine's own
   GPU into dma-bufs, for Vulkan (VK_EXT_external_memory_dma_buf) or any API
   that imports them. `zg_surface_dmabuf` gives a frame's format, modifier and

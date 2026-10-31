@@ -82,6 +82,14 @@ list(APPEND WebCore_SOURCES
     platform/playstation/PlatformScreenPlayStation.cpp
 )
 
+# Web Audio (standard, dev and debug profiles): the FFT over pffft (patch 0030);
+# the destination and decodeAudioData are the embedding layer's (media/).
+if (ENABLE_WEB_AUDIO)
+    list(APPEND WebCore_SOURCES platform/audio/zerog/FFTFrameZeroG.cpp)
+    find_package(pffft CONFIG REQUIRED)
+    list(APPEND WebCore_LIBRARIES pffft::pffft)
+endif ()
+
 # WebGL over ANGLE: the engine's EGL on Windows (patch 0027); on Linux a second
 # EGL over the same driver, as GTK and WPE build it.
 if (ENABLE_WEBGL)

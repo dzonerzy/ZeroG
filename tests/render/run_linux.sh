@@ -42,6 +42,7 @@ fi
 run "GPU compositing" "$bin/ZeroGCompositing"
 # SDL's dummy sound driver plays in real time with no device: the audio clock runs.
 run "media: audio and video (standard, dev and debug builds)" env SDL_AUDIODRIVER=dummy "$bin/ZeroGMedia"
+run "web audio: rendering, FFT, HRTF, decodeAudioData, a live context" env SDL_AUDIODRIVER=dummy "$bin/ZeroGWebAudio"
 run "input" "$bin/ZeroGInput"
 run "resource loader" "$bin/ZeroGLoader"
 run "window on X11" xvfb-run -a "$bin/ZeroGWindow"

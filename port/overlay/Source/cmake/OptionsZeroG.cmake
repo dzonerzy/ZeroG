@@ -125,10 +125,10 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE ${_zerog_inspec
 # Media (ZeroG.md, "Media"): ENABLE_VIDEO stays on in every profile (no upstream
 # port builds without it and WebCore compiles media code unguarded). The standard,
 # dev and debug profiles have ZeroG's media engine (port/embedding/media: WebM,
-# Ogg, MP3, FLAC, WAV); in minimal <video>/<audio> exist and report that they
-# cannot play. Web Audio is off for now (as PlayStation builds).
+# Ogg, MP3, FLAC, WAV) and Web Audio on it; in minimal <video>/<audio> exist and
+# report that they cannot play, and Web Audio is off (as PlayStation builds).
 set(ZEROG_MEDIA ${_zerog_full_web})
-WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE OFF)
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)
 # Image formats and color management left out of every profile for now.
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_AVIF PRIVATE OFF)
@@ -250,6 +250,9 @@ SET_AND_EXPOSE_TO_BUILD(USE_INSPECTOR_SOCKET_SERVER ${ENABLE_REMOTE_INSPECTOR})
 if (NOT WIN32)
     SET_AND_EXPOSE_TO_BUILD(USE_UNIX_DOMAIN_SOCKETS ON)
 endif ()
+# Web Audio's HRTF responses as the one concatenated resource (Composite.wav,
+# compiled into the engine), as Cocoa and GStreamer ports load them.
+SET_AND_EXPOSE_TO_BUILD(USE_CONCATENATED_IMPULSE_RESPONSES ${ENABLE_WEB_AUDIO})
 
 # GPU (ZeroG.md, "Backend GPU per piattaforma"): Skia Ganesh over GLES through EGL,
 # the one GPU path upstream supports. Windows uses ANGLE (GL over D3D11), built in

@@ -30,6 +30,7 @@
 #include "PlatformStrategiesZeroG.h"
 
 #include "loader/Loader.h"
+#include <WebCore/AudioDestination.h>
 #include <WebCore/BlobRegistry.h>
 #include <WebCore/LoaderStrategy.h>
 #include <WebCore/MediaStrategy.h>
@@ -138,7 +139,11 @@ private:
 class MediaStrategyZeroG final : public MediaStrategy {
 public:
 #if ENABLE(WEB_AUDIO)
-    Ref<AudioDestination> createAudioDestination(const AudioDestinationCreationOptions&) final { RELEASE_ASSERT_NOT_REACHED(); }
+    // One process: the destination is the device itself (media/WebAudioZeroG.cpp).
+    Ref<AudioDestination> createAudioDestination(const AudioDestinationCreationOptions& options) final
+    {
+        return AudioDestination::create(options);
+    }
 #endif
 };
 

@@ -147,6 +147,11 @@ View::View(Configuration&& configuration)
 #if ENABLE(WEBGL)
     settings.setWebGLEnabled(!!m_compositor);
 #endif
+    // Web Audio (off in WebCore's defaults, on in WebKit2's): in the profiles
+    // with the media engine (media/WebAudioZeroG.cpp).
+#if ENABLE(WEB_AUDIO)
+    settings.setWebAudioEnabled(true);
+#endif
     page->setDeviceScaleFactor(m_scale);
 
     RefPtr frame = page->localMainFrame();

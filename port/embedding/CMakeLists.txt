@@ -85,6 +85,19 @@ if (ZEROG_MEDIA)
         media/MediaPlayerPrivateZeroG.cpp
         media/WebMFile.cpp
     )
+    if (ENABLE_WEB_AUDIO)
+        # Web Audio's destination, decodeAudioData and the HRTF responses
+        # PannerNode loads (WebCore's Composite.wav, compiled in).
+        set(_zerog_hrtf "${CMAKE_CURRENT_BINARY_DIR}/hrtf_composite.c")
+        set(_zerog_hrtf_source "${WEBCORE_DIR}/platform/audio/resources/Composite.wav")
+        add_custom_command(
+            OUTPUT ${_zerog_hrtf}
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${_zerog_hrtf_source} -DOUTPUT=${_zerog_hrtf} -DSYMBOL=zerog_hrtf_composite
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/media/EmbedFile.cmake
+            DEPENDS ${_zerog_hrtf_source} ${CMAKE_CURRENT_SOURCE_DIR}/media/EmbedFile.cmake
+            VERBATIM)
+        list(APPEND ZeroGEmbedding_SOURCES media/WebAudioZeroG.cpp ${_zerog_hrtf})
+    endif ()
     find_package(unofficial-libwebm CONFIG REQUIRED)
     find_package(unofficial-libvpx CONFIG REQUIRED)
     find_package(Opus CONFIG REQUIRED)
@@ -259,6 +272,18 @@ target_compile_definitions(ZeroGMedia PRIVATE ZEROG_TEST_MEDIA="${ZEROG_SOURCE_D
 if (ZEROG_MEDIA)
     target_compile_definitions(ZeroGMedia PRIVATE ZEROG_MEDIA=1)
 endif ()
+
+# Web Audio: what the graph renders, the FFT, HRTF, decodeAudioData, a live
+# context (the minimal build: no Web Audio).
+set(ZeroGWebAudio_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/webaudio.cpp)
+set(ZeroGWebAudio_LIBRARIES ZeroGEmbedding)
+set(ZeroGWebAudio_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGWebAudio_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGWebAudio)
+WEBKIT_EXECUTABLE(ZeroGWebAudio)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGWebAudio)
+target_compile_definitions(ZeroGWebAudio PRIVATE ZEROG_TEST_MEDIA="${ZEROG_SOURCE_DIR}/tests/media")
+
 # The Web Inspector: local frontend, closing, the remote inspector's target list.
 set(ZeroGInspector_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/inspector.cpp)
 set(ZeroGInspector_LIBRARIES ZeroGEmbedding)

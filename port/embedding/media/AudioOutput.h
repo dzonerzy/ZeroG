@@ -44,13 +44,28 @@ public:
     // Faster or slower playback (the pitch follows).
     void setRate(double);
 
+    // Web Audio (a MediaElementAudioSourceNode): the device stops taking the
+    // sound and read() hands it out instead, with the volume and rate applied.
+    void setTapped(bool);
+    // What read() gives: the device's format (SDL converts to it).
+    struct Format {
+        unsigned channels { 0 };
+        unsigned sampleRate { 0 };
+    };
+    Format readFormat() const;
+    // Up to `frames` interleaved frames in readFormat(), none while paused.
+    size_t read(float*, size_t frames);
+
 private:
     AudioOutput(SDL_AudioStream*, unsigned sampleRate, unsigned channels);
+    void updateDevice();
 
     SDL_AudioStream* m_stream;
     unsigned m_sampleRate;
     unsigned m_channels;
     std::atomic<uint64_t> m_writtenFrames { 0 }; // by the decode thread, read for the clock
+    std::atomic<bool> m_playing { false };
+    std::atomic<bool> m_tapped { false };
 };
 
 } // namespace ZeroG::Media
