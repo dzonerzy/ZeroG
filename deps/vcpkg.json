@@ -30,7 +30,8 @@
     },
     {
       "name": "libwebm",
-      "$comment": "Media (ZeroG.md, 'Media'; standard, dev and debug profiles): WebM and Matroska demuxing. The codecs below are all royalty-free and permissively licensed."
+      "features": ["parser"],
+      "$comment": "Media (ZeroG.md, 'Media'; standard, dev and debug profiles): WebM and Matroska demuxing; the parser feature (deps/ports/libwebm) for Media Source Extensions. The codecs below are all royalty-free and permissively licensed."
     },
     { "name": "libvpx", "default-features": false, "$comment": "VP8 and VP9 decoding" },
     { "name": "dav1d", "default-features": false, "$comment": "AV1 decoding" },

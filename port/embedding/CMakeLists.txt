@@ -83,7 +83,9 @@ if (ZEROG_MEDIA)
         media/MediaBytes.cpp
         media/MediaFile.cpp
         media/MediaPlayerPrivateZeroG.cpp
+        media/MediaSourceZeroG.cpp
         media/WebMFile.cpp
+        media/WebMStream.cpp
     )
     if (ENABLE_WEB_AUDIO)
         # Web Audio's destination, decodeAudioData and the HRTF responses
@@ -97,6 +99,11 @@ if (ZEROG_MEDIA)
             DEPENDS ${_zerog_hrtf_source} ${CMAKE_CURRENT_SOURCE_DIR}/media/EmbedFile.cmake
             VERBATIM)
         list(APPEND ZeroGEmbedding_SOURCES media/WebAudioZeroG.cpp ${_zerog_hrtf})
+    endif ()
+    if (WIN32)
+        # MP4 (H.264, AAC) through the OS's Media Foundation.
+        list(APPEND ZeroGEmbedding_SOURCES media/MediaFoundationFile.cpp)
+        list(APPEND ZeroGEmbedding_LIBRARIES mfplat mfreadwrite mfuuid)
     endif ()
     find_package(unofficial-libwebm CONFIG REQUIRED)
     find_package(unofficial-libvpx CONFIG REQUIRED)

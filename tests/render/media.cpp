@@ -59,13 +59,46 @@ constexpr auto page = R"HTML(<!DOCTYPE html>
   }
   function addVideo(name) {
     const element = document.createElement('video');
-    element.src = name;
+    if (name)
+      element.src = name;
     element.preload = 'auto';
     element.onloadeddata = () => { element.dataset.loaded = '1'; };
     element.onseeked = () => { element.dataset.seeked = String(element.currentTime); };
     element.onended = () => { element.dataset.ended = '1'; };
     element.onerror = () => { element.dataset.error = element.error ? String(element.error.code) : '-1'; };
     document.body.replaceChildren(element);
+    return element;
+  }
+  // Media Source Extensions: a video whose source buffers are fed WebM files,
+  // each appended in two pieces cut mid-element. `buffers`: [name, type].
+  function playSource(buffers) {
+    const element = addVideo(null);
+    const state = element.dataset;
+    const source = new MediaSource();
+    source.addEventListener('sourceopen', async () => {
+      try {
+        const append = (buffer, part) => new Promise((resolve, reject) => {
+          buffer.addEventListener('updateend', resolve, { once: true });
+          buffer.addEventListener('error', () => reject('append error'), { once: true });
+          buffer.appendBuffer(part);
+        });
+        const ranges = [];
+        await Promise.all(buffers.map(async ([name, type]) => {
+          const buffer = source.addSourceBuffer(type);
+          const data = new Uint8Array(await (await fetch(name)).arrayBuffer());
+          const middle = Math.floor(data.length / 2) + 7;
+          await append(buffer, data.subarray(0, middle));
+          await append(buffer, data.subarray(middle));
+          const range = buffer.buffered;
+          ranges.push(range.length + ':' + (range.length ? range.start(0).toFixed(2) + '-' + range.end(0).toFixed(2) : ''));
+        }));
+        state.buffered = ranges.join(' ');
+        source.endOfStream();
+      } catch (error) {
+        state.sourceError = String(error);
+      }
+    });
+    element.src = URL.createObjectURL(source);
     return element;
   }
 </script></body></html>)HTML";
@@ -88,6 +121,7 @@ int main()
     static constexpr ASCIILiteral fixtures[] = {
         "red-blue.webm"_s, "green-vp8.webm"_s, "yellow-av1.webm"_s, "tone-vorbis.webm"_s,
         "tone-opus.ogg"_s, "tone-vorbis.ogg"_s, "tone.mp3"_s, "tone.flac"_s, "tone.wav"_s,
+        "magenta-cyan.mp4"_s, "tone-aac.m4a"_s,
     };
     auto fs = ZeroG::MemoryFS::create();
     fs->addFile("/index.html"_s, std::span { byteCast<uint8_t>(page), strlen(page) });
@@ -154,10 +188,18 @@ int main()
     ok &= check(canPlay("audio/ogg; codecs=vorbis"_s) == "probably"_s, "canPlayType Vorbis in Ogg");
     ok &= check(canPlay("audio/mpeg"_s) == "maybe"_s, "canPlayType MP3: maybe");
     ok &= check(canPlay("audio/flac"_s) == "maybe"_s && canPlay("audio/wav"_s) == "maybe"_s, "canPlayType FLAC and WAV: maybe");
-    ok &= check(canPlay("video/mp4; codecs=\"avc1.42E01E\""_s).isEmpty(), "canPlayType H.264 in MP4: no (patented codecs are not in the engine)");
+#if OS(WINDOWS)
+    // H.264 and AAC: the OS decodes them (Media Foundation).
+    ok &= check(canPlay("video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\""_s) == "probably"_s, "canPlayType H.264 and AAC in MP4 (Media Foundation)");
+    ok &= check(canPlay("video/mp4; codecs=\"hvc1.1.6.L93.B0\""_s).isEmpty(), "canPlayType HEVC: no");
+    static constexpr ASCIILiteral audioFiles[] = { "tone-opus.ogg"_s, "tone-vorbis.ogg"_s, "tone-vorbis.webm"_s, "tone.mp3"_s, "tone.flac"_s, "tone.wav"_s, "tone-aac.m4a"_s };
+#else
+    ok &= check(canPlay("video/mp4; codecs=\"avc1.42E01E\""_s).isEmpty(), "canPlayType H.264 in MP4: no (patented codecs are not in the engine; Windows decodes them)");
+    static constexpr ASCIILiteral audioFiles[] = { "tone-opus.ogg"_s, "tone-vorbis.ogg"_s, "tone-vorbis.webm"_s, "tone.mp3"_s, "tone.flac"_s, "tone.wav"_s };
+#endif
 
     // Every audio format, to its end.
-    for (auto name : { "tone-opus.ogg"_s, "tone-vorbis.ogg"_s, "tone-vorbis.webm"_s, "tone.mp3"_s, "tone.flac"_s, "tone.wav"_s }) {
+    for (auto name : audioFiles) {
         view->evaluateScript(makeString("playAudio('"_s, name, "'); 0"_s));
         auto field = [&](ASCIILiteral key) {
             return view->evaluateScript(makeString("String(audio['"_s, name, "']."_s, key, ")"_s));
@@ -199,9 +241,72 @@ int main()
         auto color = pixel(32, 24);
         ok &= check(videoLoaded && isColor(color, expected), "%s: its frame is painted (%d, %d, %d)", name.characters(), color[0], color[1], color[2]);
     }
+
+#if OS(WINDOWS)
+    // H.264 and AAC in MP4: magenta for a second, then cyan; 64x36, coded in
+    // whole macroblocks (64x48), so the decoder's frames are cropped.
+    evaluate("window.video = addVideo('magenta-cyan.mp4'); 0"_s);
+    bool mp4Loaded = waitFor(10_s, [&] { return evaluate("video.dataset.loaded || video.dataset.error || ''"_s) != ""_s; });
+    ok &= check(mp4Loaded && evaluate("String(video.dataset.loaded)"_s) == "1"_s, "an MP4 video loads its first frame (error %s)", evaluate("String(video.dataset.error)"_s).utf8().data());
+    auto mp4Size = evaluate("video.videoWidth + 'x' + video.videoHeight"_s);
+    ok &= check(mp4Size == "64x36"_s, "its size is the visible one: %s", mp4Size.utf8().data());
+    auto mp4Duration = evaluate("String(video.duration)"_s).toDouble();
+    ok &= check(mp4Duration > 1.9 && mp4Duration < 2.2, "duration %.3f s", mp4Duration);
+    waitFor(500_ms, [] { return false; });
+    auto magenta = pixel(32, 24);
+    ok &= check(isColor(magenta, { 255, 0, 255 }), "the first frame is painted: (%d, %d, %d)", magenta[0], magenta[1], magenta[2]);
+    evaluate("video.currentTime = 1.5; 0"_s);
+    ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.seeked || ''"_s) != ""_s; }), "a seek to 1.5 s completes (at %s)", evaluate("String(video.dataset.seeked)"_s).utf8().data());
+    waitFor(500_ms, [] { return false; });
+    auto cyan = pixel(32, 24);
+    ok &= check(isColor(cyan, { 0, 255, 255 }), "the frame there is painted: (%d, %d, %d)", cyan[0], cyan[1], cyan[2]);
+    evaluate("video.play(); 0"_s);
+    ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.ended || ''"_s) == "1"_s; }), "it plays to its end (at %s s)", evaluate("String(video.currentTime)"_s).utf8().data());
+#endif
+
+#if ENABLE(MEDIA_SOURCE)
+    // Media Source Extensions, WebM.
+    ok &= check(evaluate("String(MediaSource.isTypeSupported('video/webm; codecs=\"vp9, opus\"'))"_s) == "true"_s, "MediaSource.isTypeSupported VP9 and Opus in WebM");
+    ok &= check(evaluate("String(MediaSource.isTypeSupported('audio/webm; codecs=\"vorbis\"'))"_s) == "true"_s, "MediaSource.isTypeSupported Vorbis in WebM");
+    ok &= check(evaluate("String(MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.42E01E\"'))"_s) == "false"_s, "MediaSource.isTypeSupported MP4: false");
+
+    // The VP9 and Opus video through a source buffer: red, then blue.
+    evaluate("window.video = playSource([['red-blue.webm', 'video/webm; codecs=\"vp9, opus\"']]); 0"_s);
+    bool sourceLoaded = waitFor(10_s, [&] { return evaluate("video.dataset.loaded || video.dataset.error || video.dataset.sourceError || ''"_s) != ""_s; });
+    ok &= check(sourceLoaded && evaluate("String(video.dataset.loaded)"_s) == "1"_s, "a media source's video loads its first frame (error %s, %s)",
+        evaluate("String(video.dataset.error)"_s).utf8().data(), evaluate("String(video.dataset.sourceError)"_s).utf8().data());
+    waitFor(5_s, [&] { return evaluate("video.dataset.buffered || ''"_s) != ""_s; });
+    auto bufferedRanges = evaluate("String(video.dataset.buffered)"_s);
+    ok &= check(bufferedRanges.startsWith("1:0.00-2.0"_s), "its buffer holds the whole video, appended in two pieces: %s", bufferedRanges.utf8().data());
+    auto sourceSize = evaluate("video.videoWidth + 'x' + video.videoHeight"_s);
+    ok &= check(sourceSize == "64x48"_s, "videoWidth and videoHeight: %s", sourceSize.utf8().data());
+    waitFor(500_ms, [] { return false; });
+    auto sourceRed = pixel(32, 24);
+    ok &= check(isColor(sourceRed, { 255, 0, 0 }), "the first frame is painted: (%d, %d, %d)", sourceRed[0], sourceRed[1], sourceRed[2]);
+    evaluate("video.currentTime = 1.5; 0"_s);
+    ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.seeked || ''"_s) != ""_s; }), "a seek to 1.5 s completes (at %s)", evaluate("String(video.dataset.seeked)"_s).utf8().data());
+    waitFor(500_ms, [] { return false; });
+    auto sourceBlue = pixel(32, 24);
+    ok &= check(isColor(sourceBlue, { 0, 0, 255 }), "the frame there is painted: (%d, %d, %d)", sourceBlue[0], sourceBlue[1], sourceBlue[2]);
+    evaluate("video.play(); 0"_s);
+    ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.ended || ''"_s) == "1"_s; }), "it plays to its end (at %s s)", evaluate("String(video.currentTime)"_s).utf8().data());
+
+    // Two source buffers: VP8 video from one file, Vorbis from another.
+    evaluate("window.video = playSource([['green-vp8.webm', 'video/webm; codecs=\"vp8\"'], ['tone-vorbis.webm', 'audio/webm; codecs=\"vorbis\"']]); 0"_s);
+    bool twoLoaded = waitFor(10_s, [&] { return evaluate("video.dataset.loaded || video.dataset.error || video.dataset.sourceError || ''"_s) != ""_s; });
+    waitFor(5_s, [&] { return evaluate("video.dataset.buffered || ''"_s) != ""_s; });
+    ok &= check(twoLoaded && evaluate("String(video.dataset.loaded)"_s) == "1"_s, "two source buffers, audio and video, load (buffered %s; error %s, %s)", evaluate("String(video.dataset.buffered)"_s).utf8().data(),
+        evaluate("String(video.dataset.error)"_s).utf8().data(), evaluate("String(video.dataset.sourceError)"_s).utf8().data());
+    waitFor(300_ms, [] { return false; });
+    auto green = pixel(32, 24);
+    ok &= check(isColor(green, { 0, 128, 0 }), "the VP8 frame is painted: (%d, %d, %d)", green[0], green[1], green[2]);
+    evaluate("video.play(); 0"_s);
+    ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.ended || ''"_s) == "1"_s; }), "they play to the end (at %s s)", evaluate("String(video.currentTime)"_s).utf8().data());
+#endif
 #else
     // The minimal build: no engine.
     ok &= check(evaluate("document.createElement('video').canPlayType('video/webm')"_s).isEmpty(), "minimal build: nothing can play");
+    ok &= check(evaluate("typeof MediaSource"_s) == "undefined"_s, "and there is no MediaSource");
     evaluate("playAudio('tone.wav'); 0"_s);
     ok &= check(waitFor(5_s, [&] { return evaluate("String(audio['tone.wav'].error)"_s) != "undefined"_s; }), "an <audio> reports that it cannot play (error %s)",
         evaluate("String(audio['tone.wav'].error)"_s).utf8().data());

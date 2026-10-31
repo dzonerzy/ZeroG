@@ -4,7 +4,7 @@
 // audio as float samples and its video as RGBA images, from a position.
 // Decode thread only. The formats are the royalty-free ones every browser
 // plays: WebM (VP8, VP9, AV1 video; Opus, Vorbis audio), Ogg (Opus, Vorbis),
-// MP3, FLAC and WAV.
+// MP3, FLAC and WAV; on Windows also MP4 (H.264, AAC), decoded by the OS.
 
 #include "media/MediaBytes.h"
 #include <WebCore/IntSize.h>
@@ -50,6 +50,10 @@ public:
     virtual size_t readAudio(float* out, size_t frames, MediaTime& time) = 0;
     // The next video frame; nullopt at the end of the video.
     virtual std::optional<DecodedFrame> readVideo() { return std::nullopt; }
+    // After a read that gave nothing: whether that is the end, or only that
+    // nothing has arrived yet (Media Source Extensions' streams).
+    virtual bool audioEnded() const { return true; }
+    virtual bool videoEnded() const { return true; }
     // Positions the audio at `time`, and the video at the frame showing then.
     virtual bool seek(const MediaTime&) = 0;
 
@@ -61,6 +65,12 @@ protected:
 // AudioFile.cpp).
 std::unique_ptr<MediaFile> openWebM(MediaBytes&, String& error);
 std::unique_ptr<MediaFile> openAudioFile(MediaBytes&, std::span<const uint8_t> head, String& error);
+#if OS(WINDOWS)
+// MP4 (H.264, AAC) through the OS's Media Foundation (MediaFoundationFile.cpp),
+// when the system has it (Windows "N" editions do not).
+bool mediaFoundationAvailable();
+std::unique_ptr<MediaFile> openMediaFoundation(MediaBytes&, std::span<const uint8_t> head, String& error);
+#endif
 
 // YUV planes to an RGBA image, with the stream's matrix and range.
 enum class ColorMatrix : uint8_t { BT601, BT709, BT2020 };
@@ -79,5 +89,8 @@ struct YUVPlanes {
     bool highBitDepth { false }; // 10 bits in 16-bit samples (I420 only)
 };
 sk_sp<SkImage> convertToImage(const YUVPlanes&);
+// NV12 (a Y plane, then U and V interleaved at half resolution), what hardware
+// and OS decoders give.
+sk_sp<SkImage> convertNV12ToImage(const uint8_t* y, int yStride, const uint8_t* uv, int uvStride, int width, int height, ColorMatrix, bool fullRange);
 
 } // namespace ZeroG::Media

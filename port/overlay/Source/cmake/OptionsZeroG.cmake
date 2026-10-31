@@ -125,10 +125,12 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE ${_zerog_inspec
 # Media (ZeroG.md, "Media"): ENABLE_VIDEO stays on in every profile (no upstream
 # port builds without it and WebCore compiles media code unguarded). The standard,
 # dev and debug profiles have ZeroG's media engine (port/embedding/media: WebM,
-# Ogg, MP3, FLAC, WAV) and Web Audio on it; in minimal <video>/<audio> exist and
-# report that they cannot play, and Web Audio is off (as PlayStation builds).
+# Ogg, MP3, FLAC, WAV; MP4 on Windows), Web Audio and Media Source Extensions
+# (WebM) on it; in minimal <video>/<audio> exist and report that they cannot
+# play, and Web Audio and MSE are off (as PlayStation builds).
 set(ZEROG_MEDIA ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE ${_zerog_full_web})
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SOURCE PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)
 # Image formats and color management left out of every profile for now.
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_AVIF PRIVATE OFF)

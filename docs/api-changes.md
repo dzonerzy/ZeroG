@@ -58,6 +58,13 @@ Engine features of roadmap phases 3 and 4:
   from any scheme the page loads from; sound goes to the system's default
   device. No new function. Before, media elements reported that they could not
   play (the minimal profile still does).
+- MP4 on Windows (standard, dev and debug profiles): H.264 and AAC through the
+  system's Media Foundation, where Windows has it (not in "N" editions);
+  `canPlayType` says so. Elsewhere MP4 does not play.
+- Media Source Extensions (standard, dev and debug profiles): `MediaSource` and
+  `SourceBuffer` for WebM (VP8, VP9, AV1, Opus, Vorbis), several buffers per
+  source, seeking within what is buffered. Before, `MediaSource` was absent (the
+  minimal profile still has none).
 - Web Audio (standard, dev and debug profiles): `AudioContext` plays on the
   system's default device, `OfflineAudioContext` renders, `decodeAudioData`
   takes the formats `<audio>` plays, `AnalyserNode`, `ConvolverNode` and

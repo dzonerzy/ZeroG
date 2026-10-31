@@ -1,0 +1,31 @@
+diff --git a/Source/WebCore/Modules/mediasource/MediaSource.cpp b/Source/WebCore/Modules/mediasource/MediaSource.cpp
+index b2c42b1070..7551f38564 100644
+--- a/Source/WebCore/Modules/mediasource/MediaSource.cpp
++++ b/Source/WebCore/Modules/mediasource/MediaSource.cpp
+@@ -78,6 +78,10 @@
+
+ namespace WebCore {
+
++#if OS(WINDOWS)
++using ssize_t = std::make_signed_t<size_t>; // POSIX's, used below
++#endif
++
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaSource);
+
+ String convertEnumerationToString(MediaSourcePrivate::AddStatus enumerationValue)
+diff --git a/Source/WebCore/platform/graphics/MediaPlayer.h b/Source/WebCore/platform/graphics/MediaPlayer.h
+index 702a85af56..cf427c9b0c 100644
+--- a/Source/WebCore/platform/graphics/MediaPlayer.h
++++ b/Source/WebCore/platform/graphics/MediaPlayer.h
+@@ -166,7 +166,10 @@ enum class MediaPlatformType {
+     Mock,
+     AVFObjC,
+     GStreamer,
+-    Remote
++    Remote,
++#if PLATFORM(ZEROG)
++    ZeroG,
++#endif
+ };
+
+ enum class MediaPlayerType {

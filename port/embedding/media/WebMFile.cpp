@@ -9,6 +9,7 @@
 
 #if ENABLE(VIDEO) && defined(ZEROG_MEDIA)
 
+#include "media/Decoders.h"
 #include <deque>
 #include <wtf/StdLibExtras.h>
 
@@ -62,20 +63,6 @@ public:
 
 private:
     MediaBytes& m_bytes;
-};
-
-struct Packet {
-    Vector<uint8_t> data;
-    long long time { 0 }; // nanoseconds
-    bool key { false };
-};
-
-class VideoDecoder {
-public:
-    virtual ~VideoDecoder() = default;
-    // Decodes a packet; the frames it completed, in order.
-    virtual void decode(const Packet&, Vector<DecodedFrame>& out) = 0;
-    virtual void flush() = 0;
 };
 
 class VPXDecoder final : public VideoDecoder {
@@ -205,14 +192,6 @@ private:
     }
 
     Dav1dContext* m_context { nullptr };
-};
-
-class AudioDecoder {
-public:
-    virtual ~AudioDecoder() = default;
-    // Appends the packet's interleaved float samples.
-    virtual void decode(const Packet&, Vector<float>& out) = 0;
-    virtual void flush() = 0;
 };
 
 class OpusAudioDecoder final : public AudioDecoder {
@@ -479,10 +458,7 @@ private:
             auto* privateData = track->GetCodecPrivate(privateSize);
             std::span<const uint8_t> codecPrivate { privateData, privateData ? privateSize : 0 };
             if (track->GetType() == mkvparser::Track::kVideo && !m_videoDecoder) {
-                if (codec == "V_VP8"_s || codec == "V_VP9"_s)
-                    m_videoDecoder = VPXDecoder::create(codec == "V_VP9"_s);
-                else if (codec == "V_AV1"_s)
-                    m_videoDecoder = Dav1dDecoder::create();
+                m_videoDecoder = createVideoDecoder(codec);
                 if (m_videoDecoder) {
                     auto* video = static_cast<const mkvparser::VideoTrack*>(track);
                     m_videoTrack = track->GetNumber();
@@ -495,11 +471,7 @@ private:
                 auto* audio = static_cast<const mkvparser::AudioTrack*>(track);
                 unsigned channels = 0;
                 unsigned sampleRate = static_cast<unsigned>(audio->GetSamplingRate());
-                if (codec == "A_OPUS"_s) {
-                    m_audioDecoder = OpusAudioDecoder::create(codecPrivate, channels);
-                    sampleRate = 48000;
-                } else if (codec == "A_VORBIS"_s)
-                    m_audioDecoder = VorbisAudioDecoder::create(codecPrivate, channels, sampleRate);
+                m_audioDecoder = createAudioDecoder(codec, codecPrivate, channels, sampleRate);
                 if (m_audioDecoder) {
                     m_audioTrack = track->GetNumber();
                     m_info.hasAudio = true;
@@ -678,6 +650,26 @@ private:
 std::unique_ptr<MediaFile> openWebM(MediaBytes& bytes, String& error)
 {
     return WebMFile::create(bytes, error);
+}
+
+std::unique_ptr<VideoDecoder> createVideoDecoder(StringView codecID)
+{
+    if (codecID == "V_VP8"_s || codecID == "V_VP9"_s)
+        return VPXDecoder::create(codecID == "V_VP9"_s);
+    if (codecID == "V_AV1"_s)
+        return Dav1dDecoder::create();
+    return nullptr;
+}
+
+std::unique_ptr<AudioDecoder> createAudioDecoder(StringView codecID, std::span<const uint8_t> codecPrivate, unsigned& channels, unsigned& sampleRate)
+{
+    if (codecID == "A_OPUS"_s) {
+        sampleRate = 48000; // Opus decodes at 48 kHz whatever the track says
+        return OpusAudioDecoder::create(codecPrivate, channels);
+    }
+    if (codecID == "A_VORBIS"_s)
+        return VorbisAudioDecoder::create(codecPrivate, channels, sampleRate);
+    return nullptr;
 }
 
 } // namespace ZeroG::Media

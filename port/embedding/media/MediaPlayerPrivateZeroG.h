@@ -31,6 +31,7 @@ namespace ZeroG::Media {
 
 class AudioOutput;
 class MediaPlayerPrivateZeroG;
+class MediaSourcePrivateZeroG;
 
 // Registers the engine with WebCore (Embedding.cpp's initializeProcess).
 void registerMediaEngine();
@@ -45,7 +46,9 @@ public:
     // After the "opened" event: the sound's output, if there is one.
     AudioOutput* output() const { return m_output.get(); }
 
-    // Engine thread.
+    // Engine thread, before start(): what the decode thread reads, instead of
+    // a file from bytes() (a media source's stream).
+    void setFileOpener(Function<std::unique_ptr<MediaFile>()>&& opener) { m_openFile = WTF::move(opener); }
     void start();
     void stop(); // waits for the thread
     void requestSeek(const MediaTime&, uint64_t identifier);
@@ -65,6 +68,7 @@ private:
 
     ThreadSafeWeakPtr<MediaPlayerPrivateZeroG> m_player;
     const Ref<MediaBytes> m_bytes;
+    Function<std::unique_ptr<MediaFile>()> m_openFile;
     RefPtr<Thread> m_thread;
     std::unique_ptr<AudioOutput> m_output; // created on the decode thread before "opened"
 
@@ -139,7 +143,7 @@ public:
     void setMuted(bool) final;
 
     WebCore::MediaPlayer::NetworkState networkState() const final { return m_networkState; }
-    WebCore::MediaPlayer::ReadyState readyState() const final { return m_readyState; }
+    WebCore::MediaPlayer::ReadyState readyState() const final;
     const WebCore::PlatformTimeRanges& buffered() const final;
     MediaTime maxTimeSeekable() const final { return duration(); }
     bool didLoadingProgress() const final;
@@ -152,6 +156,12 @@ public:
 #if ENABLE(WEB_AUDIO)
     WebCore::AudioSourceProvider* audioSourceProvider() final { return &m_audioProvider; }
 #endif
+
+#if ENABLE(MEDIA_SOURCE)
+    // A media source's (MediaSourceZeroG.h).
+    void readyStateFromMediaSourceChanged() final;
+#endif
+    RefPtr<WebCore::MediaPlayer> mediaPlayer() const { return m_player.get(); }
 
     // From the pipeline, on the engine thread.
     void didOpen(const MediaInfo&);
@@ -166,6 +176,12 @@ private:
 
     void tick();
     void updateFrame();
+#if ENABLE(MEDIA_SOURCE)
+    bool isMediaSource() const { return !!m_mediaSource; }
+    Ref<WebCore::MediaTimePromise> seekMediaSource(const WebCore::SeekTarget&, const MediaTime&);
+#else
+    bool isMediaSource() const { return false; }
+#endif
     void setReadyState(WebCore::MediaPlayer::ReadyState);
     void setNetworkState(WebCore::MediaPlayer::NetworkState);
     void applyVolume();
@@ -175,6 +191,11 @@ private:
     ThreadSafeWeakPtr<WebCore::MediaPlayer> m_player;
     RefPtr<Pipeline> m_pipeline;
     RefPtr<WebCore::PlatformMediaResource> m_resource;
+#if ENABLE(MEDIA_SOURCE)
+    // Media Source Extensions: WebCore's MediaSource gives the ready state,
+    // duration and buffered ranges; the pipeline starts once it has metadata.
+    RefPtr<MediaSourcePrivateZeroG> m_mediaSource;
+#endif
     RunLoop::Timer m_timer;
 
     MediaInfo m_info;

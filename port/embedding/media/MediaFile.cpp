@@ -30,7 +30,43 @@ std::unique_ptr<MediaFile> MediaFile::open(MediaBytes& bytes, String& error)
         error = bytes.isFailed() ? "the media could not be loaded"_s : "the media is empty"_s;
         return nullptr;
     }
+    // MP4 and its relatives start with a box named "ftyp".
+    bool isMP4 = length >= 8 && !memcmp(head.data() + 4, "ftyp", 4);
+    if (isMP4) {
+#if OS(WINDOWS)
+        return openMediaFoundation(bytes, std::span<const uint8_t> { head }.first(length), error);
+#else
+        error = "MP4 (H.264, AAC) plays on Windows only"_s;
+        return nullptr;
+#endif
+    }
     return openAudioFile(bytes, std::span<const uint8_t> { head }.first(length), error);
+}
+
+sk_sp<SkImage> convertNV12ToImage(const uint8_t* y, int yStride, const uint8_t* uv, int uvStride, int width, int height, ColorMatrix matrix, bool fullRange)
+{
+    size_t rowBytes = static_cast<size_t>(width) * 4;
+    auto pixels = SkData::MakeUninitialized(rowBytes * height);
+    auto* destination = static_cast<uint8_t*>(pixels->writable_data());
+    // As in convertToImage: read as NV21 with the mirrored constants, the
+    // bytes come out R, G, B, A (libyuv's NV12ToABGRMatrix).
+    const YuvConstants* constants;
+    switch (matrix) {
+    case ColorMatrix::BT709:
+        constants = fullRange ? &kYvuF709Constants : &kYvuH709Constants;
+        break;
+    case ColorMatrix::BT2020:
+        constants = fullRange ? &kYvuV2020Constants : &kYvu2020Constants;
+        break;
+    case ColorMatrix::BT601:
+    default:
+        constants = fullRange ? &kYvuJPEGConstants : &kYvuI601Constants;
+        break;
+    }
+    if (NV21ToARGBMatrix(y, yStride, uv, uvStride, destination, rowBytes, constants, width, height))
+        return nullptr;
+    auto info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kOpaque_SkAlphaType);
+    return SkImages::RasterFromData(info, std::move(pixels), rowBytes);
 }
 
 sk_sp<SkImage> convertToImage(const YUVPlanes& planes)

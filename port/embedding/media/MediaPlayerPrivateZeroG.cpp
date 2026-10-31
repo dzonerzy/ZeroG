@@ -19,6 +19,10 @@
 #include <WebCore/AudioBus.h>
 #include <WebCore/AudioChannel.h>
 #endif
+#if ENABLE(MEDIA_SOURCE)
+#include "media/MediaSourceZeroG.h"
+#include <WebCore/MediaSourcePrivateClient.h>
+#endif
 
 namespace ZeroG::Media {
 
@@ -54,6 +58,33 @@ const ContainerSupport containers[] = {
     { "audio/vnd.wave"_s, { "1"_s } },
 };
 
+#if OS(WINDOWS)
+// MP4 through Media Foundation, where the system has it: H.264 and AAC (and
+// MP3 in MP4).
+const ContainerSupport mediaFoundationContainers[] = {
+    { "video/mp4"_s, { "avc1"_s, "avc3"_s, "mp4a.40"_s, "mp4a.69"_s, "mp4a.6b"_s } },
+    { "audio/mp4"_s, { "mp4a.40"_s, "mp4a.69"_s, "mp4a.6b"_s } },
+    { "audio/x-m4a"_s, { "mp4a.40"_s } },
+};
+#endif
+
+const ContainerSupport* findContainer(const String& type)
+{
+    for (auto& container : containers) {
+        if (type == container.type)
+            return &container;
+    }
+#if OS(WINDOWS)
+    if (mediaFoundationAvailable()) {
+        for (auto& container : mediaFoundationContainers) {
+            if (type == container.type)
+                return &container;
+        }
+    }
+#endif
+    return nullptr;
+}
+
 class MediaEngineFactory final : public MediaPlayerFactory {
 public:
     MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::ZeroG; }
@@ -67,18 +98,29 @@ public:
     {
         for (auto& container : containers)
             types.add(container.type);
+#if OS(WINDOWS)
+        if (mediaFoundationAvailable()) {
+            for (auto& container : mediaFoundationContainers)
+                types.add(container.type);
+        }
+#endif
     }
 
     MediaPlayer::SupportsType supportsTypeAndCodecs(const MediaEngineSupportParameters& parameters) const final
     {
-        // Files only: no Media Source Extensions or media streams yet.
+#if ENABLE(MEDIA_SOURCE)
+        // Media Source Extensions: WebM.
+        if (parameters.platformType == PlatformMediaDecodingType::MediaSource) {
+            if (!supportsMediaSourceType(parameters.type))
+                return MediaPlayer::SupportsType::IsNotSupported;
+            return parameters.type.codecs().isEmpty() ? MediaPlayer::SupportsType::MayBeSupported : MediaPlayer::SupportsType::IsSupported;
+        }
+#endif
+        // Files (no media streams).
         if (parameters.platformType != PlatformMediaDecodingType::FileOrHLS)
             return MediaPlayer::SupportsType::IsNotSupported;
-        auto type = parameters.type.containerType().convertToASCIILowercase();
-        auto* container = std::find_if(std::begin(containers), std::end(containers), [&](auto& entry) {
-            return type == entry.type;
-        });
-        if (container == std::end(containers))
+        auto* container = findContainer(parameters.type.containerType().convertToASCIILowercase());
+        if (!container)
             return MediaPlayer::SupportsType::IsNotSupported;
         auto codecs = parameters.type.codecs();
         if (codecs.isEmpty())
@@ -234,7 +276,7 @@ void Pipeline::post(Function<void(MediaPlayerPrivateZeroG&)>&& function)
 void Pipeline::run()
 {
     String error;
-    auto file = MediaFile::open(m_bytes, error);
+    auto file = m_openFile ? m_openFile() : MediaFile::open(m_bytes, error);
     if (!file) {
         bool networkError = m_bytes->isFailed();
         if (!m_bytes->isAborted())
@@ -292,25 +334,27 @@ void Pipeline::run()
             size_t frames = file->readAudio(samples.mutableSpan().data(), 4096, time);
             if (frames)
                 m_output->write(samples.span().data(), frames);
-            else {
+            else if (file->audioEnded()) {
                 m_output->finish();
                 Locker locker { m_lock };
                 m_audioDone = true;
             }
-            worked = true;
+            // Nothing yet (a media source's stream) is not work done.
+            worked |= frames || file->audioEnded();
             if (frames && !hasVideo && !std::exchange(firstData, true))
                 post([](auto& player) { player.didDecodeFirstData(); });
         }
         if (hasVideo && !videoDone && queuedFrames < framesAhead) {
             auto frame = file->readVideo();
+            bool videoEnded = !frame && file->videoEnded();
             {
                 Locker locker { m_lock };
                 if (frame)
                     m_frames.push_back(WTF::move(*frame));
-                else
+                else if (videoEnded)
                     m_videoDone = true;
             }
-            worked = true;
+            worked |= frame || videoEnded;
             if (frame && !std::exchange(firstData, true))
                 post([](auto& player) { player.didDecodeFirstData(); });
         }
@@ -411,11 +455,43 @@ void MediaPlayerPrivateZeroG::load(const String& url)
 }
 
 #if ENABLE(MEDIA_SOURCE)
-void MediaPlayerPrivateZeroG::load(const URL&, const LoadOptions&, MediaSourcePrivateClient&)
+void MediaPlayerPrivateZeroG::load(const URL&, const LoadOptions&, MediaSourcePrivateClient& client)
 {
-    setNetworkState(MediaPlayer::NetworkState::FormatError);
+    cancelLoad();
+    RefPtr existing = client.mediaSourcePrivate();
+    if (existing && existing->platformType() == MediaPlatformType::ZeroG) {
+        // The element's media source, attached again.
+        m_mediaSource = static_cast<MediaSourcePrivateZeroG*>(existing.get());
+        m_mediaSource->setPlayer(this);
+        client.reOpen();
+    } else
+        m_mediaSource = MediaSourcePrivateZeroG::create(*this, client);
+}
+
+void MediaPlayerPrivateZeroG::readyStateFromMediaSourceChanged()
+{
+    // Every source buffer has its tracks: the decode thread can start.
+    if (m_mediaSource && !m_pipeline && m_mediaSource->mediaPlayerReadyState() >= MediaPlayer::ReadyState::HaveMetadata) {
+        AudioOutput::initialize();
+        m_pipeline = Pipeline::create(*this);
+        m_pipeline->setFileOpener([queues = Ref { m_mediaSource->queues() }] {
+            return openMediaSourceFile(queues);
+        });
+        m_pipeline->start();
+    }
+    if (RefPtr player = m_player.get())
+        player->readyStateChanged();
 }
 #endif
+
+MediaPlayer::ReadyState MediaPlayerPrivateZeroG::readyState() const
+{
+#if ENABLE(MEDIA_SOURCE)
+    if (m_mediaSource)
+        return m_mediaSource->mediaPlayerReadyState();
+#endif
+    return m_readyState;
+}
 
 #if ENABLE(MEDIA_STREAM)
 void MediaPlayerPrivateZeroG::load(MediaStreamPrivate&)
@@ -436,6 +512,9 @@ void MediaPlayerPrivateZeroG::cancelLoad()
 #endif
     if (auto pipeline = std::exchange(m_pipeline, nullptr))
         pipeline->stop();
+#if ENABLE(MEDIA_SOURCE)
+    m_mediaSource = nullptr;
+#endif
     if (auto producer = std::exchange(m_seekProducer, std::nullopt))
         producer->reject(PlatformMediaError::Cancelled);
 }
@@ -472,6 +551,10 @@ FloatSize MediaPlayerPrivateZeroG::naturalSize() const
 
 MediaTime MediaPlayerPrivateZeroG::duration() const
 {
+#if ENABLE(MEDIA_SOURCE)
+    if (m_mediaSource)
+        return m_mediaSource->duration();
+#endif
     if (m_info.duration.isValid())
         return m_info.duration;
     if (m_endTime.isValid())
@@ -509,6 +592,10 @@ Ref<MediaTimePromise> MediaPlayerPrivateZeroG::seekToTarget(const SeekTarget& ta
     auto time = std::max(target.time, MediaTime::zeroTime());
     if (auto end = duration(); end.isFinite())
         time = std::min(time, end);
+#if ENABLE(MEDIA_SOURCE)
+    if (m_mediaSource)
+        return seekMediaSource(target, time);
+#endif
     if (!m_pipeline || m_readyState < MediaPlayer::ReadyState::HaveMetadata) {
         m_position = time;
         return MediaTimePromise::createAndResolve(time);
@@ -520,6 +607,44 @@ Ref<MediaTimePromise> MediaPlayerPrivateZeroG::seekToTarget(const SeekTarget& ta
     m_pipeline->requestSeek(time, ++m_seekIdentifier);
     return promise;
 }
+
+#if ENABLE(MEDIA_SOURCE)
+Ref<MediaTimePromise> MediaPlayerPrivateZeroG::seekMediaSource(const SeekTarget& target, const MediaTime& time)
+{
+    // The media source waits for the target to be buffered and gives the
+    // time to seek to (a keyframe, within the target's tolerance); its frames
+    // from there are enqueued again once the decode thread starts over.
+    m_seekTarget = time;
+    m_ended = false;
+    m_seekProducer.emplace();
+    Ref promise = m_seekProducer->promise();
+    auto identifier = ++m_seekIdentifier;
+    m_mediaSource->waitForTarget(target)->whenSettled(RunLoop::mainSingleton(), [weakThis = ThreadSafeWeakPtr { *this }, identifier](auto&& result) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || identifier != protectedThis->m_seekIdentifier || !protectedThis->m_mediaSource)
+            return;
+        if (!result) {
+            protectedThis->m_seekTarget = MediaTime::invalidTime();
+            if (auto producer = std::exchange(protectedThis->m_seekProducer, std::nullopt))
+                producer->reject(result.error());
+            return;
+        }
+        auto time = *result;
+        protectedThis->m_seekTarget = time;
+        if (!protectedThis->m_pipeline) {
+            // No metadata yet: playback starts there.
+            protectedThis->m_position = std::exchange(protectedThis->m_seekTarget, MediaTime::invalidTime());
+            if (auto producer = std::exchange(protectedThis->m_seekProducer, std::nullopt))
+                producer->resolve(time);
+            return;
+        }
+        protectedThis->m_mediaSource->queues().beginSeek();
+        protectedThis->m_pipeline->requestSeek(time, identifier);
+        protectedThis->m_mediaSource->reenqueueMediaForTime(time);
+    });
+    return promise;
+}
+#endif
 
 void MediaPlayerPrivateZeroG::didSeek(uint64_t identifier)
 {
@@ -568,6 +693,12 @@ void MediaPlayerPrivateZeroG::applyVolume()
 
 const PlatformTimeRanges& MediaPlayerPrivateZeroG::buffered() const
 {
+#if ENABLE(MEDIA_SOURCE)
+    if (m_mediaSource) {
+        m_buffered = m_mediaSource->buffered();
+        return m_buffered;
+    }
+#endif
     m_buffered.clear();
     auto end = duration();
     if (!m_pipeline || !end.isFinite() || end <= MediaTime::zeroTime())
@@ -583,7 +714,7 @@ const PlatformTimeRanges& MediaPlayerPrivateZeroG::buffered() const
 
 bool MediaPlayerPrivateZeroG::didLoadingProgress() const
 {
-    if (!m_pipeline)
+    if (!m_pipeline || isMediaSource())
         return false;
     uint64_t loaded = m_pipeline->bytes().available();
     return std::exchange(m_lastLoadedBytes, loaded) != loaded;
@@ -599,6 +730,10 @@ unsigned long long MediaPlayerPrivateZeroG::totalBytes() const
 
 bool MediaPlayerPrivateZeroG::didPassCORSAccessCheck() const
 {
+#if ENABLE(MEDIA_SOURCE)
+    if (m_mediaSource)
+        return true; // the page's own bytes
+#endif
     return m_resource && m_resource->didPassAccessControlCheck();
 }
 
@@ -630,7 +765,9 @@ void MediaPlayerPrivateZeroG::didOpen(const MediaInfo& info)
         m_audioProvider.setOutput(output);
 #endif
     }
-    setReadyState(MediaPlayer::ReadyState::HaveMetadata);
+    // A media source gives its ready state itself.
+    if (!isMediaSource())
+        setReadyState(MediaPlayer::ReadyState::HaveMetadata);
     if (RefPtr player = m_player.get()) {
         player->durationChanged();
         player->sizeChanged();
@@ -648,7 +785,8 @@ void MediaPlayerPrivateZeroG::didFailToOpen(const String&, bool networkError)
 void MediaPlayerPrivateZeroG::didDecodeFirstData()
 {
     updateFrame();
-    setReadyState(MediaPlayer::ReadyState::HaveEnoughData);
+    if (!isMediaSource())
+        setReadyState(MediaPlayer::ReadyState::HaveEnoughData);
 }
 
 void MediaPlayerPrivateZeroG::didFinishLoading(bool failed)
@@ -706,7 +844,7 @@ void MediaPlayerPrivateZeroG::tick()
     // The end: the clock stops there and the element sees it. It pauses the
     // player (ended), or seeks back to the start while it keeps playing (loop).
     m_position = currentTime();
-    if (!m_info.duration.isValid()) {
+    if (!m_info.duration.isValid() && !isMediaSource()) {
         m_endTime = m_position;
         if (RefPtr player = m_player.get())
             player->durationChanged();
