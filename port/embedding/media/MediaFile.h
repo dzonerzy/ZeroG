@@ -65,6 +65,9 @@ protected:
 // AudioFile.cpp).
 std::unique_ptr<MediaFile> openWebM(MediaBytes&, String& error);
 std::unique_ptr<MediaFile> openAudioFile(MediaBytes&, std::span<const uint8_t> head, String& error);
+// MP4 with VP9, AV1 or Opus (MP4File.cpp); `leaveSystemCodecs`: fail for a
+// file with H.264 or AAC, which the OS decodes.
+std::unique_ptr<MediaFile> openMP4(MediaBytes&, bool leaveSystemCodecs, String& error);
 #if OS(WINDOWS)
 // MP4 (H.264, AAC) through the OS's Media Foundation (MediaFoundationFile.cpp),
 // when the system has it (Windows "N" editions do not).

@@ -74,6 +74,19 @@ else ()
     list(APPEND ZeroGEmbedding_LIBRARIES ${CMAKE_DL_LIBS})
 endif ()
 
+# The icons of WebCore's media controls (every profile: <video controls> shows
+# them, also where nothing plays), WebKit's Adwaita set packed into the engine.
+set(_zerog_media_icons "${CMAKE_CURRENT_BINARY_DIR}/media_controls_icons.c")
+set(_zerog_media_icons_dir "${WEBCORE_DIR}/Modules/modern-media-controls/images/adwaita")
+file(GLOB _zerog_media_icon_files "${_zerog_media_icons_dir}/*")
+add_custom_command(
+    OUTPUT ${_zerog_media_icons}
+    COMMAND ${Python_EXECUTABLE} ${ZEROG_SOURCE_DIR}/tools/assets.py ${_zerog_media_icons_dir}
+        -o ${_zerog_media_icons} --c-symbol zerog_media_controls_icons
+    DEPENDS ${_zerog_media_icon_files} ${ZEROG_SOURCE_DIR}/tools/assets.py
+    VERBATIM)
+list(APPEND ZeroGEmbedding_SOURCES media/MediaControlsIcons.cpp ${_zerog_media_icons})
+
 # Media (standard, dev and debug profiles): the engine and its codecs, all
 # royalty-free and permissively licensed, from the sysroot.
 if (ZEROG_MEDIA)
@@ -84,6 +97,7 @@ if (ZEROG_MEDIA)
         media/MediaFile.cpp
         media/MediaPlayerPrivateZeroG.cpp
         media/MediaSourceZeroG.cpp
+        media/MP4File.cpp
         media/MP4Stream.cpp
         media/WebMFile.cpp
         media/WebMStream.cpp

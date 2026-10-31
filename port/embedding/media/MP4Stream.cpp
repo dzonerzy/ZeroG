@@ -1,7 +1,7 @@
 #include "config.h"
 #include "media/MP4Stream.h"
 
-#if ENABLE(MEDIA_SOURCE) && defined(ZEROG_MEDIA)
+#if ENABLE(VIDEO) && defined(ZEROG_MEDIA)
 
 #include <optional>
 
@@ -221,7 +221,242 @@ Vector<uint8_t> opusHeadFromDOps(std::span<const uint8_t> dOps)
     return head;
 }
 
+// A moov's trak: the track's identity, timescale, edit list offset and codec.
+// False for a track not played (another kind, or a codec without a decoder).
+bool parseTrack(std::span<const uint8_t> body, MP4StreamParser::Track& entry)
+{
+    BoxReader header(findBox(body, fourCC("tkhd")));
+    uint8_t version = header.u8();
+    header.skip(3 + (version ? 16 : 8));
+    entry.id = header.u32();
+    auto media = findBox(body, fourCC("mdia"));
+    BoxReader mediaHeader(findBox(media, fourCC("mdhd")));
+    uint8_t mediaVersion = mediaHeader.u8();
+    mediaHeader.skip(3 + (mediaVersion ? 16 : 8));
+    entry.timescale = mediaHeader.u32();
+    BoxReader handler(findBox(media, fourCC("hdlr")));
+    handler.skip(8);
+    uint32_t handlerType = handler.u32();
+    auto sampleTable = findBox(findBox(findBox(media, fourCC("minf")), fourCC("stbl")), fourCC("stsd"));
+    if (!header.ok() || !mediaHeader.ok() || !entry.timescale || sampleTable.size() < 8)
+        return false;
+    auto entries = sampleTable.subspan(8); // version, flags, entry count
+    auto sampleEntry = readHeader(entries);
+    if (!sampleEntry || sampleEntry->size > entries.size() || sampleEntry->size < sampleEntry->headerSize)
+        return false;
+    auto description = entries.subspan(sampleEntry->headerSize, sampleEntry->size - sampleEntry->headerSize);
+    // edts/elst: the first edit that plays media gives the offset.
+    BoxReader edits(findBox(findBox(body, fourCC("edts")), fourCC("elst")));
+    uint8_t editsVersion = edits.u8();
+    edits.skip(3);
+    uint32_t editCount = edits.u32();
+    for (uint32_t i = 0; i < editCount && edits.ok(); ++i) {
+        edits.skip(editsVersion ? 8 : 4); // segment duration
+        int64_t mediaTime = editsVersion ? static_cast<int64_t>(edits.u64()) : static_cast<int64_t>(static_cast<int32_t>(edits.u32()));
+        edits.skip(4); // rate
+        if (edits.ok() && mediaTime >= 0) {
+            entry.timeOffset = mediaTime;
+            break;
+        }
+    }
+    auto& info = entry.info;
+    info.number = entry.id;
+    if (handlerType == fourCC("vide")) {
+        // VisualSampleEntry: 78 bytes, then the codec's boxes.
+        BoxReader visual(description);
+        visual.skip(24);
+        info.width = visual.u16();
+        info.height = visual.u16();
+        visual.skip(50);
+        if (!visual.ok())
+            return false;
+        auto boxes = visual.rest();
+        info.kind = StreamTrack::Kind::Video;
+        switch (sampleEntry->type) {
+        case fourCC("avc1"):
+        case fourCC("avc3"):
+            info.codecID = "V_MPEG4/ISO/AVC"_s;
+            info.codecPrivate = Vector<uint8_t> { findBox(boxes, fourCC("avcC")) };
+            return true;
+        case fourCC("vp09"):
+            info.codecID = "V_VP9"_s;
+            return true;
+        case fourCC("av01"):
+            info.codecID = "V_AV1"_s;
+            return true;
+        default:
+            return false; // HEVC, encrypted, ...: not played
+        }
+    }
+    if (handlerType == fourCC("soun")) {
+        // AudioSampleEntry: 28 bytes, then the codec's boxes.
+        BoxReader audio(description);
+        audio.skip(16);
+        info.channels = audio.u16();
+        audio.skip(6);
+        info.sampleRate = audio.u32() >> 16;
+        if (!audio.ok())
+            return false;
+        auto boxes = audio.rest();
+        info.kind = StreamTrack::Kind::Audio;
+        if (sampleEntry->type == fourCC("mp4a")) {
+            uint8_t objectType = 0;
+            Vector<uint8_t> config;
+            if (!parseESDescriptor(findBox(boxes, fourCC("esds")), objectType, config))
+                return false;
+            // AAC (MPEG-4, and MPEG-2's three profiles).
+            if (objectType != 0x40 && objectType != 0x66 && objectType != 0x67 && objectType != 0x68)
+                return false;
+            info.codecID = "A_AAC"_s;
+            parseAudioSpecificConfig(config.span(), info.sampleRate, info.channels);
+            info.codecPrivate = WTF::move(config);
+            return true;
+        }
+        if (sampleEntry->type == fourCC("Opus")) {
+            info.codecID = "A_OPUS"_s;
+            info.codecPrivate = opusHeadFromDOps(findBox(boxes, fourCC("dOps")));
+            info.sampleRate = 48000;
+            return true;
+        }
+    }
+    return false;
+}
+
+// A regular MP4's sample tables (stbl): every sample's place, size, times and
+// whether it is a keyframe.
+bool parseSampleTable(std::span<const uint8_t> trak, const MP4StreamParser::Track& entry, Vector<MP4Sample>& samples)
+{
+    auto table = findBox(findBox(findBox(findBox(trak, fourCC("mdia")), fourCC("minf")), fourCC("stbl")), fourCC("stsz"));
+    auto stbl = findBox(findBox(findBox(trak, fourCC("mdia")), fourCC("minf")), fourCC("stbl"));
+    // Sizes.
+    BoxReader sizes(table);
+    sizes.skip(4);
+    uint32_t constantSize = sizes.u32();
+    uint32_t count = sizes.u32();
+    if (!sizes.ok())
+        return false;
+    if (!count)
+        return true; // a fragmented file: the samples are in its moofs
+    if (count > 50'000'000)
+        return false;
+    samples.resize(count);
+    for (auto& sample : samples)
+        sample.size = constantSize ? constantSize : sizes.u32();
+    // Chunk offsets (stco or co64) and samples per chunk (stsc).
+    Vector<uint64_t> chunks;
+    auto chunkOffsets = findBox(stbl, fourCC("stco"));
+    bool wide = chunkOffsets.empty();
+    if (wide)
+        chunkOffsets = findBox(stbl, fourCC("co64"));
+    BoxReader offsets(chunkOffsets);
+    offsets.skip(4);
+    uint32_t chunkCount = offsets.u32();
+    for (uint32_t i = 0; i < chunkCount && offsets.ok(); ++i)
+        chunks.append(wide ? offsets.u64() : offsets.u32());
+    BoxReader runs(findBox(stbl, fourCC("stsc")));
+    runs.skip(4);
+    uint32_t runCount = runs.u32();
+    struct Run {
+        uint32_t firstChunk;
+        uint32_t samplesPerChunk;
+    };
+    Vector<Run> chunkRuns;
+    for (uint32_t i = 0; i < runCount && runs.ok(); ++i) {
+        uint32_t firstChunk = runs.u32();
+        uint32_t perChunk = runs.u32();
+        runs.skip(4); // sample description index
+        chunkRuns.append({ firstChunk, perChunk });
+    }
+    if (!sizes.ok() || !offsets.ok() || !runs.ok() || chunkRuns.isEmpty())
+        return false;
+    size_t index = 0;
+    for (size_t run = 0; run < chunkRuns.size() && index < count; ++run) {
+        uint32_t lastChunk = run + 1 < chunkRuns.size() ? chunkRuns[run + 1].firstChunk - 1 : chunks.size();
+        for (uint32_t chunk = chunkRuns[run].firstChunk; chunk <= lastChunk && chunk >= 1 && chunk <= chunks.size() && index < count; ++chunk) {
+            uint64_t offset = chunks[chunk - 1];
+            for (uint32_t i = 0; i < chunkRuns[run].samplesPerChunk && index < count; ++i) {
+                samples[index].offset = offset;
+                offset += samples[index].size;
+                ++index;
+            }
+        }
+    }
+    if (index != count)
+        return false;
+    // Decode times (stts) and composition offsets (ctts).
+    BoxReader deltas(findBox(stbl, fourCC("stts")));
+    deltas.skip(4);
+    uint32_t deltaCount = deltas.u32();
+    int64_t time = 0;
+    index = 0;
+    for (uint32_t i = 0; i < deltaCount && deltas.ok(); ++i) {
+        uint32_t run = deltas.u32();
+        uint32_t delta = deltas.u32();
+        for (uint32_t j = 0; j < run && index < count; ++j) {
+            samples[index++].decodeTime = time;
+            time += delta;
+        }
+    }
+    for (; index < count; ++index)
+        samples[index].decodeTime = time;
+    auto compositionBox = findBox(stbl, fourCC("ctts"));
+    BoxReader composition(compositionBox);
+    uint8_t compositionVersion = composition.u8();
+    composition.skip(3);
+    uint32_t compositionCount = compositionBox.empty() ? 0 : composition.u32();
+    index = 0;
+    for (uint32_t i = 0; i < compositionCount && composition.ok(); ++i) {
+        uint32_t run = composition.u32();
+        uint32_t value = composition.u32();
+        // Signed in version 1, and in practice in version 0 too.
+        int64_t offset = compositionVersion ? static_cast<int64_t>(static_cast<int32_t>(value)) : static_cast<int64_t>(static_cast<int32_t>(value));
+        for (uint32_t j = 0; j < run && index < count; ++j)
+            samples[index++].presentationTime = offset;
+    }
+    for (auto& sample : samples) {
+        sample.presentationTime += sample.decodeTime - entry.timeOffset;
+        sample.decodeTime -= entry.timeOffset;
+    }
+    // Keyframes (stss); without it every sample is one (audio).
+    auto syncBox = findBox(stbl, fourCC("stss"));
+    if (syncBox.empty()) {
+        for (auto& sample : samples)
+            sample.key = true;
+    } else {
+        BoxReader sync(syncBox);
+        sync.skip(4);
+        uint32_t syncCount = sync.u32();
+        for (uint32_t i = 0; i < syncCount && sync.ok(); ++i) {
+            uint32_t number = sync.u32();
+            if (number >= 1 && number <= count)
+                samples[number - 1].key = true;
+        }
+    }
+    return true;
+}
+
 } // namespace
+
+bool parseMP4Movie(std::span<const uint8_t> movie, MP4Movie& result)
+{
+    uint32_t movieTimescale = 0;
+    return forEachBox(movie, [&](uint32_t type, std::span<const uint8_t> body) {
+        if (type == fourCC("mvhd")) {
+            BoxReader reader(body);
+            uint8_t version = reader.u8();
+            reader.skip(3 + (version ? 16 : 8));
+            movieTimescale = reader.u32();
+            uint64_t length = version ? reader.u64() : reader.u32();
+            bool unknown = !length || length == (version ? UINT64_MAX : UINT32_MAX);
+            if (reader.ok() && movieTimescale && !unknown)
+                result.duration = MediaTime(length, movieTimescale);
+        } else if (type == fourCC("trak")) {
+            MP4Movie::Table table;
+            if (parseTrack(body, table.track) && parseSampleTable(body, table.track, table.samples))
+                result.tracks.append(WTF::move(table));
+        }
+    });
+}
 
 MP4StreamParser::MP4StreamParser(Client& client)
     : m_client(client)
@@ -313,99 +548,8 @@ bool MP4StreamParser::parseMovie(std::span<const uint8_t> movie)
             movieExtends = body;
         else if (type == fourCC("trak")) {
             Track entry;
-            BoxReader header(findBox(body, fourCC("tkhd")));
-            uint8_t version = header.u8();
-            header.skip(3 + (version ? 16 : 8));
-            entry.id = header.u32();
-            auto media = findBox(body, fourCC("mdia"));
-            BoxReader mediaHeader(findBox(media, fourCC("mdhd")));
-            uint8_t mediaVersion = mediaHeader.u8();
-            mediaHeader.skip(3 + (mediaVersion ? 16 : 8));
-            entry.timescale = mediaHeader.u32();
-            BoxReader handler(findBox(media, fourCC("hdlr")));
-            handler.skip(8);
-            uint32_t handlerType = handler.u32();
-            auto sampleTable = findBox(findBox(findBox(media, fourCC("minf")), fourCC("stbl")), fourCC("stsd"));
-            if (!header.ok() || !mediaHeader.ok() || !entry.timescale || sampleTable.size() < 8)
-                return;
-            auto entries = sampleTable.subspan(8); // version, flags, entry count
-            auto sampleEntry = readHeader(entries);
-            if (!sampleEntry || sampleEntry->size > entries.size() || sampleEntry->size < sampleEntry->headerSize)
-                return;
-            auto description = entries.subspan(sampleEntry->headerSize, sampleEntry->size - sampleEntry->headerSize);
-            // edts/elst: the first edit that plays media gives the offset.
-            BoxReader edits(findBox(findBox(body, fourCC("edts")), fourCC("elst")));
-            uint8_t editsVersion = edits.u8();
-            edits.skip(3);
-            uint32_t editCount = edits.u32();
-            for (uint32_t i = 0; i < editCount && edits.ok(); ++i) {
-                edits.skip(editsVersion ? 8 : 4); // segment duration
-                int64_t mediaTime = editsVersion ? static_cast<int64_t>(edits.u64()) : static_cast<int64_t>(static_cast<int32_t>(edits.u32()));
-                edits.skip(4); // rate
-                if (edits.ok() && mediaTime >= 0) {
-                    entry.timeOffset = mediaTime;
-                    break;
-                }
-            }
-            auto& info = entry.info;
-            info.number = entry.id;
-            if (handlerType == fourCC("vide")) {
-                // VisualSampleEntry: 78 bytes, then the codec's boxes.
-                BoxReader visual(description);
-                visual.skip(24);
-                info.width = visual.u16();
-                info.height = visual.u16();
-                visual.skip(50);
-                if (!visual.ok())
-                    return;
-                auto boxes = visual.rest();
-                info.kind = StreamTrack::Kind::Video;
-                switch (sampleEntry->type) {
-                case fourCC("avc1"):
-                case fourCC("avc3"):
-                    info.codecID = "V_MPEG4/ISO/AVC"_s;
-                    info.codecPrivate = Vector<uint8_t> { findBox(boxes, fourCC("avcC")) };
-                    break;
-                case fourCC("vp09"):
-                    info.codecID = "V_VP9"_s;
-                    break;
-                case fourCC("av01"):
-                    info.codecID = "V_AV1"_s;
-                    break;
-                default:
-                    return; // HEVC, encrypted, ...: not played
-                }
-            } else if (handlerType == fourCC("soun")) {
-                // AudioSampleEntry: 28 bytes, then the codec's boxes.
-                BoxReader audio(description);
-                audio.skip(16);
-                info.channels = audio.u16();
-                audio.skip(6);
-                info.sampleRate = audio.u32() >> 16;
-                if (!audio.ok())
-                    return;
-                auto boxes = audio.rest();
-                info.kind = StreamTrack::Kind::Audio;
-                if (sampleEntry->type == fourCC("mp4a")) {
-                    uint8_t objectType = 0;
-                    Vector<uint8_t> config;
-                    if (!parseESDescriptor(findBox(boxes, fourCC("esds")), objectType, config))
-                        return;
-                    // AAC (MPEG-4, and MPEG-2's three profiles).
-                    if (objectType != 0x40 && objectType != 0x66 && objectType != 0x67 && objectType != 0x68)
-                        return;
-                    info.codecID = "A_AAC"_s;
-                    parseAudioSpecificConfig(config.span(), info.sampleRate, info.channels);
-                    info.codecPrivate = WTF::move(config);
-                } else if (sampleEntry->type == fourCC("Opus")) {
-                    info.codecID = "A_OPUS"_s;
-                    info.codecPrivate = opusHeadFromDOps(findBox(boxes, fourCC("dOps")));
-                    info.sampleRate = 48000;
-                } else
-                    return;
-            } else
-                return;
-            m_tracks.append(WTF::move(entry));
+            if (parseTrack(body, entry))
+                m_tracks.append(WTF::move(entry));
         }
     });
     if (!ok)
@@ -525,4 +669,4 @@ bool MP4StreamParser::parseFragment(std::span<const uint8_t> data, size_t movieF
 
 } // namespace ZeroG::Media
 
-#endif // ENABLE(MEDIA_SOURCE) && defined(ZEROG_MEDIA)
+#endif // ENABLE(VIDEO) && defined(ZEROG_MEDIA)

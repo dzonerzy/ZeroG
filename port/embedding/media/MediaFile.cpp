@@ -33,11 +33,14 @@ std::unique_ptr<MediaFile> MediaFile::open(MediaBytes& bytes, String& error)
     // MP4 and its relatives start with a box named "ftyp".
     bool isMP4 = length >= 8 && !memcmp(head.data() + 4, "ftyp", 4);
     if (isMP4) {
+        // VP9, AV1 and Opus with the engine's decoders; H.264 and AAC with the
+        // OS's (Windows; elsewhere they do not play).
 #if OS(WINDOWS)
+        if (auto file = openMP4(bytes, true, error))
+            return file;
         return openMediaFoundation(bytes, std::span<const uint8_t> { head }.first(length), error);
 #else
-        error = "MP4 (H.264, AAC) plays on Windows only"_s;
-        return nullptr;
+        return openMP4(bytes, false, error);
 #endif
     }
     return openAudioFile(bytes, std::span<const uint8_t> { head }.first(length), error);

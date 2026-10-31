@@ -1,0 +1,34 @@
+diff --git a/Source/WebCore/rendering/adwaita/RenderThemeAdwaita.cpp b/Source/WebCore/rendering/adwaita/RenderThemeAdwaita.cpp
+index 15a41e942a..222cda1c2f 100644
+--- a/Source/WebCore/rendering/adwaita/RenderThemeAdwaita.cpp
++++ b/Source/WebCore/rendering/adwaita/RenderThemeAdwaita.cpp
+@@ -223,9 +223,16 @@ Vector<String, 2> RenderThemeAdwaita::mediaControlsStyleSheets(const HTMLMediaEl
+     return { m_mediaControlsStyleSheet };
+ }
+ 
++#if PLATFORM(ZEROG)
++// The embedding layer's: the icons are compiled into the engine.
++RefPtr<SharedBuffer> mediaControlsIconZeroG(const String& iconName, const String& iconType);
++#endif
++
+ RefPtr<FragmentedSharedBuffer> RenderThemeAdwaita::mediaControlsImageDataForIconNameAndType(const String& iconName, const String& iconType)
+ {
+-#if USE(GLIB)
++#if PLATFORM(ZEROG)
++    return mediaControlsIconZeroG(iconName, iconType);
++#elif USE(GLIB)
+     auto path = makeString("/org/webkit/media-controls/"_s, iconName, '.', iconType);
+     GRefPtr data = adoptGRef(g_resources_lookup_data(path.utf8().legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
+     if (!data)
+@@ -244,7 +251,10 @@ RefPtr<FragmentedSharedBuffer> RenderThemeAdwaita::mediaControlsImageDataForIcon
+ 
+ String RenderThemeAdwaita::mediaControlsBase64StringForIconNameAndType(const String& iconName, const String& iconType)
+ {
+-#if USE(GLIB)
++#if PLATFORM(ZEROG)
++    RefPtr data = mediaControlsIconZeroG(iconName, iconType);
++    return data ? base64EncodeToString(data->span()) : emptyString();
++#elif USE(GLIB)
+     auto path = makeString("/org/webkit/media-controls/"_s, iconName, '.', iconType);
+     GRefPtr data = adoptGRef(g_resources_lookup_data(path.utf8().legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
+     if (!data)

@@ -60,7 +60,9 @@ Engine features of roadmap phases 3 and 4:
   play (the minimal profile still does).
 - MP4 on Windows (standard, dev and debug profiles): H.264 and AAC through the
   system's Media Foundation, where Windows has it (not in "N" editions);
-  `canPlayType` says so. Elsewhere MP4 does not play.
+  `canPlayType` says so. MP4 files with VP9, AV1 or Opus play everywhere.
+- `<video controls>` shows WebKit's native controls with their icons (before,
+  the buttons had none).
 - Media Source Extensions (standard, dev and debug profiles): `MediaSource` and
   `SourceBuffer` for WebM (VP8, VP9, AV1, Opus, Vorbis) and fragmented MP4 (VP9,
   AV1, Opus; on Windows H.264 and AAC through Media Foundation), several buffers

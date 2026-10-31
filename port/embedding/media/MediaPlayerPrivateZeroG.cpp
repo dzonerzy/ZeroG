@@ -62,12 +62,18 @@ const ContainerSupport containers[] = {
     { "audio/vnd.wave"_s, { "1"_s } },
 };
 
+// MP4 with the engine's own decoders (MP4File.cpp).
+const ContainerSupport mp4Containers[] = {
+    { "video/mp4"_s, { "vp09"_s, "av01"_s, "opus"_s } },
+    { "audio/mp4"_s, { "opus"_s } },
+};
+
 #if OS(WINDOWS)
-// MP4 through Media Foundation, where the system has it: H.264 and AAC (and
+// And through Media Foundation, where the system has it: H.264 and AAC (and
 // MP3 in MP4).
 const ContainerSupport mediaFoundationContainers[] = {
-    { "video/mp4"_s, { "avc1"_s, "avc3"_s, "mp4a.40"_s, "mp4a.69"_s, "mp4a.6b"_s } },
-    { "audio/mp4"_s, { "mp4a.40"_s, "mp4a.69"_s, "mp4a.6b"_s } },
+    { "video/mp4"_s, { "vp09"_s, "av01"_s, "opus"_s, "avc1"_s, "avc3"_s, "mp4a.40"_s, "mp4a.69"_s, "mp4a.6b"_s } },
+    { "audio/mp4"_s, { "opus"_s, "mp4a.40"_s, "mp4a.69"_s, "mp4a.6b"_s } },
     { "audio/x-m4a"_s, { "mp4a.40"_s } },
 };
 #endif
@@ -86,6 +92,10 @@ const ContainerSupport* findContainer(const String& type)
         }
     }
 #endif
+    for (auto& container : mp4Containers) {
+        if (type == container.type)
+            return &container;
+    }
     return nullptr;
 }
 
@@ -108,6 +118,8 @@ public:
                 types.add(container.type);
         }
 #endif
+        for (auto& container : mp4Containers)
+            types.add(container.type);
     }
 
     MediaPlayer::SupportsType supportsTypeAndCodecs(const MediaEngineSupportParameters& parameters) const final

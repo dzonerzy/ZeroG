@@ -121,7 +121,7 @@ int main()
     static constexpr ASCIILiteral fixtures[] = {
         "red-blue.webm"_s, "green-vp8.webm"_s, "yellow-av1.webm"_s, "tone-vorbis.webm"_s,
         "tone-opus.ogg"_s, "tone-vorbis.ogg"_s, "tone.mp3"_s, "tone.flac"_s, "tone.wav"_s,
-        "magenta-cyan.mp4"_s, "tone-aac.m4a"_s, "magenta-cyan-frag.mp4"_s, "red-blue-frag.mp4"_s,
+        "magenta-cyan.mp4"_s, "tone-aac.m4a"_s, "magenta-cyan-frag.mp4"_s, "red-blue-frag.mp4"_s, "red-blue-vp9.mp4"_s,
     };
     auto fs = ZeroG::MemoryFS::create();
     fs->addFile("/index.html"_s, std::span { byteCast<uint8_t>(page), strlen(page) });
@@ -240,6 +240,60 @@ int main()
         waitFor(300_ms, [] { return false; });
         auto color = pixel(32, 24);
         ok &= check(videoLoaded && isColor(color, expected), "%s: its frame is painted (%d, %d, %d)", name.characters(), color[0], color[1], color[2]);
+    }
+
+    // The native controls (WebKit's modern media controls, Adwaita's icons
+    // compiled in): a paused video shows its play button, which plays it.
+    {
+        view->evaluateScript("window.video = addVideo('red-blue.webm'); video.controls = true; video.style.width = '320px'; video.style.height = '180px'; 0"_s);
+        bool controlsLoaded = waitFor(10_s, [&] { return evaluate("video.dataset.loaded || video.dataset.error || ''"_s) != ""_s; });
+        waitFor(1_s, [] { return false; });
+        // The button: a dark disc over the red frame with a light icon in it.
+        auto icon = pixel(160, 90);
+        auto disc = pixel(136, 90);
+        auto frame = pixel(60, 20);
+        ok &= check(controlsLoaded && icon[0] > 200 && icon[1] > 200 && icon[2] > 200, "the play button's icon is drawn: (%d, %d, %d)", icon[0], icon[1], icon[2]);
+        ok &= check(disc[0] < 200 && disc[0] > 60 && disc[1] < 100, "on its disc: (%d, %d, %d)", disc[0], disc[1], disc[2]);
+        ok &= check(isColor(frame, { 255, 0, 0 }), "over the video's frame: (%d, %d, %d)", frame[0], frame[1], frame[2]);
+        view->mouseMove({ 160, 90 }, ZeroG::View::MouseButton::None, { });
+        view->mouseDown({ 160, 90 }, ZeroG::View::MouseButton::Left, 1, { });
+        view->mouseUp({ 160, 90 }, ZeroG::View::MouseButton::Left, 1, { });
+        ok &= check(waitFor(3_s, [&] { return evaluate("String(!video.paused && video.currentTime > 0.2)"_s) == "true"_s; }), "clicking it plays the video (at %s s, paused %s)",
+            evaluate("String(video.currentTime)"_s).utf8().data(), evaluate("String(video.paused)"_s).utf8().data());
+        // Hovered while playing: the controls bar (pause, times, seek bar,
+        // volume) along the bottom.
+        view->mouseMove({ 150, 150 }, ZeroG::View::MouseButton::None, { });
+        waitFor(300_ms, [] { return false; });
+        // The pause icon's two bars, light on the bar's gray, near its left end.
+        int brightest = 0;
+        for (int x = 20; x < 40; ++x)
+            brightest = std::max(brightest, pixel(x, 158)[1]);
+        ok &= check(brightest > 180, "hovered while playing, the controls bar shows its pause button (brightest %d)", brightest);
+        evaluate("video.pause(); 0"_s);
+    }
+
+    // VP9 and Opus in MP4 files, everywhere: a regular one (its moov after the
+    // mdat) and a fragmented one, red then blue.
+    ok &= check(canPlay("video/mp4; codecs=\"vp09.00.10.08, opus\""_s) == "probably"_s, "canPlayType VP9 and Opus in MP4");
+    for (auto name : { "red-blue-vp9.mp4"_s, "red-blue-frag.mp4"_s }) {
+        std::printf("     %s\n", name.characters());
+        view->evaluateScript(makeString("window.video = addVideo('"_s, name, "'); 0"_s));
+        bool fileLoaded = waitFor(10_s, [&] { return evaluate("video.dataset.loaded || video.dataset.error || ''"_s) != ""_s; });
+        ok &= check(fileLoaded && evaluate("String(video.dataset.loaded)"_s) == "1"_s, "it loads its first frame (error %s)", evaluate("String(video.dataset.error)"_s).utf8().data());
+        // A fragmented file's moov does not say (no mehd): open-ended until its end.
+        auto fileDuration = evaluate("String(video.duration)"_s);
+        bool fragmented = name == "red-blue-frag.mp4"_s;
+        ok &= check(fragmented ? fileDuration == "Infinity"_s : (fileDuration.toDouble() > 1.9 && fileDuration.toDouble() < 2.2), "duration %s", fileDuration.utf8().data());
+        waitFor(500_ms, [] { return false; });
+        auto fileRed = pixel(32, 24);
+        ok &= check(isColor(fileRed, { 255, 0, 0 }), "the first frame is painted: (%d, %d, %d)", fileRed[0], fileRed[1], fileRed[2]);
+        evaluate("video.currentTime = 1.5; 0"_s);
+        ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.seeked || ''"_s) != ""_s; }), "a seek to 1.5 s completes (at %s)", evaluate("String(video.dataset.seeked)"_s).utf8().data());
+        waitFor(500_ms, [] { return false; });
+        auto fileBlue = pixel(32, 24);
+        ok &= check(isColor(fileBlue, { 0, 0, 255 }), "the frame there is painted: (%d, %d, %d)", fileBlue[0], fileBlue[1], fileBlue[2]);
+        evaluate("video.play(); 0"_s);
+        ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.ended || ''"_s) == "1"_s; }), "it plays to its end (at %s s of %s)", evaluate("String(video.currentTime)"_s).utf8().data(), evaluate("String(video.duration)"_s).utf8().data());
     }
 
 #if OS(WINDOWS)
