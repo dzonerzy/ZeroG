@@ -183,6 +183,8 @@ private:
 
     void tick();
     void updateFrame();
+    // Whether a time is at (or past) a known duration.
+    bool atDuration(const MediaTime&) const;
 #if ENABLE(MEDIA_SOURCE)
     bool isMediaSource() const { return !!m_mediaSource; }
     Ref<WebCore::MediaTimePromise> seekMediaSource(const WebCore::SeekTarget&, const MediaTime&);

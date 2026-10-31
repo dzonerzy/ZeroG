@@ -458,7 +458,7 @@ private:
             auto* privateData = track->GetCodecPrivate(privateSize);
             std::span<const uint8_t> codecPrivate { privateData, privateData ? privateSize : 0 };
             if (track->GetType() == mkvparser::Track::kVideo && !m_videoDecoder) {
-                m_videoDecoder = createVideoDecoder(codec);
+                m_videoDecoder = createVideoDecoder(codec, codecPrivate);
                 if (m_videoDecoder) {
                     auto* video = static_cast<const mkvparser::VideoTrack*>(track);
                     m_videoTrack = track->GetNumber();
@@ -652,12 +652,18 @@ std::unique_ptr<MediaFile> openWebM(MediaBytes& bytes, String& error)
     return WebMFile::create(bytes, error);
 }
 
-std::unique_ptr<VideoDecoder> createVideoDecoder(StringView codecID)
+std::unique_ptr<VideoDecoder> createVideoDecoder(StringView codecID, std::span<const uint8_t> codecPrivate)
 {
     if (codecID == "V_VP8"_s || codecID == "V_VP9"_s)
         return VPXDecoder::create(codecID == "V_VP9"_s);
     if (codecID == "V_AV1"_s)
         return Dav1dDecoder::create();
+#if OS(WINDOWS)
+    if (codecID == "V_MPEG4/ISO/AVC"_s)
+        return createMediaFoundationH264Decoder(codecPrivate);
+#else
+    UNUSED_PARAM(codecPrivate);
+#endif
     return nullptr;
 }
 
@@ -669,6 +675,10 @@ std::unique_ptr<AudioDecoder> createAudioDecoder(StringView codecID, std::span<c
     }
     if (codecID == "A_VORBIS"_s)
         return VorbisAudioDecoder::create(codecPrivate, channels, sampleRate);
+#if OS(WINDOWS)
+    if (codecID == "A_AAC"_s)
+        return createMediaFoundationAACDecoder(codecPrivate, channels, sampleRate);
+#endif
     return nullptr;
 }
 

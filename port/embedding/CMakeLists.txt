@@ -84,6 +84,7 @@ if (ZEROG_MEDIA)
         media/MediaFile.cpp
         media/MediaPlayerPrivateZeroG.cpp
         media/MediaSourceZeroG.cpp
+        media/MP4Stream.cpp
         media/WebMFile.cpp
         media/WebMStream.cpp
     )
@@ -101,8 +102,9 @@ if (ZEROG_MEDIA)
         list(APPEND ZeroGEmbedding_SOURCES media/WebAudioZeroG.cpp ${_zerog_hrtf})
     endif ()
     if (WIN32)
-        # MP4 (H.264, AAC) through the OS's Media Foundation.
-        list(APPEND ZeroGEmbedding_SOURCES media/MediaFoundationFile.cpp)
+        # MP4 (H.264, AAC) through the OS's Media Foundation: files, and MSE's
+        # frames through its decoders.
+        list(APPEND ZeroGEmbedding_SOURCES media/MediaFoundationDecoders.cpp media/MediaFoundationFile.cpp)
         list(APPEND ZeroGEmbedding_LIBRARIES mfplat mfreadwrite mfuuid)
     endif ()
     find_package(unofficial-libwebm CONFIG REQUIRED)

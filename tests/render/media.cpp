@@ -121,7 +121,7 @@ int main()
     static constexpr ASCIILiteral fixtures[] = {
         "red-blue.webm"_s, "green-vp8.webm"_s, "yellow-av1.webm"_s, "tone-vorbis.webm"_s,
         "tone-opus.ogg"_s, "tone-vorbis.ogg"_s, "tone.mp3"_s, "tone.flac"_s, "tone.wav"_s,
-        "magenta-cyan.mp4"_s, "tone-aac.m4a"_s,
+        "magenta-cyan.mp4"_s, "tone-aac.m4a"_s, "magenta-cyan-frag.mp4"_s, "red-blue-frag.mp4"_s,
     };
     auto fs = ZeroG::MemoryFS::create();
     fs->addFile("/index.html"_s, std::span { byteCast<uint8_t>(page), strlen(page) });
@@ -265,31 +265,48 @@ int main()
 #endif
 
 #if ENABLE(MEDIA_SOURCE)
-    // Media Source Extensions, WebM.
+    // Media Source Extensions: WebM, and fragmented MP4.
     ok &= check(evaluate("String(MediaSource.isTypeSupported('video/webm; codecs=\"vp9, opus\"'))"_s) == "true"_s, "MediaSource.isTypeSupported VP9 and Opus in WebM");
     ok &= check(evaluate("String(MediaSource.isTypeSupported('audio/webm; codecs=\"vorbis\"'))"_s) == "true"_s, "MediaSource.isTypeSupported Vorbis in WebM");
-    ok &= check(evaluate("String(MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.42E01E\"'))"_s) == "false"_s, "MediaSource.isTypeSupported MP4: false");
+    ok &= check(evaluate("String(MediaSource.isTypeSupported('video/mp4; codecs=\"vp09.00.10.08, opus\"'))"_s) == "true"_s, "MediaSource.isTypeSupported VP9 and Opus in MP4");
+#if OS(WINDOWS)
+    ok &= check(evaluate("String(MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.4D401E, mp4a.40.2\"'))"_s) == "true"_s, "MediaSource.isTypeSupported H.264 and AAC in MP4 (Media Foundation)");
+#else
+    ok &= check(evaluate("String(MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.4D401E\"'))"_s) == "false"_s, "MediaSource.isTypeSupported H.264: false (Windows decodes it)");
+#endif
+    ok &= check(evaluate("String(MediaSource.isTypeSupported('video/mp4; codecs=\"hvc1.1.6.L93.B0\"'))"_s) == "false"_s, "MediaSource.isTypeSupported HEVC: false");
 
-    // The VP9 and Opus video through a source buffer: red, then blue.
-    evaluate("window.video = playSource([['red-blue.webm', 'video/webm; codecs=\"vp9, opus\"']]); 0"_s);
-    bool sourceLoaded = waitFor(10_s, [&] { return evaluate("video.dataset.loaded || video.dataset.error || video.dataset.sourceError || ''"_s) != ""_s; });
-    ok &= check(sourceLoaded && evaluate("String(video.dataset.loaded)"_s) == "1"_s, "a media source's video loads its first frame (error %s, %s)",
-        evaluate("String(video.dataset.error)"_s).utf8().data(), evaluate("String(video.dataset.sourceError)"_s).utf8().data());
-    waitFor(5_s, [&] { return evaluate("video.dataset.buffered || ''"_s) != ""_s; });
-    auto bufferedRanges = evaluate("String(video.dataset.buffered)"_s);
-    ok &= check(bufferedRanges.startsWith("1:0.00-2.0"_s), "its buffer holds the whole video, appended in two pieces: %s", bufferedRanges.utf8().data());
-    auto sourceSize = evaluate("video.videoWidth + 'x' + video.videoHeight"_s);
-    ok &= check(sourceSize == "64x48"_s, "videoWidth and videoHeight: %s", sourceSize.utf8().data());
-    waitFor(500_ms, [] { return false; });
-    auto sourceRed = pixel(32, 24);
-    ok &= check(isColor(sourceRed, { 255, 0, 0 }), "the first frame is painted: (%d, %d, %d)", sourceRed[0], sourceRed[1], sourceRed[2]);
-    evaluate("video.currentTime = 1.5; 0"_s);
-    ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.seeked || ''"_s) != ""_s; }), "a seek to 1.5 s completes (at %s)", evaluate("String(video.dataset.seeked)"_s).utf8().data());
-    waitFor(500_ms, [] { return false; });
-    auto sourceBlue = pixel(32, 24);
-    ok &= check(isColor(sourceBlue, { 0, 0, 255 }), "the frame there is painted: (%d, %d, %d)", sourceBlue[0], sourceBlue[1], sourceBlue[2]);
-    evaluate("video.play(); 0"_s);
-    ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.ended || ''"_s) == "1"_s; }), "it plays to its end (at %s s)", evaluate("String(video.currentTime)"_s).utf8().data());
+    // A video through a source buffer, two colours a second each: its buffer,
+    // frames, a seek and its end.
+    auto checkSourceVideo = [&](ASCIILiteral name, ASCIILiteral type, ASCIILiteral size, std::array<int, 3> first, std::array<int, 3> second) {
+        std::printf("     %s (%s)\n", name.characters(), type.characters());
+        view->evaluateScript(makeString("window.video = playSource([['"_s, name, "', '"_s, type, "']]); 0"_s));
+        bool sourceLoaded = waitFor(10_s, [&] { return evaluate("video.dataset.loaded || video.dataset.error || video.dataset.sourceError || ''"_s) != ""_s; });
+        ok &= check(sourceLoaded && evaluate("String(video.dataset.loaded)"_s) == "1"_s, "a media source's video loads its first frame (error %s, %s)",
+            evaluate("String(video.dataset.error)"_s).utf8().data(), evaluate("String(video.dataset.sourceError)"_s).utf8().data());
+        waitFor(5_s, [&] { return evaluate("video.dataset.buffered || ''"_s) != ""_s; });
+        auto bufferedRanges = evaluate("String(video.dataset.buffered)"_s);
+        ok &= check(bufferedRanges.startsWith("1:0.0"_s) && (bufferedRanges.contains("-2.0"_s) || bufferedRanges.contains("-1.9"_s)), "its buffer holds the whole video, appended in two pieces: %s", bufferedRanges.utf8().data());
+        auto sourceSize = evaluate("video.videoWidth + 'x' + video.videoHeight"_s);
+        ok &= check(sourceSize == StringView { size }, "videoWidth and videoHeight: %s", sourceSize.utf8().data());
+        waitFor(500_ms, [] { return false; });
+        auto firstColor = pixel(32, 24);
+        ok &= check(isColor(firstColor, first), "the first frame is painted: (%d, %d, %d)", firstColor[0], firstColor[1], firstColor[2]);
+        evaluate("video.currentTime = 1.5; 0"_s);
+        ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.seeked || ''"_s) != ""_s; }), "a seek to 1.5 s completes (at %s)", evaluate("String(video.dataset.seeked)"_s).utf8().data());
+        waitFor(500_ms, [] { return false; });
+        auto secondColor = pixel(32, 24);
+        ok &= check(isColor(secondColor, second), "the frame there is painted: (%d, %d, %d)", secondColor[0], secondColor[1], secondColor[2]);
+        evaluate("video.play(); 0"_s);
+        ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.ended || ''"_s) == "1"_s; }), "it plays to its end (%s)",
+            evaluate("`at ${video.currentTime} s of ${video.duration}, ready state ${video.readyState}`"_s).utf8().data());
+    };
+    checkSourceVideo("red-blue.webm"_s, "video/webm; codecs=\"vp9, opus\""_s, "64x48"_s, { 255, 0, 0 }, { 0, 0, 255 });
+    checkSourceVideo("red-blue-frag.mp4"_s, "video/mp4; codecs=\"vp09.00.10.08, opus\""_s, "64x48"_s, { 255, 0, 0 }, { 0, 0, 255 });
+#if OS(WINDOWS)
+    // H.264 with B-frames (decode order is not presentation order) and AAC.
+    checkSourceVideo("magenta-cyan-frag.mp4"_s, "video/mp4; codecs=\"avc1.4D401E, mp4a.40.2\""_s, "64x36"_s, { 255, 0, 255 }, { 0, 255, 255 });
+#endif
 
     // Two source buffers: VP8 video from one file, Vorbis from another.
     evaluate("window.video = playSource([['green-vp8.webm', 'video/webm; codecs=\"vp8\"'], ['tone-vorbis.webm', 'audio/webm; codecs=\"vorbis\"']]); 0"_s);

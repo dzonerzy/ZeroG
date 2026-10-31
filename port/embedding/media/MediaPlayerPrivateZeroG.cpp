@@ -546,6 +546,25 @@ void MediaPlayerPrivateZeroG::pause()
     m_paused = true;
     if (auto* output = m_pipeline ? m_pipeline->output() : nullptr)
         output->setPlaying(false);
+    // Paused by the element for having reached the duration before the
+    // player saw its end (a stream whose audio runs a little longer): the
+    // end it is waiting for.
+    if (!m_ended && !m_seekTarget.isValid() && atDuration(m_position)) {
+        m_ended = true;
+        callOnMainThread([weakThis = ThreadSafeWeakPtr { *this }] {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis || !protectedThis->m_ended)
+                return;
+            if (RefPtr player = protectedThis->m_player.get())
+                player->timeChanged();
+        });
+    }
+}
+
+bool MediaPlayerPrivateZeroG::atDuration(const MediaTime& time) const
+{
+    auto end = duration();
+    return end.isFinite() && end > MediaTime::zeroTime() && time >= end;
 }
 
 FloatSize MediaPlayerPrivateZeroG::naturalSize() const
@@ -879,7 +898,7 @@ void MediaPlayerPrivateZeroG::tick()
             m_timer.stop();
         return;
     }
-    if (m_seekTarget.isValid() || !m_pipeline->ended())
+    if (m_seekTarget.isValid() || (!m_pipeline->ended() && !atDuration(currentTime())))
         return;
     // The end: the clock stops there and the element sees it. It pauses the
     // player (ended), or seeks back to the start while it keeps playing (loop).

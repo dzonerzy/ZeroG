@@ -10,6 +10,7 @@
 
 #if ENABLE(VIDEO) && defined(ZEROG_MEDIA) && OS(WINDOWS)
 
+#include "media/MediaFoundation.h"
 #include <atomic>
 #include <mfapi.h>
 #include <mferror.h>
@@ -180,13 +181,6 @@ private:
     MediaReader m_reader WTF_GUARDED_BY_LOCK(m_lock);
 };
 
-bool startMediaFoundation()
-{
-    // Once for the process; never shut down (the codecs stay loaded).
-    static bool started = SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_LITE));
-    return started;
-}
-
 class MediaFoundationFile final : public MediaFile {
 public:
     ~MediaFoundationFile()
@@ -348,44 +342,9 @@ private:
     bool readVideoFormat()
     {
         ComPtr<IMFMediaType> current;
-        if (FAILED(m_reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &current)))
+        if (FAILED(m_reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &current)) || !readNV12Layout(current.Get(), m_layout))
             return false;
-        UINT32 width = 0;
-        UINT32 height = 0;
-        if (FAILED(MFGetAttributeSize(current.Get(), MF_MT_FRAME_SIZE, &width, &height)) || !width || !height)
-            return false;
-        m_codedHeight = height;
-        // What shows: the display aperture (the coded size is in whole
-        // macroblocks, 64x36 is coded 64x48).
-        m_visible = { 0, 0, static_cast<int>(width), static_cast<int>(height) };
-        MFVideoArea area { };
-        if (SUCCEEDED(current->GetBlob(MF_MT_MINIMUM_DISPLAY_APERTURE, reinterpret_cast<UINT8*>(&area), sizeof(area), nullptr))
-            || SUCCEEDED(current->GetBlob(MF_MT_GEOMETRIC_APERTURE, reinterpret_cast<UINT8*>(&area), sizeof(area), nullptr))) {
-            if (area.Area.cx > 0 && area.Area.cy > 0)
-                m_visible = { area.OffsetX.value, area.OffsetY.value, static_cast<int>(area.Area.cx), static_cast<int>(area.Area.cy) };
-        }
-        m_visible.width &= ~1;
-        m_visible.height &= ~1;
-        m_info.videoSize = { m_visible.width, m_visible.height };
-        m_stride = static_cast<int>(MFGetAttributeUINT32(current.Get(), MF_MT_DEFAULT_STRIDE, width));
-        switch (MFGetAttributeUINT32(current.Get(), MF_MT_YUV_MATRIX, MFVideoTransferMatrix_Unknown)) {
-        case MFVideoTransferMatrix_BT709:
-            m_matrix = ColorMatrix::BT709;
-            break;
-        case MFVideoTransferMatrix_BT2020_10:
-        case MFVideoTransferMatrix_BT2020_12:
-            m_matrix = ColorMatrix::BT2020;
-            break;
-        case MFVideoTransferMatrix_BT601:
-        case MFVideoTransferMatrix_SMPTE240M:
-            m_matrix = ColorMatrix::BT601;
-            break;
-        default:
-            // Unsaid: HD sizes are BT.709, as decoders and browsers assume.
-            m_matrix = height >= 720 ? ColorMatrix::BT709 : ColorMatrix::BT601;
-            break;
-        }
-        m_fullRange = MFGetAttributeUINT32(current.Get(), MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235) == MFNominalRange_0_255;
+        m_info.videoSize = { m_layout.width, m_layout.height };
         return true;
     }
 
@@ -434,32 +393,8 @@ private:
 
     sk_sp<SkImage> convert(IMFSample* sample)
     {
-        ComPtr<IMFMediaBuffer> buffer;
-        if (FAILED(sample->ConvertToContiguousBuffer(&buffer)))
-            return nullptr;
-        BYTE* data = nullptr;
-        LONG pitch = m_stride;
-        ComPtr<IMF2DBuffer> buffer2D;
-        bool locked2D = SUCCEEDED(buffer.As(&buffer2D)) && SUCCEEDED(buffer2D->Lock2D(&data, &pitch));
-        if (!locked2D && FAILED(buffer->Lock(&data, nullptr, nullptr)))
-            return nullptr;
-        // NV12: the Y plane, then interleaved U and V at half resolution.
-        const uint8_t* y = data + m_visible.y * pitch + m_visible.x;
-        const uint8_t* uv = data + m_codedHeight * pitch + (m_visible.y / 2) * pitch + (m_visible.x & ~1);
-        auto image = convertNV12ToImage(y, pitch, uv, pitch, m_visible.width, m_visible.height, m_matrix, m_fullRange);
-        if (locked2D)
-            buffer2D->Unlock2D();
-        else
-            buffer->Unlock();
-        return image;
+        return convertNV12Sample(sample, m_layout);
     }
-
-    struct Rect {
-        int x { 0 };
-        int y { 0 };
-        int width { 0 };
-        int height { 0 };
-    };
 
     bool m_comInitialized { false };
     ComPtr<IMFMediaSource> m_source;
@@ -471,11 +406,7 @@ private:
     MediaTime m_audioSeekTarget { MediaTime::invalidTime() };
     MediaTime m_videoSeekTarget { MediaTime::invalidTime() };
 
-    Rect m_visible;
-    UINT32 m_codedHeight { 0 };
-    int m_stride { 0 };
-    ColorMatrix m_matrix { ColorMatrix::BT601 };
-    bool m_fullRange { false };
+    NV12Layout m_layout;
 };
 
 } // namespace

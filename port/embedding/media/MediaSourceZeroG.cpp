@@ -4,7 +4,10 @@
 #if ENABLE(MEDIA_SOURCE) && defined(ZEROG_MEDIA)
 
 #include "media/Decoders.h"
+#include "media/MP4Stream.h"
 #include "media/MediaPlayerPrivateZeroG.h"
+#include "media/WebMStream.h"
+#include <wtf/HashSet.h>
 #include <WebCore/AudioTrackPrivate.h>
 #include <WebCore/ContentType.h>
 #include <WebCore/MediaDescription.h>
@@ -83,12 +86,23 @@ String codecName(const String& codecID)
         return "opus"_s;
     if (codecID == "A_VORBIS"_s)
         return "vorbis"_s;
+    if (codecID == "V_MPEG4/ISO/AVC"_s)
+        return "avc1"_s;
+    if (codecID == "A_AAC"_s)
+        return "mp4a"_s;
     return codecID.isolatedCopy();
 }
 
 long long toNanoseconds(const MediaTime& time)
 {
     return static_cast<long long>(time.toDouble() * nanosecondsPerSecond);
+}
+
+// A frame's time as a key, in the 100 ns units the coarsest decoder (Media
+// Foundation's) keeps.
+int64_t timeKey(const MediaTime& time)
+{
+    return std::llround(time.toDouble() * 10'000'000);
 }
 
 // The decode thread's file: the queues' frames through WebM's decoders.
@@ -108,7 +122,7 @@ public:
             }
         }
         if (auto format = queues.format(SampleQueues::Kind::Video)) {
-            m_videoDecoder = createVideoDecoder(format->codecID);
+            m_videoDecoder = createVideoDecoder(format->codecID, format->codecPrivate.span());
             if (m_videoDecoder) {
                 m_info.hasVideo = true;
                 m_info.videoSize = format->size;
@@ -140,18 +154,29 @@ public:
         while (m_frames.empty()) {
             bool flushed = false;
             auto sample = m_queues->take(SampleQueues::Kind::Video, flushed);
-            if (flushed)
+            if (flushed) {
                 m_videoDecoder->flush();
-            if (!sample)
-                return std::nullopt;
+                m_hidden.clear();
+                m_drained = false;
+            }
             Vector<DecodedFrame> decoded;
-            m_videoDecoder->decode(packet(*sample), decoded);
-            // Frames before a seek's target are decoded for the ones after
-            // them, not shown.
-            if (sample->isNonDisplaying())
-                continue;
-            for (auto& frame : decoded)
-                m_frames.push_back(WTF::move(frame));
+            if (sample) {
+                // Frames before a seek's target are decoded for the ones after
+                // them, not shown. A decoder may reorder them (B-frames): they
+                // are known by their time.
+                if (sample->isNonDisplaying())
+                    m_hidden.add(timeKey(sample->presentationTime()));
+                m_videoDecoder->decode(packet(*sample), decoded);
+            } else if (!m_drained && m_queues->ended(SampleQueues::Kind::Video)) {
+                // The end: the frames a reordering decoder still holds.
+                m_drained = true;
+                m_videoDecoder->drain(decoded);
+            } else
+                return std::nullopt;
+            for (auto& frame : decoded) {
+                if (!m_hidden.remove(timeKey(frame.time)))
+                    m_frames.push_back(WTF::move(frame));
+            }
         }
         auto frame = WTF::move(m_frames.front());
         m_frames.pop_front();
@@ -159,7 +184,7 @@ public:
     }
 
     bool audioEnded() const final { return m_queues->ended(SampleQueues::Kind::Audio) && m_audioOffset >= m_audio.size(); }
-    bool videoEnded() const final { return m_queues->ended(SampleQueues::Kind::Video) && m_frames.empty(); }
+    bool videoEnded() const final { return m_queues->ended(SampleQueues::Kind::Video) && m_drained && m_frames.empty(); }
 
     bool seek(const MediaTime& time) final
     {
@@ -169,6 +194,8 @@ public:
         m_audioTime = time;
         m_audioSeekTarget = time;
         m_frames.clear();
+        m_hidden.clear();
+        m_drained = false;
         m_queues->endSeek();
         return true;
     }
@@ -213,11 +240,13 @@ private:
     MediaTime m_audioTime { MediaTime::zeroTime() };
     MediaTime m_audioSeekTarget { MediaTime::invalidTime() };
     std::deque<DecodedFrame> m_frames;
+    HashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> m_hidden; // times of frames not to show
+    bool m_drained { false };
 };
 
-class SourceBufferPrivateZeroG final : public SourceBufferPrivate, private WebMStreamParser::Client {
+class SourceBufferPrivateZeroG final : public SourceBufferPrivate, private StreamParser::Client {
 public:
-    static Ref<SourceBufferPrivateZeroG> create(MediaSourcePrivateZeroG& mediaSource) { return adoptRef(*new SourceBufferPrivateZeroG(mediaSource)); }
+    static Ref<SourceBufferPrivateZeroG> create(MediaSourcePrivateZeroG& mediaSource, const ContentType& type) { return adoptRef(*new SourceBufferPrivateZeroG(mediaSource, type)); }
 
     constexpr MediaPlatformType platformType() const final { return MediaPlatformType::ZeroG; }
 
@@ -231,9 +260,9 @@ public:
 #endif
 
 private:
-    explicit SourceBufferPrivateZeroG(MediaSourcePrivateZeroG& mediaSource)
+    SourceBufferPrivateZeroG(MediaSourcePrivateZeroG& mediaSource, const ContentType& type)
         : SourceBufferPrivate(mediaSource)
-        , m_parser(*this)
+        , m_parser(createParser(type, *this))
         , m_queues(mediaSource.queues())
 #if !RELEASE_LOG_DISABLED
         , m_logger(mediaSource.logger())
@@ -244,17 +273,25 @@ private:
 
     Ref<MediaPromise> appendInternal(Ref<SharedBuffer>&& data) final
     {
-        if (!m_parser.append(data->span()))
+        if (!m_parser->append(data->span()))
             return MediaPromise::createAndReject(PlatformMediaError::ParsingError);
         return MediaPromise::createAndResolve();
     }
 
     void resetParserStateInternal() final
     {
-        m_parser.reset();
+        m_parser->reset();
     }
 
-    // WebMStreamParser::Client
+    static std::unique_ptr<StreamParser> createParser(const ContentType& type, StreamParser::Client& client)
+    {
+        auto container = type.containerType().convertToASCIILowercase();
+        if (container == "video/mp4"_s || container == "audio/mp4"_s)
+            return std::make_unique<MP4StreamParser>(client);
+        return std::make_unique<WebMStreamParser>(client);
+    }
+
+    // StreamParser::Client
     void didParseInitializationSegment(Vector<StreamTrack>&& tracks, const MediaTime& duration) final
     {
         SourceBufferPrivateClient::InitializationSegment segment;
@@ -348,7 +385,7 @@ private:
         bool playing { false };
     };
 
-    WebMStreamParser m_parser;
+    std::unique_ptr<StreamParser> m_parser;
     const Ref<SampleQueues> m_queues;
     HashMap<TrackID, Track, WTF::IntHash<TrackID>, WTF::UnsignedWithZeroKeyHashTraits<TrackID>> m_tracks;
 #if !RELEASE_LOG_DISABLED
@@ -371,13 +408,15 @@ WTFLogChannel& SourceBufferPrivateZeroG::logChannel() const
 Ref<MediaSampleZeroG> MediaSampleZeroG::create(StreamFrame&& frame, TrackID trackID, const FloatSize& size)
 {
     auto flags = frame.key ? IsSync : None;
-    return adoptRef(*new MediaSampleZeroG(SharedBuffer::create(WTF::move(frame.data)), frame.time, frame.duration, trackID, size, flags));
+    // WebM's codecs do not reorder: frames are decoded at their time.
+    auto decodeTime = frame.decodeTime.isValid() ? frame.decodeTime : frame.time;
+    return adoptRef(*new MediaSampleZeroG(SharedBuffer::create(WTF::move(frame.data)), frame.time, decodeTime, frame.duration, trackID, size, flags));
 }
 
-MediaSampleZeroG::MediaSampleZeroG(Ref<SharedBuffer>&& data, const MediaTime& time, const MediaTime& duration, TrackID trackID, const FloatSize& size, SampleFlags flags)
+MediaSampleZeroG::MediaSampleZeroG(Ref<SharedBuffer>&& data, const MediaTime& time, const MediaTime& decodeTime, const MediaTime& duration, TrackID trackID, const FloatSize& size, SampleFlags flags)
     : m_data(WTF::move(data))
     , m_presentationTime(time)
-    , m_decodeTime(time) // no reordering in WebM's codecs
+    , m_decodeTime(decodeTime)
     , m_duration(duration)
     , m_trackID(trackID)
     , m_size(size)
@@ -399,9 +438,7 @@ void MediaSampleZeroG::setTimestamps(const MediaTime& presentationTime, const Me
 
 Ref<MediaSample> MediaSampleZeroG::createNonDisplayingCopy() const
 {
-    auto copy = adoptRef(*new MediaSampleZeroG(m_data.copyRef(), m_presentationTime, m_duration, m_trackID, m_size, static_cast<SampleFlags>(m_flags | IsNonDisplaying)));
-    copy->m_decodeTime = m_decodeTime;
-    return copy;
+    return adoptRef(*new MediaSampleZeroG(m_data.copyRef(), m_presentationTime, m_decodeTime, m_duration, m_trackID, m_size, static_cast<SampleFlags>(m_flags | IsNonDisplaying)));
 }
 
 PlatformSample MediaSampleZeroG::platformSample() const
@@ -555,7 +592,7 @@ MediaSourcePrivate::AddStatus MediaSourcePrivateZeroG::addSourceBuffer(const Con
         return AddStatus::NotSupported;
     {
         Locker locker { m_lock };
-        m_sourceBuffers.append(SourceBufferPrivateZeroG::create(*this));
+        m_sourceBuffers.append(SourceBufferPrivateZeroG::create(*this, type));
         sourceBuffer = m_sourceBuffers.last();
     }
     sourceBuffer->setMediaSourceDuration(duration());
@@ -583,16 +620,30 @@ void MediaSourcePrivateZeroG::notifyActiveSourceBuffersChanged()
 
 bool supportsMediaSourceType(const ContentType& type)
 {
-    // WebM, with the codecs WebM files play.
+    // WebM with the codecs WebM files play; MP4 with VP9, AV1 and Opus, and
+    // H.264 and AAC where Media Foundation decodes them.
     auto container = type.containerType().convertToASCIILowercase();
-    if (container != "video/webm"_s && container != "audio/webm"_s)
+    bool webM = container == "video/webm"_s || container == "audio/webm"_s;
+    bool mp4 = container == "video/mp4"_s || container == "audio/mp4"_s;
+    if (!webM && !mp4)
         return false;
-    static constexpr ASCIILiteral codecs[] = { "vp8"_s, "vp9"_s, "vp09"_s, "av01"_s, "opus"_s, "vorbis"_s };
+    static constexpr ASCIILiteral webMCodecs[] = { "vp8"_s, "vp9"_s, "vp09"_s, "av01"_s, "opus"_s, "vorbis"_s };
+    static constexpr ASCIILiteral mp4Codecs[] = { "vp09"_s, "av01"_s, "opus"_s };
+#if OS(WINDOWS)
+    static constexpr ASCIILiteral systemCodecs[] = { "avc1"_s, "avc3"_s, "mp4a.40"_s, "mp4a.66"_s, "mp4a.67"_s, "mp4a.68"_s };
+    bool hasSystemCodecs = mp4 && mediaFoundationAvailable();
+#endif
     for (auto& codec : type.codecs()) {
         auto lowercase = codec.convertToASCIILowercase();
-        bool known = std::any_of(std::begin(codecs), std::end(codecs), [&](ASCIILiteral prefix) {
-            return lowercase.startsWith(prefix);
-        });
+        auto matches = [&](std::span<const ASCIILiteral> prefixes) {
+            return std::any_of(prefixes.begin(), prefixes.end(), [&](ASCIILiteral prefix) {
+                return lowercase.startsWith(prefix);
+            });
+        };
+        bool known = matches(webM ? std::span<const ASCIILiteral> { webMCodecs } : std::span<const ASCIILiteral> { mp4Codecs });
+#if OS(WINDOWS)
+        known |= hasSystemCodecs && matches(systemCodecs);
+#endif
         if (!known)
             return false;
     }

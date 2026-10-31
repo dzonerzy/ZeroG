@@ -1,9 +1,10 @@
 #pragma once
 
 // Media Source Extensions for ZeroG's media engine (standard, dev and debug
-// profiles), for WebM: WebCore's MediaSource and SourceBuffer keep the coded
-// frames (SourceBufferPrivate's track buffers, buffered ranges, eviction,
-// seeking); this side parses the appended bytes (WebMStream) and plays what
+// profiles), for WebM and fragmented MP4: WebCore's MediaSource and SourceBuffer
+// keep the coded frames (SourceBufferPrivate's track buffers, buffered ranges,
+// eviction, seeking); this side parses the appended bytes (WebMStream,
+// MP4Stream) and plays what
 // WebCore enqueues. The enqueued frames wait in SampleQueues, which the
 // player's decode thread reads through a MediaFile, so playback, the clock and
 // painting are the same as for a file.
@@ -13,7 +14,7 @@
 #if ENABLE(MEDIA_SOURCE) && defined(ZEROG_MEDIA)
 
 #include "media/MediaFile.h"
-#include "media/WebMStream.h"
+#include "media/StreamParser.h"
 #include <WebCore/FloatSize.h>
 #include <WebCore/MediaSample.h>
 #include <WebCore/MediaSourcePrivate.h>
@@ -49,7 +50,7 @@ public:
     Type type() const final { return Type::None; }
 
 private:
-    MediaSampleZeroG(Ref<WebCore::SharedBuffer>&&, const MediaTime& time, const MediaTime& duration, WebCore::TrackID, const WebCore::FloatSize&, SampleFlags);
+    MediaSampleZeroG(Ref<WebCore::SharedBuffer>&&, const MediaTime& time, const MediaTime& decodeTime, const MediaTime& duration, WebCore::TrackID, const WebCore::FloatSize&, SampleFlags);
 
     const Ref<WebCore::SharedBuffer> m_data;
     MediaTime m_presentationTime;
@@ -119,7 +120,7 @@ private:
 std::unique_ptr<MediaFile> openMediaSourceFile(SampleQueues&);
 
 // MediaSource.isTypeSupported() and addSourceBuffer(): WebM with VP8, VP9,
-// AV1, Opus or Vorbis.
+// AV1, Opus or Vorbis; MP4 with VP9, AV1 or Opus, and on Windows H.264 and AAC.
 bool supportsMediaSourceType(const WebCore::ContentType&);
 
 class MediaSourcePrivateZeroG final : public WebCore::MediaSourcePrivate {
