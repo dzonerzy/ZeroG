@@ -21,6 +21,15 @@ modified version of the LGPL parts**. In practice you ship, or offer:
 2. A **relink kit**: your application's object files and how to link them.
 3. The license texts, and a notice that the application uses LGPL libraries.
 
+Every other component in the engine (ICU, curl, BoringSSL, Skia, ANGLE, SDL,
+the codecs...) has its own license, most of which ask for their notices to be
+distributed with the binaries. They are all in
+[`THIRD_PARTY_NOTICES.txt`](https://github.com/dzonerzy/ZeroG/blob/main/THIRD_PARTY_NOTICES.txt),
+with the profiles that contain each component: ship it with your application
+(in its installer, its about box or its documentation).
+`python tools/notices.py` regenerates it from the WebKit checkout and the
+dependency sysroot.
+
 Applications under a license compatible with the LGPL (GPL, LGPL, MPL and
 similar) already satisfy this by publishing their source.
 
