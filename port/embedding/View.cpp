@@ -8,6 +8,7 @@
 #include "graphics/Compositor.h"
 #include "inspector/InspectorZeroG.h"
 #include "loader/Download.h"
+#include "loader/Loader.h"
 #include "loader/WebSocketChannelZeroG.h"
 #include <WebCore/FrameLoadRequest.h>
 #include <WebCore/FrameTree.h>
@@ -24,7 +25,17 @@
 #include <WebCore/ActivityState.h>
 #include <WebCore/CacheStorageProvider.h>
 #include <WebCore/Chrome.h>
+#include <WebCore/CSSComputedStyleDeclaration.h>
+#include <WebCore/ContextMenu.h>
+#include <WebCore/Element.h>
+#include <WebCore/HitTestRequest.h>
+#include <WebCore/NodeInlines.h>
+#include <WebCore/ContextMenuClient.h>
+#include <WebCore/ContextMenuController.h>
+#include <WebCore/ContextMenuItem.h>
 #include <WebCore/CookieJar.h>
+#include <WebCore/HitTestResult.h>
+#include <WebCore/ResourceRequest.h>
 #include <WebCore/DatabaseProvider.h>
 #include <WebCore/DragController.h>
 #include <WebCore/DragData.h>
@@ -64,6 +75,27 @@ std::unique_ptr<View> View::create(Configuration&& configuration)
     return std::unique_ptr<View>(new View(WTF::move(configuration)));
 }
 
+// The context menu's items that need the embedder: downloading a link or an
+// image goes the way other downloads go (Download.h).
+class ContextMenuClientZeroG final : public ContextMenuClient {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ContextMenuClientZeroG);
+public:
+    explicit ContextMenuClientZeroG(View& view)
+        : m_view(view)
+    {
+    }
+
+private:
+    void downloadURL(const URL& url) final { startDownload(m_view, ResourceRequest { URL { url } }); }
+    void searchWithGoogle(const LocalFrame*) final { }
+    void lookUpInDictionary(LocalFrame*) final { }
+    bool isSpeaking() const final { return false; }
+    void speak(const String&) final { }
+    void stopSpeaking() final { }
+
+    View& m_view;
+};
+
 static Ref<Page> createPage(View& view)
 {
     // A page identifier, as WebKit2 gives each page: WebCore keys per-page
@@ -90,6 +122,7 @@ static Ref<Page> createPage(View& view)
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     configuration.dragClient = makeUnique<DragClientZeroG>();
+    configuration.contextMenuClient = makeUniqueRef<ContextMenuClientZeroG>(view);
     if (auto inspectorClient = ViewInspector::createBackendClient(view))
         configuration.inspectorBackendClient = WTF::move(inspectorClient);
     return Page::create(WTF::move(configuration));
@@ -454,7 +487,13 @@ bool View::mouseDown(const FloatPoint& position, MouseButton button, int clickCo
         return false;
     PlatformMouseEvent event(position, position, platformButton(button), PlatformEvent::Type::MousePressed, clickCount, modifiers, MonotonicTime::now(), 0,
         SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
-    return frame->eventHandler().handleMousePressEvent(event).wasHandled();
+    bool handled = frame->eventHandler().handleMousePressEvent(event).wasHandled();
+#if !OS(WINDOWS)
+    // The context menu comes with the press, as on Linux and macOS.
+    if (button == MouseButton::Right)
+        handled |= contextMenu(position, modifiers);
+#endif
+    return handled;
 }
 
 bool View::mouseUp(const FloatPoint& position, MouseButton button, int clickCount, Modifiers modifiers)
@@ -468,7 +507,180 @@ bool View::mouseUp(const FloatPoint& position, MouseButton button, int clickCoun
     }
     PlatformMouseEvent event(position, position, platformButton(button), PlatformEvent::Type::MouseReleased, clickCount, modifiers, MonotonicTime::now(), 0,
         SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
-    return frame->eventHandler().handleMouseReleaseEvent(event).wasHandled();
+    bool handled = frame->eventHandler().handleMouseReleaseEvent(event).wasHandled();
+#if OS(WINDOWS)
+    // The context menu comes with the release, as WM_CONTEXTMENU does.
+    if (button == MouseButton::Right)
+        handled |= contextMenu(position, modifiers);
+#endif
+    return handled;
+}
+
+// ---- Window regions ----
+
+String View::appRegionAt(const FloatPoint& point)
+{
+    RefPtr frame = mainFrame(m_page);
+    RefPtr frameView = frame ? frame->view() : nullptr;
+    if (!frameView || !frame->document())
+        return { };
+    constexpr OptionSet<HitTestRequest::Type> type { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent };
+    auto result = frame->eventHandler().hitTestResultAtPoint(frameView->windowToContents(roundedIntPoint(point)), type);
+    RefPtr node = result.innerNonSharedNode();
+    RefPtr element = dynamicDowncast<Element>(node.get());
+    if (!element && node)
+        element = node->parentElement();
+    if (!element)
+        return { };
+    // A custom property: inherited, so the element under the pointer has it.
+    Ref style = CSSComputedStyleDeclaration::create(*element, CSSComputedStyleDeclaration::AllowVisited::No);
+    return static_cast<CSSStyleDeclaration&>(style.get()).getPropertyValue("--zg-app-region"_s).trim(isASCIIWhitespace);
+}
+
+// ---- Context menus ----
+
+// New windows and system services (speech, dictionary, web search, spelling:
+// ZeroG has no spell checker) an application engine does not have: their
+// items are left out.
+static bool isUnavailableContextMenuAction(ContextMenuAction action)
+{
+    switch (action) {
+    case ContextMenuItemTagSpellingGuess:
+    case ContextMenuItemTagNoGuessesFound:
+    case ContextMenuItemTagIgnoreSpelling:
+    case ContextMenuItemTagLearnSpelling:
+    case ContextMenuItemTagIgnoreGrammar:
+    case ContextMenuItemTagSpellingMenu:
+    case ContextMenuItemTagShowSpellingPanel:
+    case ContextMenuItemTagCheckSpelling:
+    case ContextMenuItemTagCheckSpellingWhileTyping:
+    case ContextMenuItemTagCheckGrammarWithSpelling:
+    case ContextMenuItemTagOpenLinkInNewWindow:
+    case ContextMenuItemTagOpenImageInNewWindow:
+    case ContextMenuItemTagOpenFrameInNewWindow:
+    case ContextMenuItemTagOpenMediaInNewWindow:
+    case ContextMenuItemTagSearchWeb:
+    case ContextMenuItemTagLookUpInDictionary:
+    case ContextMenuItemTagSpeechMenu:
+    case ContextMenuItemTagStartSpeaking:
+    case ContextMenuItemTagStopSpeaking:
+        return true;
+    default:
+        return false;
+    }
+}
+
+using ContextMenuActions = Vector<std::pair<ContextMenuAction, String>>;
+
+static void appendContextMenuItems(ContextMenuController& controller, const Vector<ContextMenuItem>& source, unsigned parent, ZeroG::ContextMenu& menu, ContextMenuActions& actions)
+{
+    bool lastWasSeparator = true; // no separator first
+    for (auto item : source) {
+        if (isUnavailableContextMenuAction(item.action()))
+            continue;
+        // Items with nothing to show (platform services left without a title).
+        if (item.type() != ContextMenuItemType::Separator && item.title().isEmpty())
+            continue;
+        if (item.type() == ContextMenuItemType::Separator) {
+            if (lastWasSeparator)
+                continue;
+        }
+        // Copy without a selection, Paste with an empty clipboard: disabled.
+        controller.checkOrEnableIfNeeded(item);
+        ZeroG::ContextMenu::Item out;
+        out.id = actions.size() + 1;
+        out.parent = parent;
+        out.label = item.title();
+        out.enabled = item.enabled();
+        out.checked = item.checked();
+        switch (item.type()) {
+        case ContextMenuItemType::Action:
+            out.kind = ZeroG::ContextMenu::ItemKind::Action;
+            break;
+        case ContextMenuItemType::CheckableAction:
+            out.kind = ZeroG::ContextMenu::ItemKind::Checkbox;
+            break;
+        case ContextMenuItemType::Separator:
+            out.kind = ZeroG::ContextMenu::ItemKind::Separator;
+            break;
+        case ContextMenuItemType::Submenu:
+            out.kind = ZeroG::ContextMenu::ItemKind::Submenu;
+            break;
+        }
+        actions.append({ item.action(), item.title() });
+        menu.items.append(out);
+        lastWasSeparator = out.kind == ZeroG::ContextMenu::ItemKind::Separator;
+        if (out.kind == ZeroG::ContextMenu::ItemKind::Submenu)
+            appendContextMenuItems(controller, item.subMenuItems(), out.id, menu, actions);
+    }
+    // No separator last.
+    if (lastWasSeparator && !menu.items.isEmpty() && menu.items.last().parent == parent && menu.items.last().kind == ZeroG::ContextMenu::ItemKind::Separator)
+        menu.items.removeLast();
+}
+
+bool View::contextMenu(const FloatPoint& position, Modifiers modifiers)
+{
+    RefPtr frame = mainFrame(m_page);
+    if (!frame)
+        return false;
+    m_page->contextMenuController().clearContextMenu();
+    PlatformMouseEvent event(position, position, WebCore::MouseButton::Right, PlatformEvent::Type::MousePressed, 1, modifiers, MonotonicTime::now(), 0,
+        SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
+    bool handled = frame->eventHandler().sendContextMenuEvent(event);
+    return showContextMenu(position) || handled;
+}
+
+bool View::contextMenuForKeyboard()
+{
+    RefPtr frame = m_page->focusController().focusedOrMainFrame();
+    if (!frame)
+        return false;
+    m_page->contextMenuController().clearContextMenu();
+    bool handled = frame->eventHandler().sendContextMenuEventForKey();
+    return showContextMenu(m_page->contextMenuController().hitTestResult().roundedPointInMainFrame()) || handled;
+}
+
+// The menu WebCore built (none: the page cancelled the contextmenu event, or
+// there is nothing to offer) goes to the client, which answers later.
+bool View::showContextMenu(const FloatPoint& position)
+{
+    auto& controller = m_page->contextMenuController();
+    auto* menu = controller.contextMenu();
+    if (!menu)
+        return false;
+    ZeroG::ContextMenu request;
+    request.position = position;
+    auto& hit = controller.hitTestResult();
+    request.linkURL = hit.absoluteLinkURL();
+    if (!request.linkURL.isEmpty())
+        request.linkText = hit.textContent();
+    request.imageURL = hit.absoluteImageURL();
+    request.mediaURL = hit.absoluteMediaURL();
+    request.selectedText = hit.selectedText();
+    request.isEditable = hit.isContentEditable();
+    if (RefPtr frame = hit.innerNodeFrame())
+        request.frameURL = frame->document() ? frame->document()->url() : URL { };
+    ContextMenuActions actions;
+    appendContextMenuItems(controller, menu->items(), 0, request, actions);
+    if (request.items.isEmpty()) {
+        controller.didDismissContextMenu();
+        return true;
+    }
+    client().showContextMenu(WTF::move(request), [page = m_page, actions = WTF::move(actions)](std::optional<unsigned> id) {
+        auto& controller = page->contextMenuController();
+        // A later menu replaced this one.
+        if (!controller.contextMenu())
+            return;
+        if (!id || !*id || *id > actions.size()) {
+            controller.didDismissContextMenu();
+            controller.clearContextMenu();
+            return;
+        }
+        auto& [action, title] = actions[*id - 1];
+        controller.contextMenuItemSelected(action, title);
+        controller.clearContextMenu();
+    });
+    return true;
 }
 
 // ---- Drag and drop ----
@@ -586,7 +798,15 @@ bool View::keyDown(const KeyEvent& key)
     if (!frame)
         return false;
     // The text comes separately (insertText), as with WM_KEYDOWN and WM_CHAR.
-    return frame->eventHandler().keyEvent(keyboardEvent(PlatformEvent::Type::RawKeyDown, key, { }));
+    if (frame->eventHandler().keyEvent(keyboardEvent(PlatformEvent::Type::RawKeyDown, key, { })))
+        return true;
+    // The menu key, or Shift+F10, the page did not take: the focused element's
+    // context menu.
+    constexpr int menuKey = 0x5D; // VK_APPS
+    constexpr int f10 = 0x79; // VK_F10
+    if (key.windowsKeyCode == menuKey || (key.windowsKeyCode == f10 && key.modifiers.contains(PlatformEvent::Modifier::ShiftKey)))
+        return contextMenuForKeyboard();
+    return false;
 }
 
 bool View::keyUp(const KeyEvent& key)

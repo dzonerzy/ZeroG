@@ -53,6 +53,14 @@ constexpr auto page = R"HTML(<!DOCTYPE html>
   </script>
 </body></html>)HTML";
 
+constexpr auto shapedPage = R"HTML(<!DOCTYPE html>
+<html><head><style>
+  html, body { margin: 0; background: transparent; }
+  header { position: absolute; top: 0; left: 0; width: 300px; height: 40px; background: rgb(30, 30, 60); --zg-app-region: drag; }
+  button { position: absolute; top: 5px; right: 5px; width: 30px; height: 30px; --zg-app-region: no-drag; }
+  #card { position: absolute; top: 60px; left: 20px; width: 100px; height: 100px; background: rgba(255, 0, 0, 0.5); }
+</style></head><body><header><button>x</button></header><div id="card"></div></body></html>)HTML";
+
 #define check(condition, ...) [&] {                    \
         bool result = (condition);                     \
         std::printf("%s ", result ? "ok  " : "FAIL");  \
@@ -242,6 +250,119 @@ int main()
     }
     auto innerWidth = window->view().evaluateScript("innerWidth + 'x' + innerHeight"_s);
     ok &= check(innerWidth == "500x300"_s, "window.innerWidth/innerHeight: %s", innerWidth.utf8().data());
+    window = nullptr;
+
+    // A frameless, transparent window: what the page leaves transparent is
+    // transparent in what the window presents, a translucent part translucent;
+    // its header moves it (--zg-app-region: drag), the header's button does
+    // not (no-drag), the edges resize it.
+    auto shaped = ZeroG::Window::create({ "ZeroG shaped window"_s, { 300, 200 }, true, true, true, nullptr, true });
+    ok &= check(!!shaped, "a frameless transparent window %s", ZeroG::Window::lastError().utf8().data());
+    if (shaped) {
+        shaped->view().loadHTML(String::fromUTF8(shapedPage));
+        runUntil(*shaped, 1_s, [&] { return false; });
+        shaped->view().repaint();
+        shaped->captureNextFrame();
+        Vector<uint8_t> shapedPixels;
+        IntSize shapedSize;
+        ok &= check(runUntil(*shaped, 5_s, [&] { return shaped->takeCapture(shapedPixels, shapedSize); }), "captured its frame (%dx%d)", shapedSize.width(), shapedSize.height());
+        float scale = shaped->view().scale();
+        auto pixelAt = [&](int x, int y) -> std::array<int, 4> {
+            int px = static_cast<int>(x * scale), py = static_cast<int>(y * scale);
+            if (px >= shapedSize.width() || py >= shapedSize.height())
+                return { -1, -1, -1, -1 };
+            auto* p = shapedPixels.span().data() + (static_cast<size_t>(py) * shapedSize.width() + px) * 4;
+            return { p[0], p[1], p[2], p[3] };
+        };
+        if (!shapedPixels.isEmpty()) {
+            auto empty = pixelAt(200, 150);
+            auto header = pixelAt(50, 20);
+            auto card = pixelAt(60, 100);
+            ok &= check(empty[3] == 0, "the page's empty part is transparent: alpha %d", empty[3]);
+            ok &= check(header[3] == 255 && header[0] < 60 && header[2] > 40, "its header opaque: (%d, %d, %d, %d)", header[0], header[1], header[2], header[3]);
+            ok &= check(card[3] > 100 && card[3] < 160 && card[0] > 100 && card[0] < 160, "a half transparent red, premultiplied: (%d, %d, %d, %d)", card[0], card[1], card[2], card[3]);
+        }
+        using HitTest = ZeroG::Window::HitTest;
+        ok &= check(shaped->hitTest(50, 20) == HitTest::Drag, "the header moves the window");
+        ok &= check(shaped->hitTest(280, 20) == HitTest::Page, "its button is the page's");
+        ok &= check(shaped->hitTest(150, 150) == HitTest::Page, "and so is the rest");
+        ok &= check(shaped->hitTest(1, 100) == HitTest::ResizeLeft && shaped->hitTest(298, 198) == HitTest::ResizeBottomRight && shaped->hitTest(150, 1) == HitTest::ResizeTop,
+            "the edges resize it");
+#if OS(WINDOWS)
+        // What Windows itself gets for the header: the caption, moved (and
+        // snapped, maximized by a double click) by the system.
+        if (auto* hwnd = static_cast<HWND>(shaped->nativeHandle())) {
+            auto ask = [&](float x, float y) {
+                POINT point { static_cast<LONG>(x * scale), static_cast<LONG>(y * scale) };
+                ClientToScreen(hwnd, &point);
+                return SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(point.x, point.y));
+            };
+            ok &= check(ask(50, 20) == HTCAPTION && ask(280, 20) == HTCLIENT && ask(1, 100) == HTLEFT, "Windows gets the caption, the client area and the edge: %d, %d, %d",
+                static_cast<int>(ask(50, 20)), static_cast<int>(ask(280, 20)), static_cast<int>(ask(1, 100)));
+
+            // On the screen, as the desktop composes it: the header is drawn, the
+            // empty part shows what is behind the window (the same pixel with the
+            // window hidden).
+            auto* sdl = sdlWindow();
+            if (sdl && !hiddenByDesktop()) {
+                // Behind it, a window of one known colour (what is behind on a
+                // real desktop changes on its own).
+                int left, top;
+                SDL_GetWindowPosition(sdl, &left, &top);
+                auto* backdrop = SDL_CreateWindow("ZeroG backdrop", 400, 300, SDL_WINDOW_BORDERLESS);
+                auto paintBackdrop = [&] {
+                    if (auto* surface = backdrop ? SDL_GetWindowSurface(backdrop) : nullptr) {
+                        SDL_FillSurfaceRect(surface, nullptr, SDL_MapSurfaceRGB(surface, 0, 160, 0));
+                        SDL_UpdateWindowSurface(backdrop);
+                    }
+                };
+                if (backdrop) {
+                    SDL_SetWindowPosition(backdrop, left - 50, top - 50);
+                    SDL_ShowWindow(backdrop);
+                    paintBackdrop();
+                }
+                SDL_SetWindowAlwaysOnTop(sdl, true);
+                SDL_RaiseWindow(sdl);
+                // Shown and painted (the system may need a few turns).
+                runUntil(*shaped, 500_ms, [&] { return false; });
+                paintBackdrop();
+                runUntil(*shaped, 500_ms, [&] { return false; });
+                auto screen = [&](float x, float y) {
+                    POINT point { static_cast<LONG>(x * scale), static_cast<LONG>(y * scale) };
+                    ClientToScreen(hwnd, &point);
+                    HDC dc = GetDC(nullptr);
+                    COLORREF color = GetPixel(dc, point.x, point.y);
+                    ReleaseDC(nullptr, dc);
+                    return color;
+                };
+                auto headerOnScreen = screen(50, 20);
+                auto emptyOnScreen = screen(200, 150);
+                // The window's own edges, active: nothing of a frame (the system's
+                // border, its shadow) may show there either.
+                auto leftEdge = screen(0, 150);
+                auto bottomEdge = screen(200, 199.5f);
+                auto rightEdge = screen(299.5f, 150);
+                SDL_HideWindow(sdl);
+                runUntil(*shaped, 500_ms, [&] { return false; });
+                auto behind = screen(200, 150);
+                // Only when the desktop let the test see it: the backdrop showing
+                // where the window was, the screen readable (another window, a
+                // lock screen or a busy desktop can be in the way).
+                if (behind == RGB(0, 160, 0) && headerOnScreen != CLR_INVALID) {
+                    ok &= check(GetRValue(headerOnScreen) == 30 && GetBValue(headerOnScreen) == 60, "on screen the header is drawn: #%06lx", static_cast<unsigned long>(headerOnScreen));
+                    ok &= check(emptyOnScreen == behind, "and the empty part shows the window behind: #%06lx, #%06lx without the window",
+                        static_cast<unsigned long>(emptyOnScreen), static_cast<unsigned long>(behind));
+                    ok &= check(leftEdge == behind && bottomEdge == behind && rightEdge == behind, "no frame at its edges: #%06lx, #%06lx, #%06lx",
+                        static_cast<unsigned long>(leftEdge), static_cast<unsigned long>(bottomEdge), static_cast<unsigned long>(rightEdge));
+                } else
+                    std::printf("     skipped the screen check: the backdrop was not where the window was (#%06lx)\n", static_cast<unsigned long>(behind));
+                if (backdrop)
+                    SDL_DestroyWindow(backdrop);
+            } else
+                std::printf("     skipped the screen check: the window is hidden or the display off\n");
+        }
+#endif
+    }
 
     std::printf(ok ? "PASS\n" : "FAILED\n");
     return ok ? 0 : 1;

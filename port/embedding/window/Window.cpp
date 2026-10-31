@@ -128,6 +128,45 @@ std::optional<NativeWindow> nativeWindow(SDL_Window* window)
 #endif
 }
 
+#if OS(WINDOWS)
+#ifndef EGL_DIRECT_COMPOSITION_ANGLE
+#define EGL_DIRECT_COMPOSITION_ANGLE 0x33A5 // EGL/eglext_angle.h
+#endif
+
+// A transparent window presents through DirectComposition: a swap chain with
+// premultiplied alpha (ANGLE's EGL_ANGLE_direct_composition), where a window's
+// own swap chain would ignore the alpha.
+std::unique_ptr<GLContext> createDirectCompositionContext(GLDisplay& display, GLContext* sharing, void* hwnd)
+{
+    EGLDisplay eglDisplay = display.eglDisplay();
+    const char* extensions = eglQueryString(eglDisplay, EGL_EXTENSIONS);
+    if (!extensions || !std::strstr(extensions, "EGL_ANGLE_direct_composition"))
+        return nullptr;
+    const EGLint configAttributes[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+        EGL_NONE
+    };
+    EGLConfig config;
+    EGLint count = 0;
+    if (!eglChooseConfig(eglDisplay, configAttributes, &config, 1, &count) || !count)
+        return nullptr;
+    const EGLint surfaceAttributes[] = { EGL_DIRECT_COMPOSITION_ANGLE, EGL_TRUE, EGL_NONE };
+    EGLSurface surface = eglCreateWindowSurface(eglDisplay, config, static_cast<EGLNativeWindowType>(hwnd), surfaceAttributes);
+    if (surface == EGL_NO_SURFACE)
+        return nullptr;
+    const EGLint contextAttributes[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+    EGLContext context = eglCreateContext(eglDisplay, config, sharing ? sharing->platformContext() : EGL_NO_CONTEXT, contextAttributes);
+    if (context == EGL_NO_CONTEXT) {
+        eglDestroySurface(eglDisplay, surface);
+        return nullptr;
+    }
+    return makeUnique<GLContext>(display, context, surface, config);
+}
+
+#endif
+
 } // namespace
 
 std::unique_ptr<Window> Window::create(Configuration&& configuration)
@@ -148,6 +187,8 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
         flags |= SDL_WINDOW_RESIZABLE;
     if (configuration.frameless)
         flags |= SDL_WINDOW_BORDERLESS;
+    if (configuration.transparent)
+        flags |= SDL_WINDOW_TRANSPARENT;
     auto title = configuration.title.utf8();
     auto* window = SDL_CreateWindow(byteCast<char>(title.data()), configuration.size.width(), configuration.size.height(), flags);
     if (!window)
@@ -161,8 +202,20 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
         return fail("no GPU on the window system's display"_s, GLContext::lastErrorString());
 
     auto& display = PlatformDisplay::sharedDisplay();
-    auto presentContext = GLContext::create(display.glDisplay(), GLContext::Target::Default, display.sharingGLContext(),
-        reinterpret_cast<GLNativeWindowType>(native->window));
+    std::unique_ptr<GLContext> presentContext;
+#if OS(WINDOWS)
+    if (configuration.transparent) {
+        presentContext = createDirectCompositionContext(display.glDisplay(), display.sharingGLContext(), native->window);
+        if (!presentContext)
+            return fail("no DirectComposition for a transparent window"_s, GLContext::lastErrorString());
+    }
+#endif
+    // Linux: the EGL config has alpha (RGBA8888), and SDL gave a transparent
+    // window an ARGB visual (X11) or a surface with alpha (Wayland).
+    if (!presentContext) {
+        presentContext = GLContext::create(display.glDisplay(), GLContext::Target::Default, display.sharingGLContext(),
+            reinterpret_cast<GLNativeWindowType>(native->window));
+    }
     if (!presentContext)
         return fail("cannot create the window's GL context"_s, GLContext::lastErrorString());
 
@@ -170,11 +223,12 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     auto surface = createGPUSurface(2);
     if (!surface)
         return fail("no GPU surface"_s);
-    auto view = View::create({ configuration.size, scale > 0 ? scale : 1, false, true, WTF::move(surface), WTF::move(configuration.session) });
+    auto view = View::create({ configuration.size, scale > 0 ? scale : 1, configuration.transparent, true, WTF::move(surface), WTF::move(configuration.session) });
 
     destroyWindow.release();
     std::unique_ptr<Window> result(new Window(window, WTF::move(view), WTF::move(presentContext), native->window));
     result->m_showWhenPresented = configuration.visible;
+    result->m_transparent = configuration.transparent;
     result->updateSize();
     // Text input events (typed characters, input method commits).
     SDL_StartTextInput(window);
@@ -233,6 +287,54 @@ Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr
         updateCursor(type);
     });
     m_accessibility = Accessibility::createBridge(*m_view, nativeHandle(), String::fromUTF8(SDL_GetWindowTitle(m_window)));
+    // A frameless window moves and resizes by what the page says (hitTest);
+    // the window system asks on its own thread of events, which is this one.
+    if (SDL_GetWindowFlags(m_window) & SDL_WINDOW_BORDERLESS) {
+        SDL_SetWindowHitTest(m_window, [](SDL_Window*, const SDL_Point* area, void* data) -> SDL_HitTestResult {
+            switch (static_cast<Window*>(data)->hitTest(area->x, area->y)) {
+            case HitTest::Page: return SDL_HITTEST_NORMAL;
+            case HitTest::Drag: return SDL_HITTEST_DRAGGABLE;
+            case HitTest::ResizeTopLeft: return SDL_HITTEST_RESIZE_TOPLEFT;
+            case HitTest::ResizeTop: return SDL_HITTEST_RESIZE_TOP;
+            case HitTest::ResizeTopRight: return SDL_HITTEST_RESIZE_TOPRIGHT;
+            case HitTest::ResizeRight: return SDL_HITTEST_RESIZE_RIGHT;
+            case HitTest::ResizeBottomRight: return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+            case HitTest::ResizeBottom: return SDL_HITTEST_RESIZE_BOTTOM;
+            case HitTest::ResizeBottomLeft: return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+            case HitTest::ResizeLeft: return SDL_HITTEST_RESIZE_LEFT;
+            }
+            return SDL_HITTEST_NORMAL;
+        }, this);
+    }
+}
+
+Window::HitTest Window::hitTest(float x, float y)
+{
+    auto flags = SDL_GetWindowFlags(m_window);
+    // The edges of a resizable window, as a frame's would be.
+    if ((flags & SDL_WINDOW_RESIZABLE) && !(flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
+        constexpr float edge = 6;
+        int width, height;
+        SDL_GetWindowSize(m_window, &width, &height);
+        bool left = x < edge, right = x >= width - edge, top = y < edge, bottom = y >= height - edge;
+        if (top && left)
+            return HitTest::ResizeTopLeft;
+        if (top && right)
+            return HitTest::ResizeTopRight;
+        if (bottom && left)
+            return HitTest::ResizeBottomLeft;
+        if (bottom && right)
+            return HitTest::ResizeBottomRight;
+        if (top)
+            return HitTest::ResizeTop;
+        if (bottom)
+            return HitTest::ResizeBottom;
+        if (left)
+            return HitTest::ResizeLeft;
+        if (right)
+            return HitTest::ResizeRight;
+    }
+    return m_view->appRegionAt(viewPoint(x, y)) == "drag"_s ? HitTest::Drag : HitTest::Page;
 }
 
 Window::~Window()
@@ -641,8 +743,7 @@ bool Window::runOnce(std::optional<Seconds> maxWait)
     if (hasWork && (m_view->hasPendingRenderingUpdate() || m_view->hasDamage()))
         wakeUp = std::min(wakeUp, m_nextFrameTime);
     if (auto engineWork = RunLoop::mainSingleton().nextWakeUpTime())
-        wakeUp = std::min(wakeUp, *engineWork);
-    Sint32 timeout = wakeUp.isInfinity() ? -1 : static_cast<Sint32>(std::max<double>(0, std::ceil((wakeUp - now).milliseconds())));
+        wakeUp = std::min(wakeUp, *engineWork);    Sint32 timeout = wakeUp.isInfinity() ? -1 : static_cast<Sint32>(std::max<double>(0, std::ceil((wakeUp - now).milliseconds())));
     // Without an event to fill in, the event stays queued for the next iteration.
     SDL_WaitEventTimeout(nullptr, timeout);
     return !m_closed;
@@ -686,7 +787,10 @@ bool Window::present()
     glViewport(0, 0, width, height);
     // A frame older than a resize does not cover the window: clear the rest.
     if (static_cast<int>(frame.width) < width || static_cast<int>(frame.height) < height) {
-        glClearColor(1, 1, 1, 1);
+        if (m_transparent)
+            glClearColor(0, 0, 0, 0);
+        else
+            glClearColor(1, 1, 1, 1);
         glClear(GL_COLOR_BUFFER_BIT);
     }
     // Frames are stored top row first, GL windows bottom row first.

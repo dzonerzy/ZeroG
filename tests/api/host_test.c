@@ -152,6 +152,50 @@ static void onFileChooser(zg_view *v, zg_file_chooser *c, void *user)
     ++choosers;
 }
 
+/* ---- Context menus ---- */
+
+static zg_context_menu *menu;
+static int menus;
+
+static void onContextMenu(zg_view *v, zg_context_menu *m, void *user)
+{
+    (void)v;
+    (void)user;
+    menu = m;
+    ++menus;
+}
+
+static void rightClick(float x, float y)
+{
+    zg_view_mouse_event(view, ZG_MOUSE_DOWN, x, y, ZG_MOUSE_RIGHT, 1, 0);
+    zg_view_mouse_event(view, ZG_MOUSE_UP, x, y, ZG_MOUSE_RIGHT, 1, 0);
+    zg_runtime_update(runtime);
+}
+
+/* The enabled item whose label starts with `label`; 0 if none. */
+static unsigned menuItem(const char *label)
+{
+    size_t i;
+    for (i = 0; menu && i < zg_context_menu_item_count(menu); ++i) {
+        const zg_context_menu_item *item = zg_context_menu_item_at(menu, i);
+        if (item->kind != ZG_CONTEXT_MENU_ITEM_SEPARATOR && item->enabled && !strncmp(item->label, label, strlen(label)))
+            return item->id;
+    }
+    return 0;
+}
+
+static const char *menuLabels(void)
+{
+    static char labels[1024];
+    size_t i, used = 0;
+    labels[0] = 0;
+    for (i = 0; menu && i < zg_context_menu_item_count(menu) && used < sizeof labels - 64; ++i) {
+        const zg_context_menu_item *item = zg_context_menu_item_at(menu, i);
+        used += snprintf(labels + used, sizeof labels - used, "%s%s%s", i ? "|" : "", item->kind == ZG_CONTEXT_MENU_ITEM_SEPARATOR ? "-" : item->label, item->enabled ? "" : "(off)");
+    }
+    return labels;
+}
+
 static const char page[] =
     "<!DOCTYPE html><title>host</title><style>"
     "body { margin: 0; font: 16px sans-serif; }"
@@ -160,7 +204,10 @@ static const char page[] =
     "#file { top: 80px; width: 200px; height: 30px; } #drop { top: 120px; width: 200px; height: 100px; background: #eee; }"
     "#text { top: 230px; white-space: nowrap; } #drag { top: 120px; left: 300px; width: 80px; height: 40px; background: #ccf; }"
     "#button { top: 0; left: 400px; width: 100px; height: 30px; }"
+    "#link, #nomenu { position: absolute; margin: 0; } #link { top: 280px; left: 0; } #nomenu { top: 320px; left: 0; width: 200px; height: 30px; }"
     "</style>"
+    "<a id=link href='https://example.com/page'>a link</a>"
+    "<div id=nomenu>own menu</div>"
     "<div id=edit contenteditable>hello world</div>"
     "<div id=paste contenteditable></div>"
     "<input id=file type=file multiple accept='.txt,image/png'>"
@@ -183,6 +230,7 @@ static const char page[] =
     "document.getElementById('button').onclick = () => {"
     "  if (mode === 'write') navigator.clipboard.writeText('async text').then(() => window.written = true, e => window.written = String(e));"
     "  if (mode === 'read') navigator.clipboard.readText().then(t => window.readBack = t, e => window.readBack = 'error: ' + e); };"
+    "document.getElementById('nomenu').addEventListener('contextmenu', e => { e.preventDefault(); window.ownMenu = true; });"
     "function select(id) { const node = document.getElementById(id); node.focus(); const range = document.createRange();"
     "  range.selectNodeContents(node); getSelection().removeAllRanges(); getSelection().addRange(range); }"
     "</script>";
@@ -216,6 +264,7 @@ int main(void)
     viewConfig.height = 400;
     view = zg_view_create(context, &viewConfig);
     callbacks.file_chooser = onFileChooser;
+    callbacks.context_menu = onContextMenu;
     zg_view_set_callbacks(view, &callbacks);
     zg_view_set_focus(view, 1);
     zg_view_load_url(view, "app://localhost/");
@@ -331,6 +380,70 @@ int main(void)
     snprintf(script, sizeof script, "window.dropped !== undefined && log.includes('dragend')");
     CHECK(waitFor(script) && isTrue("window.dropped === 'data:from page'"), "an element dragged onto a drop zone: %s", evaluate("String(window.dropped)"));
     CHECK(isTrue("/^dragstart,dragenter,(dragover,)+drop,dragend$/.test(log.join())"), "dragstart to dragend: %s", evaluate("log.join()"));
+
+    /* ---- Context menus: the host shows them, the engine runs the choice ---- */
+    clipCount = 0;
+    clipWrites = 0;
+    zg_runtime_set_clipboard(runtime, &clipboard);
+    evaluate("select('text'); 0");
+    rightClick(20, 245);
+    CHECK(menus == 1 && menu, "a right click asks the host for a context menu");
+    if (menu) {
+        float x, y;
+        zg_context_menu_position(menu, &x, &y);
+        CHECK(x == 20 && y == 245 && zg_context_menu_selected_text(menu) && !strcmp(zg_context_menu_selected_text(menu), "selectable text for the mouse"),
+            "at the click, with the selection: %.0f,%.0f '%s'", x, y, zg_context_menu_selected_text(menu) ? zg_context_menu_selected_text(menu) : "");
+        CHECK(menuItem("Copy") != 0, "its items have Copy: %s", menuLabels());
+        zg_context_menu_select(menu, menuItem("Copy"));
+        menu = NULL;
+        zg_runtime_update(runtime);
+        CHECK(!strcmp(clip("text/plain"), "selectable text for the mouse"), "choosing Copy copies: %s", clip("text/plain"));
+    }
+
+    evaluate("getSelection().removeAllRanges(); 0");
+    rightClick(10, 288);
+    CHECK(menus == 2 && menu && zg_context_menu_link_url(menu) && !strcmp(zg_context_menu_link_url(menu), "https://example.com/page")
+        && zg_context_menu_link_text(menu) && !strcmp(zg_context_menu_link_text(menu), "a link"),
+        "on a link: its URL and text (%s)", menu && zg_context_menu_link_url(menu) ? zg_context_menu_link_url(menu) : "none");
+    if (menu) {
+        CHECK(menuItem("Copy Link") != 0 && !strstr(menuLabels(), "New Window"), "Copy Link, and no new windows: %s", menuLabels());
+        zg_context_menu_select(menu, menuItem("Copy Link"));
+        menu = NULL;
+        zg_runtime_update(runtime);
+        CHECK(strstr(clip("text/plain"), "https://example.com/page") != NULL, "choosing it copies the URL: %s", clip("text/plain"));
+    }
+
+    setClipboard("text/plain", "from the menu", NULL, NULL);
+    evaluate("document.getElementById('paste').textContent = ''; document.getElementById('paste').focus(); 0");
+    rightClick(20, 55);
+    CHECK(menus == 3 && menu && zg_context_menu_is_editable(menu), "in an editable element: editable");
+    if (menu) {
+        CHECK(menuItem("Paste") != 0, "with Paste: %s", menuLabels());
+        zg_context_menu_select(menu, menuItem("Paste"));
+        menu = NULL;
+        zg_runtime_update(runtime);
+        CHECK(waitFor("document.getElementById('paste').textContent === 'from the menu'"), "choosing Paste pastes: %s", evaluate("document.getElementById('paste').textContent"));
+    }
+
+    rightClick(20, 55);
+    CHECK(menus == 4 && menu, "another menu");
+    zg_context_menu_cancel(menu);
+    menu = NULL;
+    zg_runtime_update(runtime);
+    CHECK(isTrue("document.getElementById('paste').textContent === 'from the menu'"), "cancelled, it does nothing");
+
+    zg_view_key_event(view, ZG_KEY_DOWN, "F10", "F10", NULL, ZG_MOD_SHIFT, 0);
+    zg_view_key_event(view, ZG_KEY_UP, "F10", "F10", NULL, ZG_MOD_SHIFT, 0);
+    zg_runtime_update(runtime);
+    CHECK(menus == 5 && menu && zg_context_menu_is_editable(menu), "Shift+F10 opens the focused element's menu");
+    if (menu) {
+        zg_context_menu_cancel(menu);
+        menu = NULL;
+    }
+
+    rightClick(20, 330);
+    CHECK(menus == 5 && isTrue("window.ownMenu === true"), "a page that cancels contextmenu shows its own: no menu asked");
+    zg_runtime_set_clipboard(runtime, NULL);
 
     remove(filePath);
     zg_runtime_destroy(runtime);

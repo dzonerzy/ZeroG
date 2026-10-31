@@ -2,8 +2,10 @@
  * application's frontend from app://, with a synchronous binding.
  *
  * The frontend (web/) is packed into the binary at build time by
- * tools/assets.py (hello_assets.c). Usage: hello [--smoke]
+ * tools/assets.py (hello_assets.c). Usage: hello [--smoke | --shaped]
  * --smoke quits once the page has called App.greet: a test for the build.
+ * --shaped: a frameless, transparent window, only the card showing; drag the
+ * card to move it (--zg-app-region), Escape or the close button quits.
  */
 
 #include <zerog.h>
@@ -47,6 +49,7 @@ static void on_console(zg_view *view, const zg_log_message *msg, void *user)
 int main(int argc, char **argv)
 {
     int smoke = argc > 1 && !strcmp(argv[1], "--smoke");
+    int shaped = argc > 1 && !strcmp(argv[1], "--shaped");
     zg_runtime_config runtime_config = { sizeof runtime_config };
     zg_context_config context_config = { sizeof context_config };
     zg_window_config window_config = { sizeof window_config };
@@ -71,6 +74,8 @@ int main(int argc, char **argv)
     window_config.title = "Hello, ZeroG";
     window_config.width = 640;
     window_config.height = 400;
+    window_config.frameless = shaped;
+    window_config.transparent = shaped;
     win = zg_window_create(ctx, &window_config);
     if (!win) {
         fprintf(stderr, "zg_window_create: %s\n", zg_last_error());
@@ -81,7 +86,7 @@ int main(int argc, char **argv)
     zg_view_set_callbacks(view, &callbacks);
     zg_view_bind(view, "App.greet", on_greet, NULL);
     zg_view_bind(view, "App.quit", on_quit, NULL);
-    zg_view_load_url(view, smoke ? "app://localhost/#smoke" : "app://localhost/");
+    zg_view_load_url(view, smoke ? "app://localhost/#smoke" : shaped ? "app://localhost/#shaped" : "app://localhost/");
 
     zg_runtime_run(rt);
     zg_runtime_destroy(rt);

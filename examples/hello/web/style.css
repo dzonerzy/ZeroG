@@ -44,3 +44,35 @@ button {
     font-size: 1.25rem;
     min-height: 1.5em;
 }
+
+main {
+    position: relative;
+}
+
+#close {
+    display: none;
+}
+
+/* hello --shaped: only the card shows; it moves the window, its controls do not. */
+:root.shaped {
+    background: transparent;
+}
+
+.shaped main {
+    --zg-app-region: drag;
+}
+
+.shaped input,
+.shaped button {
+    --zg-app-region: no-drag;
+}
+
+.shaped #close {
+    display: block;
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    padding: 0.1rem 0.6rem;
+    background: #e5e5ea;
+    color: #1d1d1f;
+}

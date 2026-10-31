@@ -664,6 +664,49 @@ ZG_API const char *zg_file_chooser_accept(const zg_file_chooser *chooser, size_t
 ZG_API void zg_file_chooser_choose(zg_file_chooser *chooser, size_t count, const char *const *paths);
 ZG_API void zg_file_chooser_cancel(zg_file_chooser *chooser);
 
+/* A context menu (0.3): a right click (on the press; on Windows the release),
+   the menu key or Shift+F10, unless the page cancelled its contextmenu event
+   (pages build their own menus that way, through bindings). The engine draws
+   nothing: the application shows the items as it likes (a native popup menu at
+   the position) and answers with the chosen one, or cancels. Valid until
+   answered, which must happen exactly once, from any thread. With no
+   context_menu callback no menu appears. */
+typedef struct zg_context_menu zg_context_menu;
+
+typedef enum zg_context_menu_item_kind {
+    ZG_CONTEXT_MENU_ITEM_ACTION,
+    ZG_CONTEXT_MENU_ITEM_CHECKBOX,
+    ZG_CONTEXT_MENU_ITEM_SEPARATOR,
+    ZG_CONTEXT_MENU_ITEM_SUBMENU
+} zg_context_menu_item_kind;
+
+/* The items are a flat list in order; a submenu's items follow it and name it
+   as their parent. Owned by the menu. */
+typedef struct zg_context_menu_item {
+    unsigned id;          /* 1 and up, for zg_context_menu_select */
+    unsigned parent;      /* 0: the top level; else the submenu's id */
+    zg_context_menu_item_kind kind;
+    const char *label;    /* UTF-8; empty for separators */
+    int enabled;
+    int checked;          /* checkboxes */
+} zg_context_menu_item;
+
+/* Where, in the view's logical pixels. */
+ZG_API void zg_context_menu_position(const zg_context_menu *menu, float *x, float *y);
+/* What is under it; NULL when there is none. */
+ZG_API const char *zg_context_menu_link_url(const zg_context_menu *menu);
+ZG_API const char *zg_context_menu_link_text(const zg_context_menu *menu);
+ZG_API const char *zg_context_menu_image_url(const zg_context_menu *menu);
+ZG_API const char *zg_context_menu_media_url(const zg_context_menu *menu);
+ZG_API const char *zg_context_menu_selected_text(const zg_context_menu *menu);
+ZG_API const char *zg_context_menu_frame_url(const zg_context_menu *menu);
+ZG_API int zg_context_menu_is_editable(const zg_context_menu *menu);
+ZG_API size_t zg_context_menu_item_count(const zg_context_menu *menu);
+ZG_API const zg_context_menu_item *zg_context_menu_item_at(const zg_context_menu *menu, size_t index);
+/* Runs the item (copy, paste, open the link, download the image...). */
+ZG_API void zg_context_menu_select(zg_context_menu *menu, unsigned id);
+ZG_API void zg_context_menu_cancel(zg_context_menu *menu);
+
 typedef struct zg_view_callbacks {
     size_t size;
     void *user;
@@ -692,6 +735,8 @@ typedef struct zg_view_callbacks {
     void (*download_finished)(zg_view *view, zg_download *download, int failed, void *user);
     /* <input type=file> (0.3); see zg_file_chooser. */
     void (*file_chooser)(zg_view *view, zg_file_chooser *chooser, void *user);
+    /* Context menus (0.3); see zg_context_menu. */
+    void (*context_menu)(zg_view *view, zg_context_menu *menu, void *user);
 } zg_view_callbacks;
 
 ZG_API void zg_view_set_callbacks(zg_view *view, const zg_view_callbacks *callbacks);
@@ -861,7 +906,16 @@ typedef struct zg_window_config {
     int frameless;
     int fullscreen;
     int fixed_size;          /* nonzero: not resizable by the user */
+    /* (0.3) Nonzero: what the page leaves transparent (no html/body background,
+       or a translucent one) shows the desktop behind the window, alpha
+       blended by the window system. With frameless, a window of any shape. */
+    int transparent;
 } zg_window_config;
+
+/* Frameless windows move by the page's regions marked with the CSS custom
+   property --zg-app-region: drag (inherited: inside such a region, mark
+   controls --zg-app-region: no-drag), with the system's snapping and double
+   click to maximize, and resize by their edges when resizable. */
 
 ZG_API zg_window *zg_window_create(zg_context *ctx, const zg_window_config *config);
 ZG_API void zg_window_destroy(zg_window *win);

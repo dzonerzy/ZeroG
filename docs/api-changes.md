@@ -33,6 +33,14 @@ Engine features of roadmap phases 3 and 4:
   `navigator.clipboard` works.
 - File chooser: `zg_view_callbacks.file_chooser` and `zg_file_chooser_*`; window
   mode shows the system's dialog when there is no callback.
+- Context menus: `zg_view_callbacks.context_menu` and `zg_context_menu_*` (the
+  position, what is under it, WebCore's items as `zg_context_menu_item`;
+  `zg_context_menu_select` runs one, `zg_context_menu_cancel`). The engine
+  draws no menu; without the callback none appears. Before, right clicks
+  showed nothing either.
+- Windows: `zg_window_config.transparent` (the page's transparent parts show
+  what is behind the window); frameless windows move by the page's regions
+  marked `--zg-app-region: drag` and resize by their edges.
 - Drag and drop: `zg_view_drag` for drags from the host (files, text, URLs);
   window mode takes drops on the window; drags in the page (draggable elements,
   links, images, selections) and selecting text by dragging the mouse work.

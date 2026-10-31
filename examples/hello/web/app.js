@@ -15,6 +15,16 @@ form.addEventListener("submit", event => {
 
 greet();
 
+// hello --shaped: the window is frameless and transparent; the card moves it.
+if (location.hash === "#shaped") {
+    document.documentElement.classList.add("shaped");
+    document.getElementById("close").addEventListener("click", () => App.quit());
+    addEventListener("keydown", event => {
+        if (event.key === "Escape")
+            App.quit();
+    });
+}
+
 // The build's smoke test: quit once the greeting went through.
 if (location.hash === "#smoke")
     requestAnimationFrame(() => App.quit());

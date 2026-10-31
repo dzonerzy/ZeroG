@@ -344,7 +344,15 @@ Il supporto agli input method (cinese, giapponese, coreano, emoji) è obbligator
 
 - Clipboard di sistema in lettura e scrittura, con testo, HTML e immagini (`zg_runtime_set_clipboard`, oppure quella di SDL3 in modalità finestra); `navigator.clipboard` incluso.
 - Drag and drop di file, testo e URL verso la view (`zg_view_drag`), e drag HTML5 dentro la pagina; trascinamento fuori dalla view più avanti.
-- File chooser e dialog JS (`alert`, `confirm`, `prompt`) sono callback verso l'host, con un'implementazione nativa di default in modalità finestra. Il context menu non c'è ancora.
+- File chooser e dialog JS (`alert`, `confirm`, `prompt`) sono callback verso l'host, con un'implementazione nativa di default in modalità finestra.
+- Context menu: il motore non disegna menu. Un click destro (alla pressione; al rilascio su Windows), il tasto menu o Shift+F10 chiamano l'host (`zg_view_callbacks.context_menu`) con la posizione, cosa c'è sotto (link, immagine, media, selezione, campo modificabile) e le voci di WebCore per quel punto; l'host le mostra come vuole (un menu nativo, nel framework Zig) e risponde con la voce scelta, che il motore esegue (copia, incolla, apri il link, scarica). Le voci che un motore per applicazioni non ha (nuove finestre, ricerca web, dizionario, voce, ortografia) sono tolte. Una pagina che annulla l'evento `contextmenu` fa il suo menu (con le binding) e l'host non viene chiamato. Senza callback non compare nulla.
+
+### Finestre senza bordi e trasparenti
+
+- `frameless` toglie bordi e barra del titolo; `transparent` (0.3) fa vedere quello che c'è dietro la finestra dove la pagina è trasparente, con l'alpha composto dal sistema: su Windows una swap chain DirectComposition con alpha premoltiplicato (`EGL_ANGLE_direct_composition` di ANGLE), su Linux una visual ARGB (X11) o una superficie con alpha (Wayland).
+- Le finestre senza bordi si spostano dalle regioni che la pagina marca con la custom property CSS `--zg-app-region: drag` (ereditata: i controlli dentro una regione dicono `no-drag`), e si ridimensionano dai bordi. Il sistema chiede cosa c'è in un punto (`WM_NCHITTEST` su Windows, tramite l'hit test di SDL) e il motore risponde con un hit test della pagina: lo spostamento è quello del sistema, con lo snap, il doppio click per massimizzare e Wayland incluso.
+- Click passanti dove la pagina è trasparente: non fatti. Su Windows richiedono una finestra layered aggiornata da una copia sulla CPU di ogni frame (`UpdateLayeredWindow`), incompatibile con la swap chain DirectComposition; da decidere.
+- Menu applicazione, tray e dialog sono del framework Zig, che arriva alla finestra nativa con `zg_window_native_handle`.
 
 ### Accessibilità
 
@@ -680,7 +688,7 @@ Ogni chiamata riceve un arena allocator, così i metodi non gestiscono la memori
 | --- | --- | --- |
 | Binding tipizzate host → JS | Sì | — |
 | Eventi nei due sensi | Sì | — |
-| Finestra: titolo, dimensioni, fullscreen, frameless | Sì | Trasparenza ed effetti |
+| Finestra: titolo, dimensioni, fullscreen, frameless, trasparenza, regioni di trascinamento | Sì | Effetti (blur, mica), click passanti |
 | Più finestre | — | Sì |
 | Dialog nativi (apri, salva, messaggio) | Sì | — |
 | Menu applicazione e context menu | Sì | — |
@@ -804,7 +812,8 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 - [x] Service worker: fatti nei profili standard, dev e debug, tutti nel processo del motore; spenti in minimal. Con aggiornamenti dello script e navigation preload. Restano fuori push, notifiche e background fetch.
 - [x] AVIF: fatto nei profili standard, dev e debug (libavif sopra dav1d); spento in minimal.
 - [x] JPEG XL: deciso, escluso da tutti i profili (poco diffuso, dipendenze pesanti).
-- [ ] Context menu: callback verso l'host e menu nativo in modalità finestra.
+- [x] Context menu: callback verso l'host con le voci di WebCore, eseguite dal motore; il menu nativo è del framework Zig (deciso: niente menu disegnati dal motore).
+- [ ] Click passanti sulle parti trasparenti di una finestra: da decidere (su Windows, finestra layered con copia CPU dei frame).
 
 ## Fonti
 

@@ -39,6 +39,9 @@ public:
         bool frameless { false };
         bool visible { true };
         RefPtr<Session> session; // null: the default session
+        // The page's transparent pixels show what is behind the window (alpha
+        // composited by the window system).
+        bool transparent { false };
     };
     // Null if no window or no GPU is available. The first window decides the GPU
     // display on Linux (X11 or Wayland); it has to be created before any GPU view.
@@ -68,6 +71,12 @@ public:
     // The system's file dialog for <input type=file> (SDL3), its answer on the
     // engine thread: the chosen paths, or nullopt.
     void showOpenDialog(const WebCore::FileChooserSettings&, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
+
+    // What a point of a frameless window is to the window system (window
+    // points): an edge resizes it, a region the page marks
+    // --zg-app-region: drag moves it, the rest is the page's.
+    enum class HitTest : uint8_t { Page, Drag, ResizeTopLeft, ResizeTop, ResizeTopRight, ResizeRight, ResizeBottomRight, ResizeBottom, ResizeBottomLeft, ResizeLeft };
+    HitTest hitTest(float x, float y);
 
     // Tests: frames presented so far, and the contents of the next presented frame
     // (RGBA8, rows top to bottom) read back before the swap. Any thread.
@@ -102,6 +111,7 @@ private:
     bool m_closed { false };
     bool m_shown { false };
     bool m_showWhenPresented { true };
+    bool m_transparent { false };
     // Set by the engine thread, read where frames are presented.
     Lock m_presentLock;
     WebCore::IntSize m_pixelSize WTF_GUARDED_BY_LOCK(m_presentLock);

@@ -261,6 +261,17 @@ struct zg_file_chooser {
     std::vector<std::string> accept;
 };
 
+// A context menu waiting for the application; its strings live with it.
+struct zg_context_menu {
+    CompletionHandler<void(std::optional<unsigned>)> completionHandler;
+    float x { 0 };
+    float y { 0 };
+    std::string linkURL, linkText, imageURL, mediaURL, selectedText, frameURL;
+    bool isEditable { false };
+    std::vector<std::string> labels;
+    std::vector<zg_context_menu_item> items;
+};
+
 struct zg_clipboard_reply {
     RefPtr<SharedBuffer> data;
 };
@@ -460,6 +471,42 @@ private:
             return;
         }
         completionHandler(std::nullopt);
+    }
+
+    void showContextMenu(ZeroG::ContextMenu&& request, CompletionHandler<void(std::optional<unsigned>)>&& completionHandler) final
+    {
+        if (!callbacks().context_menu) {
+            completionHandler(std::nullopt);
+            return;
+        }
+        auto* menu = new zg_context_menu;
+        menu->completionHandler = WTF::move(completionHandler);
+        menu->x = request.position.x();
+        menu->y = request.position.y();
+        auto urlString = [](const URL& url) { return url.isEmpty() ? std::string { } : toUTF8(url.string()); };
+        menu->linkURL = urlString(request.linkURL);
+        menu->linkText = toUTF8(request.linkText);
+        menu->imageURL = urlString(request.imageURL);
+        menu->mediaURL = urlString(request.mediaURL);
+        menu->selectedText = toUTF8(request.selectedText);
+        menu->frameURL = urlString(request.frameURL);
+        menu->isEditable = request.isEditable;
+        // The labels first: the items point into them.
+        menu->labels.reserve(request.items.size());
+        for (auto& item : request.items)
+            menu->labels.push_back(toUTF8(item.label));
+        for (size_t i = 0; i < request.items.size(); ++i) {
+            auto& item = request.items[i];
+            zg_context_menu_item_kind kind = ZG_CONTEXT_MENU_ITEM_ACTION;
+            switch (item.kind) {
+            case ZeroG::ContextMenu::ItemKind::Action: kind = ZG_CONTEXT_MENU_ITEM_ACTION; break;
+            case ZeroG::ContextMenu::ItemKind::Checkbox: kind = ZG_CONTEXT_MENU_ITEM_CHECKBOX; break;
+            case ZeroG::ContextMenu::ItemKind::Separator: kind = ZG_CONTEXT_MENU_ITEM_SEPARATOR; break;
+            case ZeroG::ContextMenu::ItemKind::Submenu: kind = ZG_CONTEXT_MENU_ITEM_SUBMENU; break;
+            }
+            menu->items.push_back({ item.id, item.parent, kind, menu->labels[i].c_str(), item.enabled, item.checked });
+        }
+        callbacks().context_menu(&m_view, menu, callbacks().user);
     }
 
     // The Web Inspector's frontend: a window of the runtime's, whatever the
@@ -1207,6 +1254,58 @@ void zg_file_chooser_cancel(zg_file_chooser* chooser)
     zg_file_chooser_choose(chooser, 0, nullptr);
 }
 
+// ---- Context menus ----
+
+void zg_context_menu_position(const zg_context_menu* menu, float* x, float* y)
+{
+    if (x)
+        *x = menu ? menu->x : 0;
+    if (y)
+        *y = menu ? menu->y : 0;
+}
+
+static const char* nullIfEmpty(const std::string& string)
+{
+    return string.empty() ? nullptr : string.c_str();
+}
+
+const char* zg_context_menu_link_url(const zg_context_menu* menu) { return menu ? nullIfEmpty(menu->linkURL) : nullptr; }
+const char* zg_context_menu_link_text(const zg_context_menu* menu) { return menu ? nullIfEmpty(menu->linkText) : nullptr; }
+const char* zg_context_menu_image_url(const zg_context_menu* menu) { return menu ? nullIfEmpty(menu->imageURL) : nullptr; }
+const char* zg_context_menu_media_url(const zg_context_menu* menu) { return menu ? nullIfEmpty(menu->mediaURL) : nullptr; }
+const char* zg_context_menu_selected_text(const zg_context_menu* menu) { return menu ? nullIfEmpty(menu->selectedText) : nullptr; }
+const char* zg_context_menu_frame_url(const zg_context_menu* menu) { return menu ? nullIfEmpty(menu->frameURL) : nullptr; }
+
+int zg_context_menu_is_editable(const zg_context_menu* menu)
+{
+    return menu && menu->isEditable;
+}
+
+size_t zg_context_menu_item_count(const zg_context_menu* menu)
+{
+    return menu ? menu->items.size() : 0;
+}
+
+const zg_context_menu_item* zg_context_menu_item_at(const zg_context_menu* menu, size_t index)
+{
+    return menu && index < menu->items.size() ? &menu->items[index] : nullptr;
+}
+
+void zg_context_menu_select(zg_context_menu* menu, unsigned id)
+{
+    if (!menu)
+        return;
+    ensureOnMainThread([menu, id] {
+        menu->completionHandler(id ? std::optional<unsigned> { id } : std::nullopt);
+        delete menu;
+    });
+}
+
+void zg_context_menu_cancel(zg_context_menu* menu)
+{
+    zg_context_menu_select(menu, 0);
+}
+
 // ---- Clipboard ----
 
 namespace {
@@ -1786,7 +1885,7 @@ zg_window* zg_window_create(zg_context* context, const zg_window_config* configu
         return nullptr;
     auto config = copyConfig(configuration);
     IntSize size { static_cast<int>(config.width ? config.width : 1024), static_cast<int>(config.height ? config.height : 768) };
-    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, true, context->session });
+    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, true, context->session, !!config.transparent });
     if (!window) {
         fail(ZG_ERROR_GPU, makeString("cannot create the window: "_s, Window::lastError()));
         return nullptr;

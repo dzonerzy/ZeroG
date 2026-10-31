@@ -43,6 +43,31 @@ class Download;
 
 // What a view reports to its embedder (the C API maps it onto zg_view_callbacks).
 // Every call happens on the engine thread.
+// A context menu the page asks for (right click, the menu key, Shift+F10),
+// unless its contextmenu event was cancelled: where, what is under it, and
+// WebCore's items for it. Items are a flat list; a submenu's items name it as
+// their parent. Ids start at 1.
+struct ContextMenu {
+    enum class ItemKind : uint8_t { Action, Checkbox, Separator, Submenu };
+    struct Item {
+        unsigned id { 0 };
+        unsigned parent { 0 }; // 0: the top level
+        ItemKind kind { ItemKind::Action };
+        String label;
+        bool enabled { true };
+        bool checked { false };
+    };
+    WebCore::FloatPoint position; // the view's logical pixels
+    URL linkURL;
+    String linkText;
+    URL imageURL;
+    URL mediaURL;
+    String selectedText;
+    URL frameURL;
+    bool isEditable { false };
+    Vector<Item> items;
+};
+
 class ViewClient {
 public:
     virtual ~ViewClient() = default;
@@ -75,6 +100,9 @@ public:
     // <input type=file>: answer with the chosen paths, or nullopt to cancel; the
     // answer may come later. The default cancels.
     virtual void runOpenPanel(const WebCore::FileChooserSettings&, CompletionHandler<void(std::optional<Vector<String>>&&)>&& completionHandler) { completionHandler(std::nullopt); }
+    // A context menu (ContextMenu): answer with the chosen item's id, or nullopt
+    // to dismiss it; the answer may come later. The default shows nothing.
+    virtual void showContextMenu(ContextMenu&&, CompletionHandler<void(std::optional<unsigned>)>&& completionHandler) { completionHandler(std::nullopt); }
     // The Web Inspector (dev and debug profiles, inspector/InspectorZeroG.h).
     // Opening it: create a view of `session` for its frontend, owned and shown by
     // the embedder, and return it; null opens nothing. The frontend closing
@@ -150,6 +178,15 @@ public:
     };
     bool keyDown(const KeyEvent&);
     bool keyUp(const KeyEvent&);
+    // The context menu at a point (the mouse does it itself: on the right
+    // button's press, on its release on Windows), or for the focused element.
+    bool contextMenu(const WebCore::FloatPoint&, Modifiers);
+    bool contextMenuForKeyboard();
+
+    // The page's --zg-app-region at a point ("drag", "no-drag", or empty):
+    // frameless windows move by the regions marked drag (inherited, so a
+    // header's buttons say no-drag).
+    String appRegionAt(const WebCore::FloatPoint&);
     // Text typed or committed by an input method, after its keyDown.
     bool insertText(const String&, Modifiers = { });
 
@@ -217,6 +254,8 @@ private:
     // The drag controller's answer for the items at a point; nullopt: no drop.
     std::optional<WebCore::DragOperation> dragUpdated(WebCore::PasteboardItemsZeroG&, const WebCore::IntPoint&);
     void finishInternalDrag(const WebCore::IntPoint&, bool drop);
+    // The menu WebCore made for the last context menu event, to the client.
+    bool showContextMenu(const WebCore::FloatPoint&);
 
     // A drag from outside, and one from inside the page, in progress.
     RefPtr<WebCore::PasteboardItemsZeroG> m_externalDrag;
