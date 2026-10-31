@@ -5,7 +5,8 @@
  * tools/assets.py (hello_assets.c). Usage: hello [--smoke | --shaped]
  * --smoke quits once the page has called App.greet: a test for the build.
  * --shaped: a frameless, transparent window, only the card showing; drag the
- * card to move it (--zg-app-region), Escape or the close button quits.
+ * card to move it (--zg-app-region), clicks around it reach what is behind
+ * (click_through), Escape or the close button quits.
  */
 
 #include <zerog.h>
@@ -76,6 +77,7 @@ int main(int argc, char **argv)
     window_config.height = 400;
     window_config.frameless = shaped;
     window_config.transparent = shaped;
+    window_config.click_through = shaped;
     win = zg_window_create(ctx, &window_config);
     if (!win) {
         fprintf(stderr, "zg_window_create: %s\n", zg_last_error());

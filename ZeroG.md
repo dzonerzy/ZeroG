@@ -351,7 +351,8 @@ Il supporto agli input method (cinese, giapponese, coreano, emoji) è obbligator
 
 - `frameless` toglie bordi e barra del titolo; `transparent` (0.3) fa vedere quello che c'è dietro la finestra dove la pagina è trasparente, con l'alpha composto dal sistema: su Windows una swap chain DirectComposition con alpha premoltiplicato (`EGL_ANGLE_direct_composition` di ANGLE), su Linux una visual ARGB (X11) o una superficie con alpha (Wayland).
 - Le finestre senza bordi si spostano dalle regioni che la pagina marca con la custom property CSS `--zg-app-region: drag` (ereditata: i controlli dentro una regione dicono `no-drag`), e si ridimensionano dai bordi. Il sistema chiede cosa c'è in un punto (`WM_NCHITTEST` su Windows, tramite l'hit test di SDL) e il motore risponde con un hit test della pagina: lo spostamento è quello del sistema, con lo snap, il doppio click per massimizzare e Wayland incluso.
-- Click passanti dove la pagina è trasparente: non fatti. Su Windows richiedono una finestra layered aggiornata da una copia sulla CPU di ogni frame (`UpdateLayeredWindow`), incompatibile con la swap chain DirectComposition; da decidere.
+- Click passanti (`click_through`, 0.3): dove la pagina è del tutto trasparente i click vanno a quello che c'è dietro. Costa una copia di ogni frame sulla CPU: su Windows la finestra diventa una finestra layered aggiornata da quella copia (`UpdateLayeredWindow`, che il sistema colpisce per alpha) al posto della swap chain; su X11 l'alpha del frame diventa la forma di input della finestra (XShape tramite SDL). Su Wayland nessun effetto: SDL non imposta la regione di input.
+- Con "Mostra il contenuto delle finestre durante il trascinamento" spento, Windows sposta ogni finestra, comprese queste, come un rettangolo: è l'impostazione dell'utente, rispettata.
 - Menu applicazione, tray e dialog sono del framework Zig, che arriva alla finestra nativa con `zg_window_native_handle`.
 
 ### Accessibilità
@@ -688,7 +689,7 @@ Ogni chiamata riceve un arena allocator, così i metodi non gestiscono la memori
 | --- | --- | --- |
 | Binding tipizzate host → JS | Sì | — |
 | Eventi nei due sensi | Sì | — |
-| Finestra: titolo, dimensioni, fullscreen, frameless, trasparenza, regioni di trascinamento | Sì | Effetti (blur, mica), click passanti |
+| Finestra: titolo, dimensioni, fullscreen, frameless, trasparenza, regioni di trascinamento, click passanti | Sì | Effetti (blur, mica) |
 | Più finestre | — | Sì |
 | Dialog nativi (apri, salva, messaggio) | Sì | — |
 | Menu applicazione e context menu | Sì | — |
@@ -813,7 +814,7 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 - [x] AVIF: fatto nei profili standard, dev e debug (libavif sopra dav1d); spento in minimal.
 - [x] JPEG XL: deciso, escluso da tutti i profili (poco diffuso, dipendenze pesanti).
 - [x] Context menu: callback verso l'host con le voci di WebCore, eseguite dal motore; il menu nativo è del framework Zig (deciso: niente menu disegnati dal motore).
-- [ ] Click passanti sulle parti trasparenti di una finestra: da decidere (su Windows, finestra layered con copia CPU dei frame).
+- [x] Click passanti sulle parti trasparenti di una finestra: decisi e fatti (Windows con finestra layered, X11 con la forma di input); non su Wayland.
 
 ## Fonti
 

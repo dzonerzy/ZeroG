@@ -203,8 +203,18 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
 
     auto& display = PlatformDisplay::sharedDisplay();
     std::unique_ptr<GLContext> presentContext;
+    bool clickThrough = configuration.transparent && configuration.clickThrough;
 #if OS(WINDOWS)
-    if (configuration.transparent) {
+    // Click-through: a layered window, its frames read back and given to it
+    // with UpdateLayeredWindow (Windows lets clicks through its alpha 0); the
+    // GL context only reads frames, with no window surface.
+    if (clickThrough) {
+        auto hwnd = static_cast<HWND>(native->window);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED);
+        presentContext = GLContext::createOffscreen(display);
+        if (!presentContext)
+            return fail("no GL context to read a click-through window's frames"_s, GLContext::lastErrorString());
+    } else if (configuration.transparent) {
         presentContext = createDirectCompositionContext(display.glDisplay(), display.sharingGLContext(), native->window);
         if (!presentContext)
             return fail("no DirectComposition for a transparent window"_s, GLContext::lastErrorString());
@@ -229,6 +239,10 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     std::unique_ptr<Window> result(new Window(window, WTF::move(view), WTF::move(presentContext), native->window));
     result->m_showWhenPresented = configuration.visible;
     result->m_transparent = configuration.transparent;
+    result->m_clickThrough = clickThrough;
+#if OS(WINDOWS)
+    result->m_layered = clickThrough;
+#endif
     result->updateSize();
     // Text input events (typed characters, input method commits).
     SDL_StartTextInput(window);
@@ -781,6 +795,95 @@ bool Window::present()
 #else
     UNUSED_VARIABLE(nativeWindowSize);
 #endif
+
+    // Click-through needs the frame on the CPU: the window's size of it, rows
+    // top to bottom, premultiplied RGBA (transparent where the frame does not
+    // reach, after a resize).
+    Vector<uint8_t> readback;
+#if OS(WINDOWS)
+    bool readBack = m_layered;
+#else
+    bool readBack = m_clickThrough && !isWayland();
+#endif
+    if (readBack) {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_readFramebuffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, static_cast<GLuint>(reinterpret_cast<uintptr_t>(frame.texture)), 0);
+        int readWidth = std::min<int>(frame.width, width);
+        int readHeight = std::min<int>(frame.height, height);
+        Vector<uint8_t> rows(static_cast<size_t>(readWidth) * readHeight * 4);
+        glReadPixels(0, 0, readWidth, readHeight, GL_RGBA, GL_UNSIGNED_BYTE, rows.mutableSpan().data());
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        readback.grow(static_cast<size_t>(width) * height * 4);
+        std::memset(readback.mutableSpan().data(), 0, readback.size());
+        for (int y = 0; y < readHeight; ++y)
+            std::memcpy(readback.mutableSpan().data() + static_cast<size_t>(y) * width * 4, rows.span().data() + static_cast<size_t>(y) * readWidth * 4, readWidth * 4);
+    }
+
+#if OS(WINDOWS)
+    if (m_layered) {
+        if (m_captureRequested.exchange(false)) {
+            Locker locker { m_presentLock };
+            m_capture = readback;
+            m_captureSize = { width, height };
+        }
+        // To the window as a 32-bit premultiplied BGRA bitmap.
+        BITMAPINFO info { };
+        info.bmiHeader.biSize = sizeof info.bmiHeader;
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height; // top-down
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        HDC memory = CreateCompatibleDC(nullptr);
+        HBITMAP bitmap = CreateDIBSection(memory, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (bitmap && bits) {
+            auto* out = static_cast<uint8_t*>(bits);
+            auto in = readback.span();
+            for (size_t i = 0; i + 3 < in.size(); i += 4) {
+                out[i] = in[i + 2];
+                out[i + 1] = in[i + 1];
+                out[i + 2] = in[i];
+                out[i + 3] = in[i + 3];
+            }
+            auto* previous = SelectObject(memory, bitmap);
+            SIZE size { width, height };
+            POINT origin { 0, 0 };
+            BLENDFUNCTION blend { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+            UpdateLayeredWindow(static_cast<HWND>(m_nativeWindow), nullptr, nullptr, &size, memory, &origin, 0, &blend, ULW_ALPHA);
+            SelectObject(memory, previous);
+        }
+        if (bitmap)
+            DeleteObject(bitmap);
+        DeleteDC(memory);
+        ++m_presentedFrames;
+        if (m_view->compositor() && m_presentedFrames == 1) {
+            callOnMainThread([sdlWindow = m_window] {
+                if (auto* window = windows().get(sdlWindow))
+                    window->didPresent();
+            });
+        }
+        return true;
+    }
+#else
+    // X11: the frame's alpha is the window's input shape (SDL's window shape
+    // there; it reads the alpha byte of ARGB32 pixels).
+    if (readBack) {
+        Vector<uint8_t> shape(readback.size());
+        auto in = readback.span();
+        for (size_t i = 0; i + 3 < in.size(); i += 4)
+            shape[i] = in[i + 3];
+        callOnMainThread([sdlWindow = m_window, shape = WTF::move(shape), width, height]() mutable {
+            if (!windows().contains(sdlWindow))
+                return;
+            if (auto* surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_ARGB32, shape.mutableSpan().data(), width * 4)) {
+                SDL_SetWindowShape(sdlWindow, surface);
+                SDL_DestroySurface(surface);
+            }
+        });
+    }
+#endif
+
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_readFramebuffer);
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, static_cast<GLuint>(reinterpret_cast<uintptr_t>(frame.texture)), 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);

@@ -910,6 +910,11 @@ typedef struct zg_window_config {
        or a translucent one) shows the desktop behind the window, alpha
        blended by the window system. With frameless, a window of any shape. */
     int transparent;
+    /* (0.3) With transparent, nonzero: clicks where the page is fully
+       transparent go to what is behind the window. Costs a copy of every
+       frame to the CPU (on Windows the window is then a layered window
+       updated from it). Windows and X11; Wayland ignores it. */
+    int click_through;
 } zg_window_config;
 
 /* Frameless windows move by the page's regions marked with the CSS custom

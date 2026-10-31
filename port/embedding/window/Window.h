@@ -42,6 +42,13 @@ public:
         // The page's transparent pixels show what is behind the window (alpha
         // composited by the window system).
         bool transparent { false };
+        // With transparent: clicks where the page is fully transparent go to
+        // what is behind the window. Each frame is read back for it: on
+        // Windows the window becomes a layered window updated from the CPU
+        // copy (UpdateLayeredWindow, which lets clicks through alpha 0); on
+        // X11 the frame's alpha is the window's input shape. Wayland: no
+        // effect (no input region through SDL).
+        bool clickThrough { false };
     };
     // Null if no window or no GPU is available. The first window decides the GPU
     // display on Linux (X11 or Wayland); it has to be created before any GPU view.
@@ -112,6 +119,10 @@ private:
     bool m_shown { false };
     bool m_showWhenPresented { true };
     bool m_transparent { false };
+    bool m_clickThrough { false };
+    // Windows click-through: frames go to the window with UpdateLayeredWindow,
+    // not to a swap chain.
+    bool m_layered { false };
     // Set by the engine thread, read where frames are presented.
     Lock m_presentLock;
     WebCore::IntSize m_pixelSize WTF_GUARDED_BY_LOCK(m_presentLock);

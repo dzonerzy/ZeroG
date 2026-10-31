@@ -363,6 +363,55 @@ int main()
         }
 #endif
     }
+    shaped = nullptr;
+
+    // Click-through: the same page, clicks on its transparent part going to
+    // what is behind the window. On Windows a layered window fed from a CPU
+    // copy of each frame, which the system hit tests by alpha; on X11 the
+    // frame's alpha as the input shape; on Wayland nothing to check.
+    auto through = ZeroG::Window::create({ "ZeroG click-through window"_s, { 300, 200 }, true, true, true, nullptr, true, true });
+    ok &= check(!!through, "a click-through window %s", ZeroG::Window::lastError().utf8().data());
+    if (through) {
+        through->view().loadHTML(String::fromUTF8(shapedPage));
+        runUntil(*through, 1_s, [&] { return false; });
+        through->view().repaint();
+        through->captureNextFrame();
+        Vector<uint8_t> throughPixels;
+        IntSize throughSize;
+        ok &= check(runUntil(*through, 5_s, [&] { return through->takeCapture(throughPixels, throughSize); }), "its frame was presented (%dx%d)", throughSize.width(), throughSize.height());
+        float scale = through->view().scale();
+        auto alphaAt = [&](int x, int y) {
+            int px = static_cast<int>(x * scale), py = static_cast<int>(y * scale);
+            if (throughPixels.isEmpty() || px >= throughSize.width() || py >= throughSize.height())
+                return -1;
+            return static_cast<int>(throughPixels[(static_cast<size_t>(py) * throughSize.width() + px) * 4 + 3]);
+        };
+        ok &= check(alphaAt(200, 150) == 0 && alphaAt(50, 20) == 255, "transparent and opaque where the page is: %d, %d", alphaAt(200, 150), alphaAt(50, 20));
+        ok &= check(through->hitTest(50, 20) == ZeroG::Window::HitTest::Drag, "its header still moves it");
+#if OS(WINDOWS)
+        auto* hwnd = static_cast<HWND>(through->nativeHandle());
+        auto windowAt = [&](float x, float y) {
+            POINT point { static_cast<LONG>(x * scale), static_cast<LONG>(y * scale) };
+            ClientToScreen(hwnd, &point);
+            return GetAncestor(WindowFromPoint(point), GA_ROOT);
+        };
+        if (!hiddenByDesktop()) {
+            ok &= check(windowAt(200, 150) != hwnd, "a click on the transparent part goes behind the window");
+            ok &= check(windowAt(50, 20) == hwnd && windowAt(60, 100) == hwnd, "on the header and the translucent card it is the window's");
+        } else
+            std::printf("     skipped the clicks: the window is hidden or the display off\n");
+#else
+        if (auto* sdl = sdlWindow(); sdl && !std::getenv("WAYLAND_DISPLAY")) {
+            auto* shape = static_cast<SDL_Surface*>(SDL_GetPointerProperty(SDL_GetWindowProperties(sdl), SDL_PROP_WINDOW_SHAPE_POINTER, nullptr));
+            Uint8 r, g, b, emptyAlpha = 255, headerAlpha = 0;
+            if (shape) {
+                SDL_ReadSurfacePixel(shape, static_cast<int>(200 * scale), static_cast<int>(150 * scale), &r, &g, &b, &emptyAlpha);
+                SDL_ReadSurfacePixel(shape, static_cast<int>(50 * scale), static_cast<int>(20 * scale), &r, &g, &b, &headerAlpha);
+            }
+            ok &= check(shape && !emptyAlpha && headerAlpha == 255, "its input shape is the page's alpha: %d, %d", emptyAlpha, headerAlpha);
+        }
+#endif
+    }
 
     std::printf(ok ? "PASS\n" : "FAILED\n");
     return ok ? 0 : 1;

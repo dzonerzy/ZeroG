@@ -39,8 +39,10 @@ Engine features of roadmap phases 3 and 4:
   draws no menu; without the callback none appears. Before, right clicks
   showed nothing either.
 - Windows: `zg_window_config.transparent` (the page's transparent parts show
-  what is behind the window); frameless windows move by the page's regions
-  marked `--zg-app-region: drag` and resize by their edges.
+  what is behind the window) and `click_through` (clicks there go behind it;
+  Windows and X11, at the cost of a CPU copy of each frame); frameless
+  windows move by the page's regions marked `--zg-app-region: drag` and
+  resize by their edges.
 - Drag and drop: `zg_view_drag` for drags from the host (files, text, URLs);
   window mode takes drops on the window; drags in the page (draggable elements,
   links, images, selections) and selecting text by dragging the mouse work.

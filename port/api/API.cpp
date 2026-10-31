@@ -1885,7 +1885,7 @@ zg_window* zg_window_create(zg_context* context, const zg_window_config* configu
         return nullptr;
     auto config = copyConfig(configuration);
     IntSize size { static_cast<int>(config.width ? config.width : 1024), static_cast<int>(config.height ? config.height : 768) };
-    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, true, context->session, !!config.transparent });
+    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, true, context->session, !!config.transparent, !!config.click_through });
     if (!window) {
         fail(ZG_ERROR_GPU, makeString("cannot create the window: "_s, Window::lastError()));
         return nullptr;
