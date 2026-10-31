@@ -137,13 +137,43 @@ vcpkg_copy_pdbs()
 vcpkg_fixup_pkgconfig()
 
 file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/usage" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}")
+# The licenses of the code SDL bundles, not that code: upstream's port lists
+# stb_image.h and the OpenGL ES headers whole, which puts thousands of lines of C
+# into the copyright file (and into THIRD_PARTY_NOTICES.txt). stb_image's
+# license is the section at the end of its header; the Khronos headers carry
+# an SPDX notice.
+file(READ "${SOURCE_PATH}/src/video/stb_image.h" _zerog_stb)
+string(FIND "${_zerog_stb}" "This software is available under 2 licenses" _zerog_stb_at)
+string(SUBSTRING "${_zerog_stb}" ${_zerog_stb_at} -1 _zerog_stb_license)
+string(REPLACE "*/" "" _zerog_stb_license "${_zerog_stb_license}")
+file(WRITE "${CURRENT_BUILDTREES_DIR}/stb_image-license.txt" "${_zerog_stb_license}")
+file(WRITE "${CURRENT_BUILDTREES_DIR}/khronos-license.txt"
+"Copyright 2013-2020 The Khronos Group Inc.
+SPDX-License-Identifier: MIT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the \"Software\"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+")
 vcpkg_install_copyright(
     FILE_LIST
         "${SOURCE_PATH}/LICENSE.txt"
         "${SOURCE_PATH}/src/hidapi/LICENSE-bsd.txt"
-        "${SOURCE_PATH}/src/video/stb_image.h"
+        "${CURRENT_BUILDTREES_DIR}/stb_image-license.txt"
         "${SOURCE_PATH}/src/video/yuv2rgb/LICENSE"
-        "${SOURCE_PATH}/include/SDL3/SDL_opengles2_gl2.h"
-        "${SOURCE_PATH}/include/SDL3/SDL_opengles2_gl2platform.h"
-    COMMENT "SDL_opengles2_gl2platform.h is licensed under Apache-2.0; see https://www.apache.org/licenses/LICENSE-2.0."
+        "${CURRENT_BUILDTREES_DIR}/khronos-license.txt"
+    COMMENT "stb_image-license.txt is stb_image.h's (src/video), khronos-license.txt SDL_opengles2_gl2.h's; SDL_opengles2_gl2platform.h is licensed under Apache-2.0, see https://www.apache.org/licenses/LICENSE-2.0."
 )
