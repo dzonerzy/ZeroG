@@ -80,6 +80,9 @@ set(ZeroGStorageTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
 set(ZeroGStorageTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGStorageTest)
 WEBKIT_EXECUTABLE(ZeroGStorageTest)
+if (ZEROG_FULL_WEB)
+    target_compile_definitions(ZeroGStorageTest PRIVATE ZEROG_FULL_WEB=1)
+endif ()
 
 # The clipboard, the file chooser and drag and drop.
 set(ZeroGHostTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/host_test.c)

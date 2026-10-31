@@ -50,7 +50,7 @@ run "C API" xvfb-run -a "$bin/ZeroGAPITest"
 run "C API without a display" "$bin/ZeroGAPITest" --no-window
 run "value conversions" "$bin/ZeroGValuesTest"
 run "scripts, bytes, references and classes" "$bin/ZeroGBindingsTest"
-run "localStorage, sessionStorage and IndexedDB" "$bin/ZeroGStorageTest"
+run "localStorage, sessionStorage, IndexedDB and the Cache API" "$bin/ZeroGStorageTest"
 run "clipboard, file chooser, drag and drop" "$bin/ZeroGHostTest"
 run "Web Inspector (dev and debug builds)" "$bin/ZeroGInspector"
 run "create and destroy cycles" xvfb-run -a "$bin/ZeroGLifecycleTest"

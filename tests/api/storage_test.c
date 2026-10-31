@@ -72,6 +72,11 @@ static int exists(const char *path)
 
 static char dataDir[512], otherDir[512], ephemeralDir[512];
 
+/* Reads the Cache API from a dedicated worker. */
+static const char workerScript[] =
+    "caches.match('https://example.com/data.json').then(r => r ? r.text() : 'missing')"
+    "  .then(t => postMessage(t), e => postMessage('error ' + e));";
+
 static zg_context *createContext(const char *directory, int ephemeral)
 {
     zg_context_config config = { sizeof config };
@@ -82,6 +87,7 @@ static zg_context *createContext(const char *directory, int ephemeral)
     context = zg_context_create(runtime, &config);
     /* app:// with files: a page origin of the context's own, trusted. */
     zg_context_add_file(context, "app", "/index.html", "<!DOCTYPE html><title>storage</title>", 37, "text/html", NULL, NULL);
+    zg_context_add_file(context, "app", "/worker.js", workerScript, strlen(workerScript), "text/javascript", NULL, NULL);
     return context;
 }
 
@@ -125,6 +131,20 @@ static const char idbGet[] =
     "      window.idbDone = v ? [v.text, v.when instanceof Date && v.when.getTime(), v.list.join(), v.bytes instanceof Uint8Array && v.bytes.join()].join('|') : 'missing'; };"
     "    g.onerror = () => window.idbDone = 'get failed: ' + g.error; }; })(); 0";
 
+/* The Cache API (standard, dev and debug profiles). Requests are http(s) URLs,
+ * as the API requires; any page origin may store them. */
+static const char cachePut[] =
+    "window.cacheDone = null;"
+    "caches.open('v1').then(c => c.put('https://example.com/data.json', new Response('{\"n\":1}', { headers: { 'Content-Type': 'application/json' } })))"
+    "  .then(() => caches.open('v2')).then(() => caches.keys())"
+    "  .then(k => window.cacheDone = k.join()).catch(e => window.cacheDone = 'error ' + e); 0";
+
+static const char cacheGet[] =
+    "window.cacheDone = null;"
+    "caches.match('https://example.com/data.json')"
+    "  .then(r => r ? r.text().then(t => r.headers.get('content-type') + ' ' + t) : 'missing')"
+    "  .then(v => window.cacheDone = v).catch(e => window.cacheDone = 'error ' + e); 0";
+
 static void tempDirectory(char *out, size_t size, const char *name)
 {
     const char *base = getenv("TEMP");
@@ -162,6 +182,19 @@ int main(void)
         "and has a quota");
     evaluate(view, idbPut);
     CHECK(waitFor(view, "window.idbDone !== null") && !strcmp(evaluate(view, "idbDone"), "\"stored\""), "IndexedDB stores a value: %s", evaluate(view, "idbDone"));
+#if defined(ZEROG_FULL_WEB)
+    evaluate(view, "caches.delete('v1').then(() => caches.delete('v2')).then(() => window.cleared = true); 0");
+    waitFor(view, "window.cleared === true");
+    evaluate(view, cachePut);
+    CHECK(waitFor(view, "window.cacheDone !== null") && !strcmp(evaluate(view, "cacheDone"), "\"v1,v2\""), "the Cache API stores a response, caches.keys() lists the caches: %s", evaluate(view, "cacheDone"));
+    evaluate(view, cacheGet);
+    CHECK(waitFor(view, "window.cacheDone !== null") && !strcmp(evaluate(view, "cacheDone"), "\"application/json {\\\"n\\\":1}\""), "caches.match() finds it, headers and body: %s", evaluate(view, "cacheDone"));
+    /* A worker of the page sees the same caches. */
+    evaluate(view, "window.cacheDone = null; new Worker('/worker.js').onmessage = e => window.cacheDone = e.data; 0");
+    CHECK(waitFor(view, "window.cacheDone !== null") && !strcmp(evaluate(view, "cacheDone"), "\"{\\\"n\\\":1}\""), "and a worker reads it: %s", evaluate(view, "cacheDone"));
+#else
+    CHECK(isTrue(view, "typeof caches === 'undefined'"), "the minimal profile has no Cache API");
+#endif
 
     /* Another view of the context: shares localStorage, gets storage events, has its own sessionStorage. */
     second = openView(context, "app://localhost/");
@@ -188,6 +221,12 @@ int main(void)
     CHECK(isTrue(view, "sessionStorage.length === 0"), "sessionStorage does not");
     evaluate(view, idbGet);
     CHECK(waitFor(view, "window.idbDone !== null") && !strcmp(evaluate(view, "idbDone"), "\"h\xc3\xa9llo|0|1,2,3|7,8\""), "IndexedDB persists across contexts: %s", evaluate(view, "idbDone"));
+#if defined(ZEROG_FULL_WEB)
+    evaluate(view, cacheGet);
+    CHECK(waitFor(view, "window.cacheDone !== null") && !strcmp(evaluate(view, "cacheDone"), "\"application/json {\\\"n\\\":1}\""), "the Cache API persists across contexts: %s", evaluate(view, "cacheDone"));
+    evaluate(view, "window.cacheDone = null; caches.open('v1').then(c => c.delete('https://example.com/data.json')).then(d => caches.delete('v2').then(() => caches.keys()).then(k => window.cacheDone = d + ' ' + k.join())); 0");
+    CHECK(waitFor(view, "window.cacheDone !== null") && !strcmp(evaluate(view, "cacheDone"), "\"true v1\""), "a response and a cache are deleted: %s", evaluate(view, "cacheDone"));
+#endif
     zg_view_destroy(view);
 
     /* Another origin of the same context has storage of its own. */
@@ -224,6 +263,10 @@ int main(void)
     CHECK(isTrue(view, "localStorage.getItem('gone') === null"), "and leaves nothing for the next context");
     evaluate(view, idbGet);
     CHECK(waitFor(view, "window.idbDone !== null") && !strcmp(evaluate(view, "idbDone"), "\"missing\""), "in IndexedDB either: %s", evaluate(view, "idbDone"));
+#if defined(ZEROG_FULL_WEB)
+    evaluate(view, cacheGet);
+    CHECK(waitFor(view, "window.cacheDone !== null") && !strcmp(evaluate(view, "cacheDone"), "\"missing\""), "nor in the Cache API: %s", evaluate(view, "cacheDone"));
+#endif
     zg_view_destroy(view);
     closeContext(context);
 

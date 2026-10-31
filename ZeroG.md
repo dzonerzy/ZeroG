@@ -293,6 +293,10 @@ Il layer di embedding implementa il caricamento: `app://` e gli schemi custom ri
 
 La cache su disco di WebKit vive nel network process di WebKit2, quindi non è disponibile. Il motore ha una cache su disco propria (`loader/HTTPCache`) accanto a quella in memoria di WebCore: per sessione nella directory dati (nessuna nei contesti effimeri), con limite configurabile (`zg_context_config.http_cache_limit`), freschezza e validazione HTTP (max-age, ETag, Last-Modified, `Vary`), eviction dei meno usati.
 
+### Cache API
+
+Anche la Cache API (`caches`, usata dalle pagine e dai worker) in WebKit2 vive nel network process. Nei profili standard, dev e debug il motore ha uno storage proprio (`storage/CacheStorageZeroG`) sul thread principale: un file per origine in `<data_dir>/CacheStorage/`, riscritto per intero a ogni modifica su una WorkQueue, nessun file nei contesti effimeri. Il matching segue `DOMCacheEngine::queryCacheMatch` (con `Vary`), le risposte opache rispettano la Cross-Origin-Resource-Policy, la quota è di 512 MB per origine. Nel profilo minimal `caches` non esiste.
+
 ### Schema custom `app://`
 
 - Gli asset del frontend (HTML, JS, CSS, immagini, font) sono incorporati nel binario come archivio compresso, generato a compile time.
@@ -491,7 +495,8 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | libdrm, GBM | Togliere | DMA-BUF tra processi | Inutili per il trasporto tra processi; per la superficie Vulkan su Linux GBM e le ioctl DRM si caricano a runtime, senza dipendenza di build |
 | libxslt | Togliere | XSLT | `ENABLE_XSLT=OFF` |
 | lcms2 | Togliere | Profili colore ICC | Skia gestisce gli spazi colore |
-| libavif, libjxl | Togliere | AVIF e JPEG XL | Da riattivare nel profilo standard (dav1d c'è già, per i video AV1) |
+| libavif | Togliere | AVIF | Da riattivare nel profilo standard (dav1d c'è già, per i video AV1) |
+| libjxl | Togliere | JPEG XL | Escluso: poco usato sul web (Chrome e Firefox non lo mostrano di default), e libjxl porta con sé highway e lcms2, circa 2 MB |
 | libhyphen | Togliere | `hyphens: auto` | — |
 | enchant | Togliere | Controllo ortografico | — |
 | libmanette | Togliere | Gamepad API | — |
@@ -517,9 +522,11 @@ Una dipendenza resta solo se soddisfa tutte e tre le condizioni:
 | Encrypted Media | `ENABLE_ENCRYPTED_MEDIA` | No | No |
 | Gamepad | `ENABLE_GAMEPAD` | No | No |
 | Sintesi vocale | `ENABLE_SPEECH_SYNTHESIS` | No | No |
-| Service worker | `ENABLE_SERVICE_WORKER` | No | Da valutare |
+| Cache API | `CacheAPIEnabled` (impostazione) | No | Sì |
+| Service worker | `ENABLE_SERVICE_WORKER` | No | Previsti (oggi spenti) |
 | Web Inspector remoto | `ENABLE_REMOTE_INSPECTOR` | No | Solo nei profili dev e debug |
-| AVIF e JPEG XL | `USE_AVIF`, `USE_JPEGXL` | No | Previsti (oggi spenti) |
+| AVIF | `USE_AVIF` | No | Previsto (oggi spento) |
+| JPEG XL | `USE_JPEGXL` | No | No |
 | WOFF2 | `USE_WOFF2` | Sì | Sì |
 
 I nomi dei flag vanno verificati sulla revisione scelta: cambiano tra versioni, e alcuni sono `ENABLE_` mentre altri sono `USE_`.
@@ -780,8 +787,10 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 * [ ] Integrazione con il crash reporter dell'host: quali supportare ufficialmente?
 
 - [x] Backend WebSocket nel single-process: deciso e fatto, implementazione nel layer di embedding sopra curl.
-- [ ] Service worker: da valutare per il profilo standard.
-- [ ] AVIF e JPEG XL nel profilo standard (la tabella delle funzioni li prevede accesi, oggi sono spenti ovunque).
+- [x] Cache API: decisa e fatta nei profili standard, dev e debug, con uno storage proprio nel layer di embedding; spenta in minimal.
+- [ ] Service worker: decisi per i profili standard, dev e debug (spenti in minimal), da fare.
+- [ ] AVIF nel profilo standard, dev e debug: da fare (libavif sopra dav1d).
+- [x] JPEG XL: deciso, escluso da tutti i profili (poco diffuso, dipendenze pesanti).
 - [ ] Context menu: callback verso l'host e menu nativo in modalità finestra.
 
 ## Fonti

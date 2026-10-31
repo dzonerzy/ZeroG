@@ -35,6 +35,7 @@
 #include "Download.h"
 #include "HTTPCache.h"
 #include "View.h"
+#include "storage/CacheStorageZeroG.h"
 #include "storage/DatabaseProviderZeroG.h"
 #include "storage/WebStorageNamespaceProvider.h"
 #include <wtf/FileSystem.h>
@@ -420,6 +421,15 @@ StorageNamespaceProvider& Session::storageNamespaceProvider()
             ? String() : FileSystem::pathByAppendingComponent(m_storageDirectory, "LocalStorage"_s));
     }
     return *m_storageNamespaceProvider;
+}
+
+CacheStorageProvider& Session::cacheStorageProvider()
+{
+    if (!m_cacheStorageProvider) {
+        m_cacheStorageProvider = createCacheStorageProvider(m_storageDirectory.isEmpty()
+            ? String() : FileSystem::pathByAppendingComponent(m_storageDirectory, "CacheStorage"_s));
+    }
+    return *m_cacheStorageProvider;
 }
 
 DatabaseProvider& Session::databaseProvider()

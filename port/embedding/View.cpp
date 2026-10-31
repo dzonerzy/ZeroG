@@ -22,6 +22,7 @@
 #include <WebCore/ScrollingCoordinatorTypes.h>
 #include "Embedding.h"
 #include <WebCore/ActivityState.h>
+#include <WebCore/CacheStorageProvider.h>
 #include <WebCore/Chrome.h>
 #include <WebCore/CookieJar.h>
 #include <WebCore/DatabaseProvider.h>
@@ -80,6 +81,9 @@ static Ref<Page> createPage(View& view)
     configuration.userContentProvider = view.session().userContentProvider();
     configuration.storageNamespaceProvider = view.session().storageNamespaceProvider();
     configuration.databaseProvider = view.session().databaseProvider();
+#if defined(ZEROG_FULL_WEB)
+    configuration.cacheStorageProvider = Ref { view.session().cacheStorageProvider() };
+#endif
     configuration.chromeClient = makeUniqueRef<ChromeClientZeroG>(view);
     configuration.editorClient = makeUniqueRef<EditorClientZeroG>();
     configuration.dragClient = makeUnique<DragClientZeroG>();
@@ -125,6 +129,10 @@ View::View(Configuration&& configuration)
     settings.setLoadsImagesAutomatically(true);
     // window.visualViewport (on in WebKit's defaults, off in WebCore's).
     settings.setVisualViewportAPIEnabled(true);
+#if defined(ZEROG_FULL_WEB)
+    // The Cache API (standard, dev and debug profiles; the session's storage).
+    settings.setCacheAPIEnabled(true);
+#endif
     // navigator.clipboard (the clipboard is the application's, PasteboardZeroG.cpp);
     // reading it asks the editor client, which grants it during a user gesture.
     settings.setAsyncClipboardAPIEnabled(true);

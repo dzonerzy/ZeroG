@@ -129,6 +129,8 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE ${_zerog_inspec
 # (WebM) on it; in minimal <video>/<audio> exist and report that they cannot
 # play, and Web Audio and MSE are off (as PlayStation builds).
 set(ZEROG_MEDIA ${_zerog_full_web})
+# The Cache API (port/embedding/storage/CacheStorageZeroG.cpp), off in minimal.
+set(ZEROG_FULL_WEB ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SOURCE PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)

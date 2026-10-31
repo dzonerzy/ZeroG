@@ -13,6 +13,10 @@ Engine features of roadmap phases 3 and 4:
 - Storage: localStorage, sessionStorage and IndexedDB work, kept in `data_dir`
   (`LocalStorage/`, `IndexedDB/`), in memory for ephemeral contexts. No new
   function: before, `window.localStorage` was null and IndexedDB never answered.
+- Cache API (standard, dev and debug profiles): `caches` in pages and workers,
+  kept in `data_dir/CacheStorage/` (in memory for ephemeral contexts), 512 MB
+  per origin. No new function. Before, `caches` was absent (the minimal profile
+  still has none).
 - HTTP disk cache: `zg_context_config.http_cache_limit` (0 = 64 MB, negative =
   none), in `data_dir/HTTPCache/`.
 - Clipboard: `zg_runtime_set_clipboard` connects the application's clipboard

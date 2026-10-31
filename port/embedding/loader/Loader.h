@@ -26,6 +26,7 @@
 
 namespace WebCore {
 class BlobRegistry;
+class CacheStorageProvider;
 class CookieJar;
 class CookieJarDB;
 class CredentialStorage;
@@ -194,6 +195,8 @@ public:
     // Web storage and IndexedDB of the session's pages (port/embedding/storage).
     WebCore::StorageNamespaceProvider& storageNamespaceProvider();
     WebCore::DatabaseProvider& databaseProvider();
+    // The Cache API's storage (storage/CacheStorageZeroG.h), under CacheStorage/.
+    WebCore::CacheStorageProvider& cacheStorageProvider();
     // The HTTP disk cache (HTTPCache.h); null without a directory.
     HTTPCache* httpCache() const { return m_httpCache.get(); }
 
@@ -204,6 +207,7 @@ private:
     const RefPtr<HTTPCache> m_httpCache;
     RefPtr<WebCore::StorageNamespaceProvider> m_storageNamespaceProvider;
     RefPtr<WebCore::DatabaseProvider> m_databaseProvider;
+    RefPtr<WebCore::CacheStorageProvider> m_cacheStorageProvider;
     HashMap<String, Ref<SchemeHandler>> m_schemeHandlers;
     std::unique_ptr<WebCore::CookieJarDB> m_cookieDatabase;
     RefPtr<WebCore::UserContentProvider> m_userContentProvider;

@@ -44,6 +44,7 @@ set(ZeroGEmbedding_SOURCES
     window/Window.cpp
 
     # Web storage and IndexedDB, in process (from WebKitLegacy).
+    storage/CacheStorageZeroG.cpp
     storage/DatabaseProviderZeroG.cpp
     storage/InProcessIDBServer.cpp
     storage/StorageAreaImpl.cpp
@@ -181,6 +182,9 @@ WEBKIT_LIBRARY(ZeroGEmbedding)
 if (ENABLE_WEBINSPECTORUI)
     target_compile_definitions(ZeroGEmbedding PRIVATE ZEROG_INSPECTOR=1)
     add_dependencies(ZeroGEmbedding WebInspectorUI)
+endif ()
+if (ZEROG_FULL_WEB)
+    target_compile_definitions(ZeroGEmbedding PRIVATE ZEROG_FULL_WEB=1)
 endif ()
 if (ZEROG_MEDIA)
     target_compile_definitions(ZeroGEmbedding PRIVATE ZEROG_MEDIA=1)
