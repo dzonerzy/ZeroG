@@ -167,7 +167,11 @@ def configure_options(args):
                      "CMAKE_CXX_COMPILER": (llvm / "clang-cl.exe").as_posix(),
                      "CMAKE_LINKER": (llvm / "lld-link.exe").as_posix(),
                      "CMAKE_AR": (llvm / "llvm-lib.exe").as_posix(),
-                     "PERL_EXECUTABLE": toolchain.perl_exe().as_posix()})
+                     "PERL_EXECUTABLE": toolchain.perl_exe().as_posix(),
+                     # Compiles that see all of WebCore's include directories (the
+                     # embedding layer, its tests) pass Windows' 32K command-line
+                     # limit with a longer build path: arguments in response files.
+                     "CMAKE_NINJA_FORCE_RESPONSE_FILE": "ON"})
     else:
         # The Docker builder sets CC/CXX/AR/RANLIB to zig wrappers (glibc baseline,
         # static libc++); outside it, plain clang.
