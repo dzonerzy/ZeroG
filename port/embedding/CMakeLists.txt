@@ -265,6 +265,10 @@ set(ZeroGCompositing_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUD
 WEBKIT_EXECUTABLE_DECLARE(ZeroGCompositing)
 WEBKIT_EXECUTABLE(ZeroGCompositing)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGCompositing)
+target_compile_definitions(ZeroGCompositing PRIVATE ZEROG_TEST_MEDIA="${ZEROG_SOURCE_DIR}/tests/media")
+if (ZEROG_MEDIA)
+    target_compile_definitions(ZeroGCompositing PRIVATE ZEROG_MEDIA=1)
+endif ()
 
 # Media: <audio> and <video> of each format from app://, against tests/media
 # (the minimal build: nothing plays).
@@ -279,6 +283,15 @@ target_compile_definitions(ZeroGMedia PRIVATE ZEROG_TEST_MEDIA="${ZEROG_SOURCE_D
 if (ZEROG_MEDIA)
     target_compile_definitions(ZeroGMedia PRIVATE ZEROG_MEDIA=1)
 endif ()
+
+# A real site, to see what breaks (a tool, not in the suite: it needs the network).
+set(ZeroGSite_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/site.cpp)
+set(ZeroGSite_LIBRARIES ZeroGEmbedding)
+set(ZeroGSite_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGSite_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGSite)
+WEBKIT_EXECUTABLE(ZeroGSite)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGSite)
 
 # Web Audio: what the graph renders, the FFT, HRTF, decodeAudioData, a live
 # context (the minimal build: no Web Audio).

@@ -156,6 +156,13 @@ public:
 #if ENABLE(WEB_AUDIO)
     WebCore::AudioSourceProvider* audioSourceProvider() final { return &m_audioProvider; }
 #endif
+#if USE(COORDINATED_GRAPHICS)
+    // Composited views: the video is a layer whose frames go to the
+    // compositor as they are, with no repaint of the page.
+    bool supportsAcceleratedRendering() const final { return true; }
+    void setPlatformLayerBufferProxy(Ref<WebCore::CoordinatedPlatformLayerBufferProxy>&&) final;
+    RefPtr<WebCore::CoordinatedPlatformLayerBufferProxy> platformLayerBufferProxy() const final;
+#endif
 
 #if ENABLE(MEDIA_SOURCE)
     // A media source's (MediaSourceZeroG.h).
@@ -217,6 +224,11 @@ private:
     uint64_t m_seekIdentifier { 0 };
 
     RefPtr<WebCore::NativeImage> m_currentFrame;
+#if USE(COORDINATED_GRAPHICS)
+    RefPtr<WebCore::CoordinatedPlatformLayerBufferProxy> m_layerProxy;
+    sk_sp<SkImage> m_currentImage;
+    bool pushToLayer(bool initial);
+#endif
 #if ENABLE(WEB_AUDIO)
     AudioProvider m_audioProvider;
 #endif

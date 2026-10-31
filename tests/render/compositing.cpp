@@ -12,6 +12,8 @@
 #include "View.h"
 #include "graphics/Compositor.h"
 #include "graphics/Surface.h"
+#include "loader/Loader.h"
+#include "loader/MemoryFS.h"
 
 #include <GLES2/gl2.h>
 #include <WebCore/ColorSpace.h>
@@ -30,6 +32,7 @@
 #include <chrono>
 #include <cstdio>
 #include <thread>
+#include <wtf/FileSystem.h>
 #include <wtf/text/WTFString.h>
 
 using namespace WebCore;
@@ -255,6 +258,67 @@ int main()
                 center ? center[0] : -1, center ? center[1] : -1, center ? center[2] : -1);
         }
     }
+
+#if defined(ZEROG_MEDIA)
+    // Video (standard, dev and debug builds): a layer of its own whose frames
+    // go to the compositor as images, without repainting the page.
+    {
+        auto contents = FileSystem::readEntireFile(FileSystem::pathByAppendingComponent(String::fromUTF8(ZEROG_TEST_MEDIA), "red-blue.webm"_s));
+        auto fs = ZeroG::MemoryFS::create();
+        constexpr auto videoPage = "<!DOCTYPE html><body style='margin: 0; background: white'>"
+            "<video id=video src=red-blue.webm muted style='position: absolute; left: 0; top: 0; width: 64px; height: 48px'></video>"
+            "<script>video.onloadeddata = () => window.loaded = true; video.onended = () => window.ended = true;</script>";
+        fs->addFile("/index.html"_s, std::span { byteCast<uint8_t>(videoPage), strlen(videoPage) });
+        fs->addFile("/red-blue.webm"_s, contents ? contents->span() : std::span<const uint8_t> { });
+        auto session = ZeroG::Session::create();
+        session->registerScheme("app"_s, fs.copyRef());
+        ZeroG::View::Configuration configuration;
+        configuration.size = { viewWidth, viewHeight };
+        configuration.surface = ZeroG::createGPUSurface(3);
+        configuration.session = session.copyRef();
+        auto videoView = ZeroG::View::create(WTF::move(configuration));
+        videoView->loadURL(URL { "app://localhost/index.html"_s });
+        auto videoFrame = [&] {
+            ZeroG::runPendingWork();
+            videoView->render(frameTime);
+            frameTime += 16_ms;
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        };
+        for (int i = 0; i < 300 && videoView->evaluateScript("String(window.loaded)"_s) != "true"_s; ++i)
+            videoFrame();
+        for (int i = 0; i < 20; ++i)
+            videoFrame();
+        ok &= check(isComposited(*videoView, "video"), "a video has a composited layer");
+        auto centerColor = [&](Vector<uint8_t>& pixels) -> std::array<int, 3> {
+            if (!acquireAndRead(*videoView, pixels))
+                return { -1, -1, -1 };
+            auto* center = pixels.span().data() + (static_cast<size_t>(24) * viewWidth + 32) * 4;
+            return { center[0], center[1], center[2] };
+        };
+        Vector<uint8_t> pixels;
+        auto red = centerColor(pixels);
+        ok &= check(red[0] > 200 && red[1] < 60 && red[2] < 60, "its first frame is composited: %d,%d,%d", red[0], red[1], red[2]);
+
+        // Playing: frames change ten times a second; the page does not repaint
+        // for them.
+        videoView->evaluateScript("video.play(); 0"_s);
+        for (int i = 0; i < 10; ++i)
+            videoFrame();
+        unsigned updatesBefore = videoView->renderingUpdates();
+        for (int i = 0; i < 60; ++i)
+            videoFrame();
+        unsigned updates = videoView->renderingUpdates() - updatesBefore;
+        ok &= check(updates <= 4, "a second of playback (10 video frames) takes %u rendering updates of the page", updates);
+        for (int i = 0; i < 300 && videoView->evaluateScript("String(window.ended)"_s) != "true"_s; ++i)
+            videoFrame();
+        for (int i = 0; i < 10; ++i)
+            videoFrame();
+        videoView->repaint();
+        videoFrame();
+        auto blue = centerColor(pixels);
+        ok &= check(blue[0] < 60 && blue[1] < 60 && blue[2] > 200, "and its last frame is composited: %d,%d,%d", blue[0], blue[1], blue[2]);
+    }
+#endif
 
     std::printf(ok ? "PASS\n" : "FAILED\n");
     return ok ? 0 : 1;

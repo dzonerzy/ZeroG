@@ -323,6 +323,7 @@ bool View::renderComposited(MonotonicTime frameTime)
         m_compositor->requestFrame();
     }
     if (std::exchange(m_needsRenderingUpdate, false)) {
+        ++m_renderingUpdates;
         page->updateRendering(frameTime);
         if (RefPtr frame = page->localMainFrame(); frame && frame->view())
             m_compositor->flushOverlay({ { }, frame->view()->sizeForVisibleContent(ScrollableArea::VisibleContentRectIncludesScrollbars::Yes) });

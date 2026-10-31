@@ -19,6 +19,10 @@
 #include <WebCore/AudioBus.h>
 #include <WebCore/AudioChannel.h>
 #endif
+#if USE(COORDINATED_GRAPHICS)
+#include "CoordinatedPlatformLayerBufferProxy.h"
+#include "CoordinatedPlatformLayerBufferSkiaImage.h"
+#endif
 #if ENABLE(MEDIA_SOURCE)
 #include "media/MediaSourceZeroG.h"
 #include <WebCore/MediaSourcePrivateClient.h>
@@ -822,11 +826,47 @@ void MediaPlayerPrivateZeroG::updateFrame()
     if (!m_pipeline || !m_info.hasVideo)
         return;
     if (auto image = m_pipeline->takeFrame(currentTime(), m_paused || !m_currentFrame)) {
+#if USE(COORDINATED_GRAPHICS)
+        m_currentImage = image;
+#endif
         m_currentFrame = NativeImage::create(WTF::move(image));
+#if USE(COORDINATED_GRAPHICS)
+        // A composited video's frame goes to its layer; the page is not repainted.
+        if (pushToLayer(false))
+            return;
+#endif
         if (RefPtr player = m_player.get())
             player->repaint();
     }
 }
+
+#if USE(COORDINATED_GRAPHICS)
+void MediaPlayerPrivateZeroG::setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&& proxy)
+{
+    m_layerProxy = WTF::move(proxy);
+    pushToLayer(true);
+}
+
+RefPtr<CoordinatedPlatformLayerBufferProxy> MediaPlayerPrivateZeroG::platformLayerBufferProxy() const
+{
+    return m_layerProxy;
+}
+
+bool MediaPlayerPrivateZeroG::pushToLayer(bool initial)
+{
+    RefPtr proxy = m_layerProxy;
+    if (!proxy || !proxy->isValid() || !m_currentImage)
+        return false;
+    auto buffer = CoordinatedPlatformLayerBufferSkiaImage::create(m_currentImage, proxy->threadSafeGrContext());
+    if (!buffer)
+        return false;
+    if (initial)
+        proxy->setInitialDisplayBuffer(WTF::move(buffer));
+    else
+        proxy->setDisplayBuffer(WTF::move(buffer));
+    return true;
+}
+#endif
 
 void MediaPlayerPrivateZeroG::tick()
 {

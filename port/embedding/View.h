@@ -204,6 +204,8 @@ public:
     void setNeedsRenderingUpdate() { m_needsRenderingUpdate = true; }
     // An animation or requestAnimationFrame callback waits for the next frame.
     bool hasPendingRenderingUpdate() const { return m_needsRenderingUpdate; }
+    // A composited view's rendering updates so far (tests: what repaints).
+    unsigned renderingUpdates() const { return m_renderingUpdates; }
     bool hasDamage() const { return !m_damage.isEmpty(); }
 
 private:
@@ -229,6 +231,7 @@ private:
     float m_scale { 1 };
     bool m_transparent { false };
     bool m_needsRenderingUpdate { true };
+    unsigned m_renderingUpdates { 0 };
     bool m_forceRepaint { false };
     WebCore::Region m_damage; // logical pixels
     uint64_t m_lastPaintedArea { 0 };

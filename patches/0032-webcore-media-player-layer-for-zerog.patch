@@ -1,0 +1,125 @@
+diff --git a/Source/WebCore/platform/graphics/MediaPlayer.cpp b/Source/WebCore/platform/graphics/MediaPlayer.cpp
+index 1a620c4761..84301ddc5a 100644
+--- a/Source/WebCore/platform/graphics/MediaPlayer.cpp
++++ b/Source/WebCore/platform/graphics/MediaPlayer.cpp
+@@ -83,6 +83,10 @@
+ #endif
+ #endif // USE(GSTREAMER)
+ 
++#if PLATFORM(ZEROG) && USE(COORDINATED_GRAPHICS)
++#include "CoordinatedPlatformLayerBufferProxy.h"
++#endif
++
+ #if USE(MEDIA_FOUNDATION)
+ #include "MediaPlayerPrivateMediaFoundation.h"
+ #endif
+@@ -1824,8 +1828,9 @@ bool MediaPlayer::isGStreamerHolePunchingEnabled()
+ {
+     return protect(client())->isGStreamerHolePunchingEnabled();
+ }
++#endif
+ 
+-#if USE(COORDINATED_GRAPHICS)
++#if (USE(GSTREAMER) || PLATFORM(ZEROG)) && USE(COORDINATED_GRAPHICS)
+ void MediaPlayer::setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&& proxy)
+ {
+     if (m_private)
+@@ -1837,7 +1842,6 @@ RefPtr<CoordinatedPlatformLayerBufferProxy> MediaPlayer::platformLayerBufferProx
+     return m_private ? protect(m_private)->platformLayerBufferProxy() : nullptr;
+ }
+ #endif
+-#endif
+ 
+ String MediaPlayer::languageOfPrimaryAudioTrack() const
+ {
+diff --git a/Source/WebCore/platform/graphics/MediaPlayer.h b/Source/WebCore/platform/graphics/MediaPlayer.h
+index cf427c9b0c..5533720bac 100644
+--- a/Source/WebCore/platform/graphics/MediaPlayer.h
++++ b/Source/WebCore/platform/graphics/MediaPlayer.h
+@@ -109,7 +109,7 @@ class TextTrackRepresentation;
+ class VideoFrame;
+ class VideoTrackPrivate;
+ 
+-#if USE(GSTREAMER) && USE(COORDINATED_GRAPHICS)
++#if (USE(GSTREAMER) || PLATFORM(ZEROG)) && USE(COORDINATED_GRAPHICS)
+ class CoordinatedPlatformLayerBufferProxy;
+ #endif
+ 
+@@ -694,10 +694,10 @@ public:
+ #if USE(GSTREAMER)
+     void simulateAudioInterruption();
+     bool isGStreamerHolePunchingEnabled();
+-#if USE(COORDINATED_GRAPHICS)
++#endif
++#if (USE(GSTREAMER) || PLATFORM(ZEROG)) && USE(COORDINATED_GRAPHICS)
+     void setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&&);
+     RefPtr<CoordinatedPlatformLayerBufferProxy> platformLayerBufferProxy() const;
+-#endif
+ #endif
+ 
+     String languageOfPrimaryAudioTrack() const;
+diff --git a/Source/WebCore/platform/graphics/MediaPlayerPrivate.cpp b/Source/WebCore/platform/graphics/MediaPlayerPrivate.cpp
+index 3548ef5157..52e01ca975 100644
+--- a/Source/WebCore/platform/graphics/MediaPlayerPrivate.cpp
++++ b/Source/WebCore/platform/graphics/MediaPlayerPrivate.cpp
+@@ -35,7 +35,7 @@
+ #include "VideoFrameMetadata.h"
+ #include <wtf/NativePromise.h>
+ 
+-#if USE(GSTREAMER) && USE(COORDINATED_GRAPHICS)
++#if (USE(GSTREAMER) || PLATFORM(ZEROG)) && USE(COORDINATED_GRAPHICS)
+ #include "CoordinatedPlatformLayerBufferProxy.h"
+ #endif
+ 
+@@ -122,7 +122,7 @@ OptionSet<MediaPlaybackTargetType> MediaPlayerPrivateInterface::supportedPlaybac
+ }
+ #endif
+ 
+-#if USE(GSTREAMER) && USE(COORDINATED_GRAPHICS)
++#if (USE(GSTREAMER) || PLATFORM(ZEROG)) && USE(COORDINATED_GRAPHICS)
+ void MediaPlayerPrivateInterface::setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&&)
+ {
+ }
+diff --git a/Source/WebCore/platform/graphics/MediaPlayerPrivate.h b/Source/WebCore/platform/graphics/MediaPlayerPrivate.h
+index 6cc48cff5d..e95668dee9 100644
+--- a/Source/WebCore/platform/graphics/MediaPlayerPrivate.h
++++ b/Source/WebCore/platform/graphics/MediaPlayerPrivate.h
+@@ -297,10 +297,10 @@ public:
+ 
+ #if USE(GSTREAMER)
+     virtual void simulateAudioInterruption() { }
+-#if USE(COORDINATED_GRAPHICS)
++#endif
++#if (USE(GSTREAMER) || PLATFORM(ZEROG)) && USE(COORDINATED_GRAPHICS)
+     virtual void setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&&);
+     virtual RefPtr<CoordinatedPlatformLayerBufferProxy> platformLayerBufferProxy() const;
+-#endif
+ #endif
+ 
+     virtual String languageOfPrimaryAudioTrack() const { return emptyString(); }
+diff --git a/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.cpp b/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.cpp
+index 3aa2b089b1..5a2bbeca97 100644
+--- a/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.cpp
++++ b/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.cpp
+@@ -402,7 +402,7 @@ void GraphicsLayerCoordinated::setContentsNeedsDisplayInRect(const FloatRect& re
+     noteLayerPropertyChanged(Change::ContentsBufferNeedsDisplay, ScheduleFlush::Yes);
+ }
+ 
+-#if ENABLE(VIDEO) && USE(GSTREAMER)
++#if ENABLE(VIDEO) && (USE(GSTREAMER) || PLATFORM(ZEROG))
+ void GraphicsLayerCoordinated::setContentsToMediaPlayer(MediaPlayer* player, ContentsLayerPurpose)
+ {
+     // Never try to get or set the proxy on a player that doesn't support accelerated rendering (null media player).
+diff --git a/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.h b/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.h
+index 9ace89d8ac..ba2e015864 100644
+--- a/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.h
++++ b/Source/WebCore/platform/graphics/coordinated/GraphicsLayerCoordinated.h
+@@ -89,7 +89,7 @@ private:
+     void setContentsClipShapePath(const Path&) override;
+     void setContentsNeedsDisplay() override;
+     void setContentsNeedsDisplayInRect(const FloatRect&) override;
+-#if ENABLE(VIDEO) && USE(GSTREAMER)
++#if ENABLE(VIDEO) && (USE(GSTREAMER) || PLATFORM(ZEROG))
+     void setContentsToMediaPlayer(MediaPlayer*, ContentsLayerPurpose) override;
+ #endif
+     void setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose) override;

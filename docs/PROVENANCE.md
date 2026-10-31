@@ -84,6 +84,8 @@ under `patches/` is listed here when it is created.
 | `port/overlay/Source/WebCore/platform/audio/zerog/FFTFrameZeroG.cpp` | Original; the packed spectrum layout follows `FFTFrame.h` and the Cocoa port's `FFTFrameMac.cpp` (vDSP's convention), the transform is pffft from the sysroot | BSD-2-Clause |
 | `port/embedding/media/MediaFoundationFile.cpp` | Original; Media Foundation's interfaces and constants are the Windows SDK's public API | BSD-2-Clause |
 | `port/embedding/media/{MediaSourceZeroG,WebMStream}.*`, `port/embedding/media/Decoders.h` | Original; the media source and source buffer follow WebCore's mock implementation (`platform/mock/mediasource`), the WebM byte stream is parsed with libwebm's `webm_parser` | BSD-2-Clause |
+| `patches/0032-webcore-media-player-layer-for-zerog.patch` | Original, modifies `MediaPlayer.{h,cpp}`, `MediaPlayerPrivate.{h,cpp}` and `GraphicsLayerCoordinated.{h,cpp}` (a media player's layer buffer for ZeroG, as GStreamer has) | Same as the modified files; upstream candidate |
+| `tests/render/site.cpp` | Original | BSD-2-Clause |
 | `patches/0031-webcore-media-source-for-zerog.patch` | Original, modifies `MediaPlayer.h` (the ZeroG media source's platform type) | Same as the modified file; upstream candidate |
 | `patches/0030-webcore-fft-frame-for-zerog.patch` | Original, modifies `FFTFrame.h` (pffft's setup and buffers in a ZeroG `FFTFrame`) | Same as the modified file; upstream candidate |
 | `port/embedding/media/WebAudioZeroG.cpp`, `port/embedding/media/EmbedFile.cmake`, `tests/render/webaudio.cpp` | Original; the destination follows the Cocoa port's `AudioDestinationCocoa` over `AudioDestinationResampler` | BSD-2-Clause |
