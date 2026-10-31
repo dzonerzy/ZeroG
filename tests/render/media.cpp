@@ -15,6 +15,9 @@
 #include "View.h"
 #include "loader/Loader.h"
 #include "loader/MemoryFS.h"
+#if defined(ZEROG_MEDIA) && OS(WINDOWS)
+#include "media/MediaFoundation.h"
+#endif
 
 #include <WebCore/ColorSpace.h>
 #include <WebCore/ImageBuffer.h>
@@ -232,6 +235,10 @@ int main()
 
     evaluate("video.play(); 0"_s);
     ok &= check(waitFor(5_s, [&] { return evaluate("video.dataset.ended || ''"_s) == "1"_s; }), "it plays to its end (at %s s)", evaluate("String(video.currentTime)"_s).utf8().data());
+    // getVideoPlaybackQuality(): the frames it showed (a seek skips some).
+    auto totalFrames = evaluate("String(video.getVideoPlaybackQuality().totalVideoFrames)"_s).toDouble();
+    auto droppedFrames = evaluate("String(video.getVideoPlaybackQuality().droppedVideoFrames)"_s).toDouble();
+    ok &= check(totalFrames >= 5 && droppedFrames <= totalFrames, "getVideoPlaybackQuality counts its frames: %.0f, %.0f dropped", totalFrames, droppedFrames);
 
     // VP8 and AV1.
     for (auto [name, expected] : { std::pair { "green-vp8.webm"_s, std::array<int, 3> { 0, 128, 0 } }, std::pair { "yellow-av1.webm"_s, std::array<int, 3> { 255, 255, 0 } } }) {
@@ -360,6 +367,13 @@ int main()
 #if OS(WINDOWS)
     // H.264 with B-frames (decode order is not presentation order) and AAC.
     checkSourceVideo("magenta-cyan-frag.mp4"_s, "video/mp4; codecs=\"avc1.4D401E, mp4a.40.2\""_s, "64x36"_s, { 255, 0, 255 }, { 0, 255, 255 });
+    // With a GPU that decodes H.264, those frames came from it (DXVA), read
+    // back with the right colours (the checks above).
+    auto hardwareFrames = ZeroG::Media::hardwareDecodedFrames();
+    if (ZeroG::Media::mediaFoundationDeviceManager())
+        ok &= check(hardwareFrames > 0, "H.264 is decoded by the GPU (%llu frames)", static_cast<unsigned long long>(hardwareFrames));
+    else
+        std::printf("     no GPU device for video decoding: H.264 decoded on the CPU\n");
 #endif
 
     // Two source buffers: VP8 video from one file, Vorbis from another.

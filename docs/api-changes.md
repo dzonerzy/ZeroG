@@ -63,6 +63,9 @@ Engine features of roadmap phases 3 and 4:
   `canPlayType` says so. MP4 files with VP9, AV1 or Opus play everywhere.
 - `<video controls>` shows WebKit's native controls with their icons (before,
   the buttons had none).
+- GPU views: 2D canvases draw on the GPU, and video frames reach the GPU as YUV
+  planes converted there. On Windows H.264 decodes on the GPU (DXVA) where it
+  can. `getVideoPlaybackQuality()` reports shown and dropped frames.
 - Media Source Extensions (standard, dev and debug profiles): `MediaSource` and
   `SourceBuffer` for WebM (VP8, VP9, AV1, Opus, Vorbis) and fragmented MP4 (VP9,
   AV1, Opus; on Windows H.264 and AAC through Media Foundation), several buffers

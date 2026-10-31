@@ -11,12 +11,22 @@
 
 struct IMFMediaType;
 struct IMFSample;
+struct IUnknown;
 
 namespace ZeroG::Media {
 
 // MFStartup, once for the process; false where Windows has no Media
 // Foundation ("N" editions).
 bool startMediaFoundation();
+
+// Hardware decoding (DXVA): one D3D11 device with video support for the
+// process, behind a DXGI device manager the decoders share. Null without a
+// GPU that decodes video (the decoders then run on the CPU).
+IUnknown* mediaFoundationDeviceManager();
+// Frames that came out of a hardware decoder (on the GPU), so far (tests).
+uint64_t hardwareDecodedFrames();
+// Counts a decoded sample if it lives on the GPU.
+void noteDecodedSample(IMFSample*);
 
 // Where the picture is in a decoder's NV12 buffers, and how to convert it.
 struct NV12Layout {

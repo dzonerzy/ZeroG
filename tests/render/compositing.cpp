@@ -14,6 +14,9 @@
 #include "graphics/Surface.h"
 #include "loader/Loader.h"
 #include "loader/MemoryFS.h"
+#if defined(ZEROG_MEDIA)
+#include "media/MediaFile.h"
+#endif
 
 #include <GLES2/gl2.h>
 #include <WebCore/ColorSpace.h>
@@ -259,6 +262,37 @@ int main()
         }
     }
 
+    // A 2D canvas draws on the GPU in a GPU view: a layer of its own, composited,
+    // and readable back.
+    {
+        auto canvasView = ZeroG::View::create({ { viewWidth, viewHeight }, 1, false, true, ZeroG::createGPUSurface(3) });
+        canvasView->loadHTML("<!DOCTYPE html><body style='margin: 0; background: white'><canvas id=canvas width=300 height=180></canvas><script>"
+            "const context = canvas.getContext('2d');"
+            "context.fillStyle = 'rgb(0, 160, 0)'; context.fillRect(0, 0, 300, 180);"
+            "context.fillStyle = 'rgb(0, 0, 200)'; context.fillRect(100, 60, 100, 60);"
+            "window.readBack = Array.from(context.getImageData(150, 90, 1, 1).data).slice(0, 3).join(',');"
+            "</script>"_s);
+        for (int i = 0; i < 20; ++i) {
+            ZeroG::runPendingWork();
+            canvasView->render(frameTime);
+            frameTime += 16_ms;
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        ok &= check(isComposited(*canvasView, "canvas"), "an accelerated 2D canvas has a composited layer");
+        auto readBack = canvasView->evaluateScript("String(window.readBack)"_s);
+        ok &= check(readBack == "0,0,200"_s, "getImageData reads its pixels back: %s", readBack.utf8().data());
+        Vector<uint8_t> pixels;
+        bool read = acquireAndRead(*canvasView, pixels);
+        auto at = [&](int x, int y) -> std::array<int, 3> {
+            auto* pixel = pixels.span().data() + (static_cast<size_t>(y) * viewWidth + x) * 4;
+            return { pixel[0], pixel[1], pixel[2] };
+        };
+        auto green = read ? at(30, 30) : std::array<int, 3> { -1, -1, -1 };
+        auto blue = read ? at(150, 90) : std::array<int, 3> { -1, -1, -1 };
+        ok &= check(green[0] < 30 && green[1] > 130 && green[2] < 30 && blue[0] < 30 && blue[1] < 30 && blue[2] > 170, "its drawing is composited: %d,%d,%d and %d,%d,%d",
+            green[0], green[1], green[2], blue[0], blue[1], blue[2]);
+    }
+
 #if defined(ZEROG_MEDIA)
     // Video (standard, dev and debug builds): a layer of its own whose frames
     // go to the compositor as images, without repainting the page.
@@ -309,6 +343,9 @@ int main()
             videoFrame();
         unsigned updates = videoView->renderingUpdates() - updatesBefore;
         ok &= check(updates <= 4, "a second of playback (10 video frames) takes %u rendering updates of the page", updates);
+        // Its frames stay YUV: the compositor's GPU converts them.
+        auto yuvFrames = ZeroG::Media::framesKeptAsYUV();
+        ok &= check(yuvFrames >= 5, "they reach the GPU as YUV planes, converted there (%llu frames)", static_cast<unsigned long long>(yuvFrames));
         for (int i = 0; i < 300 && videoView->evaluateScript("String(window.ended)"_s) != "true"_s; ++i)
             videoFrame();
         for (int i = 0; i < 10; ++i)

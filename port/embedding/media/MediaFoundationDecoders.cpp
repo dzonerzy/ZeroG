@@ -12,6 +12,9 @@
 #if ENABLE(VIDEO) && defined(ZEROG_MEDIA) && OS(WINDOWS)
 
 #include "media/Decoders.h"
+#include <atomic>
+#include <d3d11.h>
+#include <d3d10.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mftransform.h>
@@ -26,6 +29,47 @@ bool startMediaFoundation()
     // Once for the process; never shut down (the codecs stay loaded).
     static bool started = SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_LITE));
     return started;
+}
+
+static std::atomic<uint64_t> s_hardwareFrames;
+
+IUnknown* mediaFoundationDeviceManager()
+{
+    static IMFDXGIDeviceManager* manager = [] () -> IMFDXGIDeviceManager* {
+        if (!startMediaFoundation())
+            return nullptr;
+        ComPtr<ID3D11Device> device;
+        static constexpr D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_9_3 };
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, levels, std::size(levels), D3D11_SDK_VERSION, &device, nullptr, nullptr)))
+            return nullptr;
+        // Decoders on several threads use it.
+        ComPtr<ID3D10Multithread> multithread;
+        if (SUCCEEDED(device.As(&multithread)))
+            multithread->SetMultithreadProtected(TRUE);
+        UINT token = 0;
+        IMFDXGIDeviceManager* created = nullptr;
+        if (FAILED(MFCreateDXGIDeviceManager(&token, &created)))
+            return nullptr;
+        if (FAILED(created->ResetDevice(device.Get(), token))) {
+            created->Release();
+            return nullptr;
+        }
+        return created; // kept for the process
+    }();
+    return manager;
+}
+
+uint64_t hardwareDecodedFrames()
+{
+    return s_hardwareFrames;
+}
+
+void noteDecodedSample(IMFSample* sample)
+{
+    ComPtr<IMFMediaBuffer> buffer;
+    ComPtr<IMFDXGIBuffer> surface;
+    if (sample && SUCCEEDED(sample->GetBufferByIndex(0, &buffer)) && SUCCEEDED(buffer.As(&surface)))
+        ++s_hardwareFrames;
 }
 
 bool readNV12Layout(IMFMediaType* type, NV12Layout& layout)
@@ -250,6 +294,13 @@ public:
         auto decoder = std::unique_ptr<MediaFoundationH264Decoder>(new MediaFoundationH264Decoder);
         if (!decoder->parseConfiguration(configuration) || !decoder->m_transform.start(MFT_CATEGORY_VIDEO_DECODER, MFMediaType_Video, MFVideoFormat_H264))
             return nullptr;
+        // Hardware decoding (DXVA) where the decoder and the GPU can: frames
+        // come out as GPU surfaces, read back for the pipeline. The decoder
+        // falls back to the CPU by itself for what the GPU does not take.
+        ComPtr<IMFAttributes> attributes;
+        if (auto* manager = mediaFoundationDeviceManager(); manager && SUCCEEDED(decoder->m_transform.get()->GetAttributes(&attributes))
+            && MFGetAttributeUINT32(attributes.Get(), MF_SA_D3D11_AWARE, FALSE))
+            decoder->m_transform.get()->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(manager));
         ComPtr<IMFMediaType> input;
         MFCreateMediaType(&input);
         input->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
@@ -351,6 +402,7 @@ private:
         }
         if (!m_layout.width)
             return;
+        noteDecodedSample(frame);
         LONGLONG time = 0;
         frame->GetSampleTime(&time);
         if (auto image = convertNV12Sample(frame, m_layout))

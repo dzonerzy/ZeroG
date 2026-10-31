@@ -50,12 +50,18 @@ public:
     // a file from bytes() (a media source's stream).
     void setFileOpener(Function<std::unique_ptr<MediaFile>()>&& opener) { m_openFile = WTF::move(opener); }
     void start();
+    // Frames from now on stay YUV for the compositor's GPU to convert (a
+    // composited player), or become RGBA on the decode thread.
+    void setFramesStayYUV(bool stayYUV) { m_framesStayYUV = stayYUV; }
     void stop(); // waits for the thread
     void requestSeek(const MediaTime&, uint64_t identifier);
     // The frame showing at `time` (frames before it are dropped); null when
     // no frame is new. `paused`: the first frame queued shows even if early
     // (after a seek, before playback).
     sk_sp<SkImage> takeFrame(const MediaTime& time, bool paused);
+    // getVideoPlaybackQuality(): frames shown, and those the clock went past.
+    uint32_t shownFrames() const { return m_shownFrames; }
+    uint32_t droppedFrames() const { return m_droppedFrames; }
     // The audio's time once its output has played `played` frames since the
     // last seek.
     MediaTime audioTime(uint64_t played) const;
@@ -69,6 +75,9 @@ private:
     ThreadSafeWeakPtr<MediaPlayerPrivateZeroG> m_player;
     const Ref<MediaBytes> m_bytes;
     Function<std::unique_ptr<MediaFile>()> m_openFile;
+    std::atomic<bool> m_framesStayYUV { false };
+    std::atomic<uint32_t> m_shownFrames { 0 };
+    std::atomic<uint32_t> m_droppedFrames { 0 };
     RefPtr<Thread> m_thread;
     std::unique_ptr<AudioOutput> m_output; // created on the decode thread before "opened"
 
@@ -153,6 +162,7 @@ public:
     void paint(WebCore::GraphicsContext&, const WebCore::FloatRect&) final;
     RefPtr<WebCore::NativeImage> nativeImageForCurrentTime() final;
     WebCore::ColorSpace colorSpace() final;
+    std::optional<WebCore::VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() final;
 #if ENABLE(WEB_AUDIO)
     WebCore::AudioSourceProvider* audioSourceProvider() final { return &m_audioProvider; }
 #endif

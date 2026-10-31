@@ -13,6 +13,7 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SharedBuffer.h>
+#include <WebCore/VideoPlaybackQualityMetrics.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #if ENABLE(WEB_AUDIO)
@@ -251,6 +252,9 @@ sk_sp<SkImage> Pipeline::takeFrame(const MediaTime& time, bool paused)
     Locker locker { m_lock };
     std::optional<DecodedFrame> showing;
     while (!m_frames.empty() && m_frames.front().time <= time) {
+        // A frame the clock went past before it showed is dropped.
+        if (showing)
+            ++m_droppedFrames;
         showing = WTF::move(m_frames.front());
         m_frames.pop_front();
     }
@@ -259,8 +263,10 @@ sk_sp<SkImage> Pipeline::takeFrame(const MediaTime& time, bool paused)
         showing = WTF::move(m_frames.front());
         m_frames.pop_front();
     }
-    if (showing)
+    if (showing) {
+        ++m_shownFrames;
         m_condition.notifyAll(); // room for the next frame
+    }
     return showing ? showing->image : nullptr;
 }
 
@@ -316,6 +322,7 @@ void Pipeline::run()
     bool firstData = false;
     size_t audioAheadFrames = info.sampleRate * audioAheadSeconds;
     for (;;) {
+        setDecodedFramesStayYUV(m_framesStayYUV);
         std::optional<std::pair<MediaTime, uint64_t>> seek;
         bool hasAudio, hasVideo, audioDone, videoDone;
         size_t queuedFrames;
@@ -789,6 +796,20 @@ ColorSpace MediaPlayerPrivateZeroG::colorSpace()
     return ColorSpace::SRGB();
 }
 
+std::optional<VideoPlaybackQualityMetrics> MediaPlayerPrivateZeroG::videoPlaybackQualityMetrics()
+{
+    // Over the current load: every frame that showed or was skipped.
+    VideoPlaybackQualityMetrics metrics;
+    if (m_pipeline) {
+        metrics.droppedVideoFrames = m_pipeline->droppedFrames();
+        metrics.totalVideoFrames = m_pipeline->shownFrames() + metrics.droppedVideoFrames;
+#if USE(COORDINATED_GRAPHICS)
+        metrics.displayCompositedVideoFrames = m_layerProxy ? m_pipeline->shownFrames() : 0;
+#endif
+    }
+    return metrics;
+}
+
 void MediaPlayerPrivateZeroG::didOpen(const MediaInfo& info)
 {
     m_info = info;
@@ -856,6 +877,10 @@ void MediaPlayerPrivateZeroG::updateFrame()
 {
     if (!m_pipeline || !m_info.hasVideo)
         return;
+#if USE(COORDINATED_GRAPHICS)
+    // A composited video's frames go to the GPU as they are decoded, YUV.
+    m_pipeline->setFramesStayYUV(m_layerProxy && m_layerProxy->isValid());
+#endif
     if (auto image = m_pipeline->takeFrame(currentTime(), m_paused || !m_currentFrame)) {
 #if USE(COORDINATED_GRAPHICS)
         m_currentImage = image;

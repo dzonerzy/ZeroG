@@ -218,9 +218,15 @@ public:
             return false;
         }
         ComPtr<IMFAttributes> attributes;
-        MFCreateAttributes(&attributes, 1);
+        MFCreateAttributes(&attributes, 3);
         // Color conversion inside the reader when the decoder's output is not NV12.
         attributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+        // Hardware decoding (DXVA) where the GPU can; the reader falls back to
+        // the CPU decoders by itself.
+        if (auto* manager = mediaFoundationDeviceManager()) {
+            attributes->SetUnknown(MF_SOURCE_READER_D3D_MANAGER, manager);
+            attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+        }
         if (FAILED(MFCreateSourceReaderFromMediaSource(m_source.Get(), attributes.Get(), &m_reader))) {
             error = "the MP4 file could not be read"_s;
             return false;
@@ -286,6 +292,7 @@ public:
                     continue;
                 m_videoSeekTarget = MediaTime::invalidTime();
             }
+            noteDecodedSample(sample.Get());
             if (auto image = convert(sample.Get()))
                 return DecodedFrame { time, WTF::move(image) };
         }

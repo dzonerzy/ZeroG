@@ -2,12 +2,14 @@
 // network). Loads the URL, prints the page's console messages and, every
 // second, the state of its <video> elements; at the end saves a CPU render.
 //
-// Usage: site <url> [seconds=20] [out.png=site.png] [--run <script>]
+// Usage: site <url> [seconds=20] [out.png=site.png] [--run <script>] [--gpu]
 //   --run: evaluated once the page has loaded (to click a button, say)
+//   --gpu: a composited GPU view instead of a CPU one
 
 #include "config.h"
 #include "Embedding.h"
 #include "View.h"
+#include "graphics/Surface.h"
 #include "loader/Loader.h"
 
 #include <WebCore/ImageBuffer.h>
@@ -65,10 +67,13 @@ int main(int argc, char** argv)
     int seconds = 20;
     std::string out = "site.png";
     String script;
+    bool gpu = false;
     int positional = 0;
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--run") && i + 1 < argc)
             script = String::fromUTF8(argv[++i]);
+        else if (!std::strcmp(argv[i], "--gpu"))
+            gpu = true;
         else if (!positional++)
             seconds = std::atoi(argv[i]);
         else
@@ -79,7 +84,11 @@ int main(int argc, char** argv)
     Client client;
     ZeroG::View::Configuration configuration;
     configuration.size = { 1280, 720 };
+    // --gpu: a composited view (layers, video frames as YUV, GPU canvases).
+    if (gpu && ZeroG::initializeGPU())
+        configuration.surface = ZeroG::createGPUSurface(3);
     auto view = ZeroG::View::create(WTF::move(configuration));
+    std::printf("view: %s\n", view->compositor() ? "GPU, composited" : "CPU");
     view->setClient(&client);
     view->loadURL(URL { url });
 

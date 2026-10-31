@@ -96,4 +96,10 @@ sk_sp<SkImage> convertToImage(const YUVPlanes&);
 // and OS decoders give.
 sk_sp<SkImage> convertNV12ToImage(const uint8_t* y, int yStride, const uint8_t* uv, int uvStride, int width, int height, ColorMatrix, bool fullRange);
 
+// Decode thread: whether the next frames stay YUV (8-bit) for the GPU to
+// convert, as for a composited player, or are converted to RGBA here.
+void setDecodedFramesStayYUV(bool);
+// Frames kept as YUV so far (tests).
+uint64_t framesKeptAsYUV();
+
 } // namespace ZeroG::Media

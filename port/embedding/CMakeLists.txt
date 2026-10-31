@@ -119,7 +119,7 @@ if (ZEROG_MEDIA)
         # MP4 (H.264, AAC) through the OS's Media Foundation: files, and MSE's
         # frames through its decoders.
         list(APPEND ZeroGEmbedding_SOURCES media/MediaFoundationDecoders.cpp media/MediaFoundationFile.cpp)
-        list(APPEND ZeroGEmbedding_LIBRARIES mfplat mfreadwrite mfuuid)
+        list(APPEND ZeroGEmbedding_LIBRARIES mfplat mfreadwrite mfuuid d3d11)
     endif ()
     find_package(unofficial-libwebm CONFIG REQUIRED)
     find_package(unofficial-libvpx CONFIG REQUIRED)

@@ -152,6 +152,9 @@ View::View(Configuration&& configuration)
 #if ENABLE(WEBGL)
     settings.setWebGLEnabled(!!m_compositor);
 #endif
+    // 2D canvases draw on the GPU (Skia's Ganesh on the shared GL context) and
+    // are layers of their own, in GPU views; CPU views keep them in memory.
+    settings.setCanvasUsesAcceleratedDrawing(!!m_compositor);
     // Web Audio (off in WebCore's defaults, on in WebKit2's): in the profiles
     // with the media engine (media/WebAudioZeroG.cpp).
 #if ENABLE(WEB_AUDIO)
