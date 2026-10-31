@@ -19,6 +19,7 @@ compiler is clang-cl (upstream dropped MSVC support).
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,7 +37,7 @@ SYSROOT = Path(os.environ.get("ZEROG_SYSROOT", ROOT / "third_party" / "sysroot")
 IS_WINDOWS = sys.platform == "win32"
 TRIPLET = "x64-windows-zerog" if IS_WINDOWS else "x64-linux-zerog"
 
-# Per-profile CMake options (ZeroG.md, "Profili di build"). Only flags that
+# Per-profile CMake options (docs/design/build-system-static-linking.md, "Build profiles"). Only flags that
 # exist for the selected port are passed; the rest arrive with WebCore.
 # WebKit options set here, rather than only as port defaults in OptionsZeroG.cmake,
 # are ones whose default changed: CMake keeps an option's cached value otherwise.
@@ -211,7 +212,7 @@ def cmd_build(args):
         cmd += ["-k", "0"]  # report every failing file in one pass (port bring-up)
     run(cmd, env=build_env())
     elapsed = time.monotonic() - start
-    # Build time and artifact sizes are tracked from the start (ZeroG.md, "Tempi e cache", "Ordine di lavoro" step 4).
+    # Build time and artifact sizes are tracked from the start (docs/design/build-system-static-linking.md, "Times and cache"; docs/design/dependencies.md, "Order of work" step 4).
     libs = sorted(p for p in (out / "lib").glob("*") if p.suffix in (".lib", ".a"))
     report = {"port": args.port, "profile": args.profile, "seconds": round(elapsed),
               "artifacts": {p.name: p.stat().st_size for p in libs}}
@@ -337,30 +338,38 @@ def link_c(args, out, name, sources, includes, libraries, linker="lld", cxx_runt
     exe = out / "bin" / (f"{name}.exe" if IS_WINDOWS else name)
     if IS_WINDOWS:
         crt = "/MT" if args.port == "ZeroG" else "/MD"
-        # ws2_32: JavaScriptCore's remote inspector sockets (dev and debug profiles).
-        system = ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib", "ws2_32.lib"]
         fuse = ["-fuse-ld=lld"] if linker == "lld" else []
-        objects = out / "linktest" / name
+        objects = link_objects(out, name, sources)[0].parent
         objects.mkdir(parents=True, exist_ok=True)
         run(["clang-cl", "/nologo", crt, "/O2", "/DJS_NO_EXPORT", *[f"/D{d}" for d in defines], *fuse, *[f"/I{i}" for i in includes],
-             *sources, f"/Fe{exe}", f"/Fo{objects}\\", "/link", *libraries, *system],
+             *sources, f"/Fe{exe}", f"/Fo{objects}\\", "/link", *libraries, *link_runtime()],
             env=build_env())
     else:
         cc, cxx = os.environ.get("CC", "clang"), os.environ.get("CXX", "clang++")
-        if os.environ.get("ZEROG_ZIG_TARGET"):
-            runtime = ["-lpthread", "-ldl", "-lm"]  # zig links libc++ and compiler-rt statically
-        else:
-            # Everything static except glibc (ZeroG.md, "Cosa resta dinamico a runtime").
-            runtime = ["-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-latomic",
-                       "-Wl,-Bdynamic", "-lpthread", "-ldl", "-lm"]
-        objs = []
-        for src in sources:
-            obj = out / f"{name}-{Path(src).stem}.o"
+        objs = link_objects(out, name, sources)
+        for src, obj in zip(sources, objs):
             run([cc, "-O2", "-DJS_NO_EXPORT", *[f"-D{d}" for d in defines], *[f"-I{i}" for i in includes], "-c", src, "-o", obj])
-            objs.append(obj)
         # cxx_runtime=False links with the C driver: the bundle must bring its own C++ runtime.
-        run([cxx if cxx_runtime else cc, *objs, *libraries, "-o", exe, *runtime])
+        run([cxx if cxx_runtime else cc, *objs, *libraries, "-o", exe, *link_runtime()])
     return exe
+
+
+def link_objects(out, name, sources):
+    """The object files link_c compiles `sources` of program `name` into."""
+    if IS_WINDOWS:
+        return [out / "linktest" / name / f"{Path(src).stem}.obj" for src in sources]
+    return [out / f"{name}-{Path(src).stem}.o" for src in sources]
+
+
+def link_runtime():
+    """What link_c links a program with besides its libraries."""
+    if IS_WINDOWS:
+        # ws2_32: JavaScriptCore's remote inspector sockets (dev and debug profiles).
+        return ["advapi32.lib", "shell32.lib", "winmm.lib", "user32.lib", "ole32.lib", "ws2_32.lib"]
+    if os.environ.get("ZEROG_ZIG_TARGET"):
+        return ["-lpthread", "-ldl", "-lm"]  # zig links libc++ and compiler-rt statically
+    # Everything static except glibc (docs/design/dependencies.md, "What stays dynamic at runtime").
+    return ["-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-latomic", "-Wl,-Bdynamic", "-lpthread", "-ldl", "-lm"]
 
 
 def check_no_exports(exe):
@@ -375,8 +384,34 @@ def check_no_exports(exe):
         sys.exit(1)
 
 
+def check_api_symbols(out):
+    """include/zerog.h and the engine agree: the C API library defines exactly the
+    functions the header declares, and the bundle keeps every one of them."""
+    declared = set(re.findall(r"\bZG_API\b[^;(]*?\b(zg_\w+)\s*\(", (ROOT / "include" / "zerog.h").read_text()))
+    env = build_env()
+    nm = shutil.which("llvm-nm", path=env["PATH"]) or shutil.which("nm", path=env["PATH"]) or "nm"
+
+    def defined(archive):
+        listing = subprocess.run([nm, "--defined-only", "--extern-only", "--format=just-symbols", str(archive)],
+                                 text=True, capture_output=True, env=env).stdout
+        return {s for s in listing.split() if re.fullmatch(r"zg_\w+", s)}
+
+    api = defined(out / "lib" / ("ZeroGAPI.lib" if IS_WINDOWS else "libZeroGAPI.a"))
+    in_bundle = defined(bundle_path(out))
+    problems = [f"declared, not defined: {s}" for s in sorted(declared - api)]
+    problems += [f"defined, not declared: {s}" for s in sorted(api - declared)]
+    problems += [f"not public in the bundle: {s}" for s in sorted(declared - in_bundle)]
+    print(f"{'ok  ' if not problems else 'FAIL'}  include/zerog.h declares the {len(declared)} functions the engine defines")
+    for problem in problems:
+        print(f"      {problem}")
+    if problems:
+        sys.exit(1)
+
+
 def cmd_linktest(args):
     out = build_dir(args)
+    if args.port == "ZeroG":
+        check_api_symbols(out)
     tests = ROOT / "tests" / "link"
     headers = out / "JavaScriptCore" / "Headers"
     include = SYSROOT / TRIPLET / "include"
@@ -413,7 +448,7 @@ def cmd_linktest(args):
         # The window part needs a display (a desktop, or Xvfb on Linux).
         run([api, *([] if IS_WINDOWS or os.environ.get("DISPLAY") else ["--no-window"])])
 
-        # The example of ZeroG.md, built as an application builds it, run until its
+        # The example of docs/design/c-api.md, built as an application builds it, run until its
         # page has called the binding.
         hello_assets = out / "zerog-hello-assets.c"
         run([sys.executable, ROOT / "tools" / "assets.py", ROOT / "examples" / "hello" / "web", "-o", hello_assets, "--c-symbol", "hello_assets"])
@@ -422,6 +457,28 @@ def cmd_linktest(args):
         check_no_exports(hello)
         if IS_WINDOWS or os.environ.get("DISPLAY"):
             run([hello, "--smoke"])
+
+        # Its relink kit (LGPL): its objects relinked with the bundle from the kit
+        # alone, the result run the same way.
+        kit = out / "relink-kit" / "zerog-hello"
+        hello_sources = [ROOT / "examples" / "hello" / "main.c", hello_assets]
+        run([sys.executable, ROOT / "tools" / "relink_kit.py", "create", "--name", "zerog-hello",
+             *[a for obj in link_objects(out, "zerog-hello", hello_sources) for a in ("--object", obj)],
+             "--system-libs", bundle_libs_path(out), *[f"--link-arg={a}" for a in link_runtime()],
+             "--profile", args.profile, "--out", kit])
+        relinked = out / "bin" / ("zerog-hello-relinked.exe" if IS_WINDOWS else "zerog-hello-relinked")
+        env = build_env()
+        if not IS_WINDOWS and not os.environ.get("ZEROG_ZIG_TARGET"):
+            env["CC"] = os.environ.get("CXX", "clang++")  # as link_c links it: with the C++ runtime
+        run([sys.executable, kit / "relink.py", "relink", kit, "--bundle", bundle_path(out), "--out", relinked], env=env)
+        if IS_WINDOWS or os.environ.get("DISPLAY"):
+            run([relinked, "--smoke"])
+
+        # A host with its own signal handlers and crash handler: they stay, the
+        # GC works next to them, a crash in host code reaches the host's handler.
+        host_runtime = link_c(args, out, "zerog-host-runtime", [tests / "host_runtime.c"], [ROOT / "include"],
+                              [bundle_path(out), *system], cxx_runtime=bool(IS_WINDOWS or not os.environ.get("ZEROG_ZIG_TARGET")))
+        run([host_runtime])
 
     # 4. The filtered ICU data opens every converter WebCore routes to ICU.
     conv = link_c(args, out, "zerog-icu-converters", [tests / "icu_converters.c"], [include],

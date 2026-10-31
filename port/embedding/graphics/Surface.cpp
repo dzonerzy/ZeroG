@@ -40,7 +40,7 @@ void Surface::resize(const IntSize& physicalSize)
         m_size = physicalSize;
         ++m_generation;
         for (auto& buffer : m_buffers) {
-            if (buffer->state == BufferState::Acquired)
+            if (heldByHost(*buffer))
                 m_retired.append(WTF::move(buffer));
             else if (buffer->skSurface)
                 destroyBuffer(*buffer);
@@ -76,7 +76,7 @@ void Surface::collectGarbage()
 {
     Locker locker { m_lock };
     m_retired.removeAllMatching([&](auto& buffer) {
-        if (buffer->state == BufferState::Acquired)
+        if (heldByHost(*buffer))
             return false;
         if (buffer->skSurface)
             destroyBuffer(*buffer);
@@ -146,6 +146,7 @@ std::optional<Surface::Target> Surface::beginFrame(const IntRect& damage)
             buffer->missedDamage = { };
         }
         buffer->state = BufferState::Rendering;
+        buffer->frameDamage = frameDamage;
         m_rendering = buffer;
         // The application sees what changed in the page, not what this buffer
         // had to catch up on.
@@ -203,6 +204,7 @@ bool Surface::acquire(Frame& frame)
     Buffer* buffer;
     {
         Locker locker { m_lock };
+        finishReleases();
         if (!m_hasUnacquiredFrame || !m_newest)
             return false;
         buffer = m_newest;
@@ -245,10 +247,21 @@ void Surface::release(const Frame& frame, int releaseFence)
     }
     if (releaseFence >= 0)
         takeReleaseFence(*buffer, releaseFence);
-    didRelease(*buffer);
+    bool pending = didRelease(*buffer);
     Locker locker { m_lock };
     RELEASE_ASSERT(buffer->state == BufferState::Acquired);
-    buffer->state = BufferState::Free;
+    buffer->state = pending ? BufferState::Releasing : BufferState::Free;
+    finishReleases();
+}
+
+void Surface::finishReleases()
+{
+    for (auto* list : { &m_buffers, &m_retired }) {
+        for (auto& buffer : *list) {
+            if (buffer->state == BufferState::Releasing && releaseFinished(*buffer))
+                buffer->state = BufferState::Free;
+        }
+    }
 }
 
 // CPU surface: pixels in memory, which Skia rasterizes into directly.

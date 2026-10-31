@@ -1,4 +1,4 @@
-// Texture mode on Windows (ZeroG.md, "Render thread separato"): the application
+// Texture mode on Windows (docs/design/graphics-presentation.md, "Separate render thread"): the application
 // owns a D3D11 device and a render thread. The engine renders the page with Skia
 // over ANGLE into shared textures; the render thread acquires the newest frame,
 // copies it on its own device and releases it, while the engine keeps rendering.

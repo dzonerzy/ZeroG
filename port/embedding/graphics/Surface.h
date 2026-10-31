@@ -1,6 +1,6 @@
 #pragma once
 
-// Rendering targets of a view (ZeroG.md, "Modalità" and "Render thread separato").
+// Rendering targets of a view (docs/design/graphics-presentation.md, "Modes" and "Separate render thread").
 // A surface owns 2 or 3 buffers. The rendering thread (the engine thread, or the
 // compositor thread for a composited view) renders into a free buffer and
 // publishes it as the newest frame; the application, on any thread, acquires the
@@ -38,6 +38,22 @@ enum class SurfaceKind : uint8_t {
     GL, // Linux: an EGLImage on the host's EGLDisplay
     GPU, // a GL texture in the engine's share group (window mode)
     DMABuf, // Linux: a dma-buf, for any API that imports them (Vulkan)
+    D3D12, // Windows: a texture and fences opened on the host's ID3D12CommandQueue
+    Win32, // Windows: NT handles of a texture and fences, for any API that opens them (Vulkan)
+    D3D9, // Windows: a texture on the host's IDirect3DDevice9 (shared with 9Ex, copied otherwise)
+};
+
+// A frame's Win32 handles (D3D12 and Win32 surfaces): the texture and the
+// timeline fences ordering it, as NT handles. They stay the surface's.
+struct Win32Frame {
+    void* texture { nullptr }; // NT handle of the ID3D11Texture2D
+    unsigned dxgiFormat { 0 };
+    void* readyFence { nullptr }; // NT handle of a D3D fence: wait for readyValue before reading
+    uint64_t readyValue { 0 };
+    void* releaseFence { nullptr }; // signal releaseValue when done reading (null: the engine does)
+    uint64_t releaseValue { 0 };
+    uint64_t bufferID { 0 }; // the same texture and handle until a resize
+    uint64_t adapterLUID { 0 }; // the adapter the texture is on (LUID, HighPart << 32 | LowPart)
 };
 
 // A DMABuf surface's frame: the buffer's planes, as DRM describes them, and
@@ -113,6 +129,11 @@ public:
     void release(const Frame&, int releaseFence = -1);
     // Any thread, an acquired frame of a DMABuf surface: its dma-buf.
     virtual bool dmabuf(const Frame&, DMABufFrame&) const { return false; }
+    // Any thread, an acquired frame of a D3D12 or Win32 surface: its handles.
+    virtual bool win32(const Frame&, Win32Frame&) const { return false; }
+    // Application thread (D3D9): the host's device is about to be reset; its
+    // objects for this surface are released and made again on the next acquire.
+    virtual void deviceLost() { }
 
     // Engine thread: frees the GPU resources of released buffers from older
     // generations. Called by beginFrame() and resize().
@@ -126,13 +147,16 @@ protected:
     // surface.
     void destroyAllBuffers();
 
-    enum class BufferState : uint8_t { Free, Rendering, Ready, Acquired };
+    // Releasing: given back, but the host's GPU may still read it (D3D9, where
+    // the engine cannot wait for the host's device); free once releaseFinished().
+    enum class BufferState : uint8_t { Free, Rendering, Ready, Acquired, Releasing };
     struct Buffer {
         BufferState state { BufferState::Free };
         uint64_t generation { 0 };
         bool published { false }; // drawn at least once in this generation
         bool acquiredSinceRender { false };
         WebCore::Region missedDamage;
+        WebCore::IntRect frameDamage; // what the frame being rendered changed in the page
         sk_sp<SkSurface> skSurface;
         void* backend { nullptr }; // owned by the subclass
     };
@@ -149,13 +173,19 @@ protected:
     // Application thread, inside acquire() and release().
     virtual void fillFrame(Buffer&, Frame&) = 0;
     virtual void willAcquire(Buffer&) { }
-    virtual void didRelease(Buffer&) { }
+    // Returns whether the buffer must wait for releaseFinished() before the
+    // engine draws into it again.
+    virtual bool didRelease(Buffer&) { return false; }
+    // Application thread, at each acquire and release, for Releasing buffers.
+    virtual bool releaseFinished(Buffer&) { return true; }
     // Application thread, inside release(): the application's release fence,
     // which the surface now owns. Kinds without dma-bufs close it.
     virtual void takeReleaseFence(Buffer&, int fence);
 
 private:
     Buffer* pickBuffer() WTF_REQUIRES_LOCK(m_lock);
+    void finishReleases() WTF_REQUIRES_LOCK(m_lock);
+    static bool heldByHost(const Buffer& buffer) { return buffer.state == BufferState::Acquired || buffer.state == BufferState::Releasing; }
     bool usesPrivateTarget() const { return m_kind != SurfaceKind::CPU; }
 
     sk_sp<SkSurface> m_privateTarget; // engine thread
@@ -183,6 +213,18 @@ std::unique_ptr<Surface> createGPUSurface(unsigned bufferCount);
 // on ANGLE's adapter, which device() returns. Null if ANGLE's D3D11 device or the
 // shared textures are not available.
 std::unique_ptr<Surface> createD3D11Surface(void* hostDevice, unsigned bufferCount);
+// `hostQueue` is the application's ID3D12CommandQueue: frames are opened on its
+// device, acquire queues a wait for the frame on it, release a signal.
+std::unique_ptr<Surface> createD3D12Surface(void* hostQueue, unsigned bufferCount);
+// Frames are NT handles (Surface::win32), for Vulkan or any API that opens them.
+std::unique_ptr<Surface> createWin32Surface(unsigned bufferCount);
+// `hostDevice` is the application's IDirect3DDevice9: frames are textures on it,
+// shared with ANGLE's device for an IDirect3DDevice9Ex on its adapter, copied
+// otherwise (always with `copy`, which tests use to reach that path with a 9Ex
+// device).
+std::unique_ptr<Surface> createD3D9Surface(void* hostDevice, unsigned bufferCount, bool copy = false);
+// Why the last create*Surface above failed, for zg_last_error.
+const char* lastSurfaceError();
 #else
 // `hostDisplay` is the application's EGLDisplay, which must be the display the
 // engine's GPU was initialized with (initializeGPU).

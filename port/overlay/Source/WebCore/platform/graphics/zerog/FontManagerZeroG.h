@@ -34,7 +34,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 namespace WebCore {
 
 // The font manager of the ZeroG port: FreeType and Skia's custom font manager on
-// every OS, so text renders the same everywhere (ZeroG.md, "Testo e font").
+// every OS, so text renders the same everywhere (docs/design/text-fonts.md).
 sk_sp<SkFontMgr> createFontManagerZeroG();
 
 } // namespace WebCore

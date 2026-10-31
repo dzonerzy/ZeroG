@@ -1,4 +1,4 @@
-// UI Automation for a window (ZeroG.md, "Accessibilità"), written for ZeroG: one
+// UI Automation for a window (docs/design/input-ime-clipboard-accessibility.md, "Accessibility"), written for ZeroG: one
 // provider per accessibility object (Accessibility.h), a fragment root for the
 // window that answers WM_GETOBJECT, and the patterns screen readers use most:
 // Invoke (buttons, links), Toggle (check boxes, switches), Value (text fields,

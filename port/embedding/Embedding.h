@@ -1,6 +1,6 @@
 #pragma once
 
-// The minimal embedding layer of phase 1 (ZeroG.md, "Roadmap"): one process, one
+// The minimal embedding layer of phase 1 (docs/design/roadmap.md): one process, one
 // page with empty clients, HTML loaded from a string, painted on the CPU through
 // Skia. The zg_* C API is built on top of this once loading and input exist.
 
@@ -26,6 +26,9 @@ struct ProcessOptions {
     size_t heapLimit { 0 }; // bytes; the GC works harder near it
     // Images decode on the main thread, with no decoder threads.
     bool synchronousImageDecoding { false };
+    // Windows: the GPU adapter to render on (LUID, HighPart << 32 | LowPart), so
+    // a game's device on it can open the engine's textures; 0 is the default.
+    uint64_t adapterLUID { 0 };
 };
 
 // What initializeProcess was given.

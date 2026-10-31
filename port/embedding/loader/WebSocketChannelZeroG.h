@@ -1,6 +1,6 @@
 #pragma once
 
-// WebSockets without the network process (ZeroG.md, "Dev mode": the dev
+// WebSockets without the network process (docs/design/networking-storage-resources.md, "Dev mode": the dev
 // server's hot reload runs over one). WebKit splits a socket between the web
 // process (WebSocketChannel: the page's side) and the network process
 // (WebSocketTaskCurl: handshake and frames over a CurlStream); here one channel

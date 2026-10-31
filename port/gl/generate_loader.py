@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate the EGL/GLES entry points of the Linux GL loader.
 
-The engine links no EGL or GLES library (ZeroG.md, "Cosa resta dinamico a
-runtime"): every EGL and GLES function WebCore and Skia call is defined here and
+The engine links no EGL or GLES library (docs/design/dependencies.md,
+"What stays dynamic at runtime"): every EGL and GLES function WebCore and Skia call is defined here and
 resolves the driver's implementation on first call (GLLoader.cpp). Prototypes
 come from the Khronos headers in the sysroot, which the generated file also
 includes, so the compiler checks every signature.

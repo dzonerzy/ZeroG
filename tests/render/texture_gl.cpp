@@ -1,4 +1,4 @@
-// Texture mode on Linux (ZeroG.md, "Render thread separato"): the application owns
+// Texture mode on Linux (docs/design/graphics-presentation.md, "Separate render thread"): the application owns
 // an EGL display, a GL context and a render thread. The engine renders the page
 // with Skia into textures on the same display; the render thread binds each
 // acquired frame's EGLImage in its own context, waits on the frame's fence, reads

@@ -62,6 +62,14 @@ done
 run "hello example" xvfb-run -a "$bin/ZeroGHello" --smoke
 run "binding latency" "$bin/ZeroGBindingBench"
 grep "us per" /tmp/test.log
+for scenario in baseline cpu texture page; do
+    run "memory at rest: $scenario" "$bin/ZeroGMemoryBench" $scenario
+    grep "MB" /tmp/test.log | head -2
+done
+run "memory at rest: window" xvfb-run -a "$bin/ZeroGMemoryBench" window
+grep "MB" /tmp/test.log | head -2
+# Debug files split out by build ID; a stripped binary's address symbolized from them.
+run "symbol files" python3 /src/tools/symbols.py --build-dir "$bin/.." --program ZeroGHello --out /tmp/zerog-symbols --check
 
 export XDG_RUNTIME_DIR=/tmp/zerog-xdg
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"

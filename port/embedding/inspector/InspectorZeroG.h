@@ -1,6 +1,6 @@
 #pragma once
 
-// The Web Inspector (ZeroG.md, "Profili di build": dev and debug only, where
+// The Web Inspector (docs/design/build-system-static-linking.md, "Build profiles": dev and debug only, where
 // ZEROG_INSPECTOR is defined). Each view's page gets a backend client. The
 // frontend (WebInspectorUI's resources, compiled in) runs in a second view the
 // embedder creates and shows (ViewClient::createInspectorView), in a session of

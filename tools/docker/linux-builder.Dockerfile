@@ -1,7 +1,7 @@
 # Linux builder for the ZeroG port. Everything (WebKit, vcpkg dependencies, the
 # final link) is compiled with zig's clang against a glibc 2.28 baseline and
 # zig's bundled libc++, so binaries run on any distribution with glibc >= 2.28
-# (ZeroG.md, "Cosa resta dinamico a runtime"). A newer system libstdc++ cannot
+# (docs/design/dependencies.md, "What stays dynamic at runtime"). A newer system libstdc++ cannot
 # be used: its static archive references glibc symbols newer than 2.28.
 FROM debian:trixie
 

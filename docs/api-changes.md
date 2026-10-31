@@ -6,9 +6,9 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
-## 0.3.0 (in progress)
+## 0.3.0
 
-Engine features of roadmap phases 3 and 4:
+Frozen. The engine features of roadmap phases 3 and 4:
 
 - Storage: localStorage, sessionStorage and IndexedDB work, kept in `data_dir`
   (`LocalStorage/`, `IndexedDB/`), in memory for ephemeral contexts. No new
@@ -111,6 +111,25 @@ Engine features of roadmap phases 3 and 4:
   application's own sync_file. The buffers come from the driver (EGL export),
   GBM, or a DRM device's dumb buffers, whichever the system has first;
   `ZG_ERROR_UNSUPPORTED` with none. Before, the kind was declared and refused.
+- Texture mode for games on Windows, beyond D3D11:
+  - `ZG_SURFACE_D3D12` takes the game's `ID3D12CommandQueue`. Frames are
+    `ID3D12Resource`s opened on its device. Acquire queues the frame's wait on
+    that queue and release queues the signal that the queue is done with it, so
+    neither the game's nor the engine's CPU threads ever wait.
+  - `ZG_SURFACE_VULKAN` on Windows: frames are NT handles of a texture and of
+    two timeline fences (`zg_surface_win32`, `zg_win32_frame`), for Vulkan's
+    Win32 external memory and semaphores, or any API that opens them. The game
+    waits for the ready value and signals the release value.
+  - `ZG_SURFACE_D3D9` takes the game's `IDirect3DDevice9`. A 9Ex device on the
+    engine's adapter opens the engine's textures. Any other device gets the
+    pixels that changed since its previous frame copied into a texture of its
+    own. `zg_surface_device_lost` comes before `IDirect3DDevice9::Reset`.
+  - `zg_runtime_config.adapter_luid` picks the GPU the engine renders on (the
+    game's). Devices on another adapter are refused with a reason in
+    `zg_last_error`; before, they failed when opening the textures. D3D11
+    surfaces on another adapter now fail with `ZG_ERROR_UNSUPPORTED` (was
+    `ZG_ERROR_GPU`), and so do the other kinds.
+  - Before, these kinds were refused or (Vulkan) Linux-only.
 - Window mode with several windows: each window gets its own events. Before,
   whichever window polled first took every window's events.
 - WebGL (standard, dev and debug profiles): WebGL and WebGL 2 in GPU views,
@@ -144,7 +163,7 @@ Additions for frameworks built on the API (one in Zig, for instance):
 
 ## 0.1.0
 
-The API of ZeroG.md ("API pubblica C") at the end of roadmap phase 2, frozen.
+The API of the [design notes](design/c-api.md) at the end of roadmap phase 2, frozen.
 Changes from the drafts before it:
 
 - `zg_runtime_config.decode_threads` became `sync_image_decoding` (a flag: images

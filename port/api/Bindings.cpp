@@ -1,4 +1,4 @@
-// Direct JavaScript bindings (ZeroG.md, "Binding"): native functions and classes
+// Direct JavaScript bindings (docs/design/c-api.md, "Direct JavaScript bindings"): native functions and classes
 // installed on the main frame's window object of trusted origins, called
 // synchronously as JSC native functions (no IPC), with Promises settled later
 // from any thread; references to JavaScript values the host keeps; scripts run

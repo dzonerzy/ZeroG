@@ -1,4 +1,4 @@
-// Window mode (ZeroG.md, "Modalità" and "Ciclo di un frame"): the engine owns a
+// Window mode (docs/design/graphics-presentation.md, "Modes" and "Frame cycle"): the engine owns a
 // native window, presents with the GPU at the display's refresh rate, and
 // requestAnimationFrame follows the presentations. The presented image must match a
 // CPU render of the page, and resizing the window must resize the page.

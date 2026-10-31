@@ -1,12 +1,15 @@
 /*
  * ZeroG — public C API.
  *
- * Version 0.3: the API of ZeroG.md ("API pubblica C"), frozen at the end of
- * roadmap phase 2 (0.1), with binary values, references to JavaScript values,
- * classes and page scripts added (0.2), and the engine features of phases 3
- * and 4 (0.3). Within 0.x a minor version may add functions, enum values
- * and fields at the end of config structs; nothing is renamed or removed and no
- * meaning changes without a new minor version and a note in docs/api-changes.md.
+ * Version 0.3, frozen: the API of docs/design/c-api.md as frozen at the
+ * end of roadmap phase 2 (0.1), with binary values, references to JavaScript
+ * values, classes and page scripts (0.2), and the engine features of phases 3
+ * and 4 (0.3): storage, clipboard, file chooser, drag and drop, context menus,
+ * windows (transparent, frameless, click-through), the Web Inspector, and
+ * texture mode for every graphics API games use. Within 0.x a minor version
+ * may add functions, enum values and fields at the end of config structs;
+ * nothing is renamed or removed and no meaning changes without a new minor
+ * version and a note in docs/api-changes.md.
  *
  * Rules that hold for every function below:
  *   - C99, opaque handles, no WebKit type ever appears here.
@@ -14,7 +17,9 @@
  *     runtime (the runtime thread), and every callback is delivered on that
  *     thread. Calls from another thread fail with ZG_ERROR_WRONG_THREAD or do
  *     nothing. The exceptions are marked "any thread": zg_runtime_quit,
- *     zg_runtime_now_ms, zg_surface_acquire/release, settling a zg_promise,
+ *     zg_runtime_now_ms, the zg_surface_* calls on frames (acquire, release,
+ *     zg_surface_dmabuf, zg_surface_win32, zg_surface_device_lost; a D3D9
+ *     surface's on its device's thread), settling a zg_promise,
  *     zg_ref_release, zg_runtime_add_ca_certificates, answering a
  *     zg_scheme_request, a zg_auth_challenge or a zg_file_chooser;
  *     zg_last_error is per thread. Release callbacks (zg_context_add_file,
@@ -83,7 +88,8 @@ typedef enum zg_result {
     ZG_ERROR_WRONG_THREAD,      /* called off the runtime thread */
     ZG_ERROR_ALREADY_EXISTS,    /* e.g. a second zg_runtime_create */
     ZG_ERROR_NOT_FOUND,
-    ZG_ERROR_UNSUPPORTED,       /* feature compiled out of this build profile */
+    ZG_ERROR_UNSUPPORTED,       /* feature compiled out of this build profile, or
+                                   not available here (OS, GPU, adapter) */
     ZG_ERROR_OUT_OF_MEMORY,
     ZG_ERROR_GPU,
     ZG_ERROR_JS_EXCEPTION,
@@ -169,6 +175,14 @@ typedef struct zg_runtime_config {
        tunnel), so a WebKit frontend elsewhere can inspect every view; a warning
        in the log if it cannot listen. Ignored by the other profiles. */
     unsigned inspector_port;
+
+    /* Since 0.3, Windows: the GPU adapter the engine renders on, as its LUID
+       (HighPart << 32 | LowPart; DXGI_ADAPTER_DESC.AdapterLuid,
+       ID3D12Device::GetAdapterLuid, IDirect3D9Ex::GetAdapterLUID), so a game's
+       device on that adapter can take its frames (a laptop's discrete GPU, for
+       instance). 0 is the system's default adapter. Texture-mode devices on
+       another adapter get ZG_ERROR_UNSUPPORTED, except plain D3D9 (copied). */
+    uint64_t adapter_luid;
 } zg_runtime_config;
 
 /* Creates the process-wide runtime on the calling thread, which becomes the
@@ -377,8 +391,10 @@ typedef enum zg_surface_kind {
     ZG_SURFACE_CPU,       /* BGRA8 premultiplied pixels in memory */
     ZG_SURFACE_D3D11,     /* Windows: engine or host ID3D11Device */
     ZG_SURFACE_GL,        /* Linux: EGL context */
-    ZG_SURFACE_VULKAN,    /* Linux */
-    ZG_SURFACE_METAL      /* macOS */
+    ZG_SURFACE_VULKAN,    /* Linux: dma-bufs; Windows (0.3): NT handles */
+    ZG_SURFACE_METAL,     /* macOS */
+    ZG_SURFACE_D3D12,     /* Windows (0.3): host ID3D12CommandQueue */
+    ZG_SURFACE_D3D9       /* Windows (0.3): host IDirect3DDevice9 or 9Ex */
 } zg_surface_kind;
 
 typedef struct zg_surface_config {
@@ -391,10 +407,29 @@ typedef struct zg_surface_config {
        ZG_SURFACE_GL: the application's EGLDisplay (required); frames carry an
          EGLImage for glEGLImageTargetTexture2DOES and an EGLSync to eglWaitSync on.
          Release frames with the context that used them current.
-       ZG_SURFACE_VULKAN (0.3; Linux): NULL. Frames are dma-bufs, on the engine's
+       ZG_SURFACE_VULKAN (0.3), Linux: NULL. Frames are dma-bufs, on the engine's
          own GPU, for Vulkan (VK_EXT_external_memory_dma_buf) or any API that
          imports them: see zg_surface_dmabuf. ZG_ERROR_UNSUPPORTED when the
-         driver exports none and no DRM device allocates one it imports. */
+         driver exports none and no DRM device allocates one it imports.
+       ZG_SURFACE_VULKAN (0.3), Windows: NULL. Frames are NT handles of a texture
+         and of two timeline fences, for Vulkan (VK_KHR_external_memory_win32,
+         VK_KHR_external_semaphore_win32) or any API that opens them: see
+         zg_surface_win32. The application signals each frame's release value
+         when done with it.
+       ZG_SURFACE_D3D12 (0.3): the application's ID3D12CommandQueue*. Frames carry
+         an ID3D12Resource* opened on its device (R8G8B8A8_UNORM, state COMMON;
+         read it as a shader resource and leave it in COMMON or let it decay
+         there). Acquire queues a wait on that queue for the frame, release a
+         signal that the queue is done with it: use the frame on that queue, or
+         wait for zg_frame.fence (an ID3D12Fence*) at fence_value on another.
+       ZG_SURFACE_D3D9 (0.3): the application's IDirect3DDevice9*. Frames carry an
+         IDirect3DTexture9* (D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT) to draw with. An
+         IDirect3DDevice9Ex gets the engine's texture itself (shared); a plain
+         device a copy of the pixels that changed, made in acquire. Acquire and
+         release on the device's thread; call zg_surface_device_lost before
+         IDirect3DDevice9::Reset.
+       The Direct3D kinds and the Windows Vulkan kind need the device on the
+       engine's adapter: see zg_runtime_config.adapter_luid. */
     void *device;
     unsigned buffer_count; /* 2 or 3, 0 = 2 */
     /* ZG_SURFACE_GL (0.3): how the application opened its EGLDisplay, the
@@ -459,6 +494,42 @@ ZG_API void zg_surface_release_with_fence(zg_surface *surface, const zg_frame *f
 /* The device frames are given for (ZG_SURFACE_D3D11: ID3D11Device*), NULL otherwise. */
 ZG_API void *zg_surface_device(zg_surface *surface);
 
+/* A frame's Win32 handles (0.3; ZG_SURFACE_VULKAN on Windows, ZG_SURFACE_D3D12):
+   the texture as an NT handle (Vulkan: VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT,
+   a dedicated allocation; D3D12: OpenSharedHandle; GL:
+   EXT_memory_object_win32), its format (DXGI_FORMAT_R8G8B8A8_UNORM, 28: Vulkan's
+   VK_FORMAT_R8G8B8A8_UNORM), and two timeline fences as NT handles (Vulkan:
+   timeline semaphores with VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT):
+   wait for ready_value on the ready fence before reading the texture, and
+   signal release_value on the release fence when done with it, before
+   zg_surface_release, even if the frame was not used (the engine's GPU waits
+   for it before drawing into that texture again). ZG_SURFACE_D3D12 frames have
+   no release fence: release signals it on the queue. The handles stay the
+   engine's (importing them into Vulkan does not take them); the texture's and
+   buffer_id stay the same until the view is resized, so imports can be kept
+   by buffer_id; the fences stay the surface's. adapter_luid is the adapter
+   the texture is on (HighPart << 32 | LowPart): Vulkan's
+   VkPhysicalDeviceIDProperties.deviceLUID must match it. Rows run top to
+   bottom. */
+typedef struct zg_win32_frame {
+    size_t size;                 /* set by the caller */
+    zg_native_handle texture_handle;
+    unsigned dxgi_format;
+    zg_native_handle ready_fence_handle;
+    uint64_t ready_value;
+    zg_native_handle release_fence_handle; /* 0 for ZG_SURFACE_D3D12 */
+    uint64_t release_value;
+    uint64_t buffer_id;
+    uint64_t adapter_luid;
+} zg_win32_frame;
+
+/* ZG_ERROR_UNSUPPORTED for frames of other kinds. */
+ZG_API zg_result zg_surface_win32(zg_surface *surface, const zg_frame *frame, zg_win32_frame *out);
+/* ZG_SURFACE_D3D9 (0.3): the application's device is about to be reset
+   (IDirect3DDevice9::Reset): the engine releases its objects on it, and makes
+   them again on the next acquire. The device's thread. Nothing for other kinds. */
+ZG_API void zg_surface_device_lost(zg_surface *surface);
+
 /* ------------------------------------------------------------------------ */
 /* Views                                                                     */
 
@@ -494,7 +565,7 @@ ZG_API void zg_view_set_focus(zg_view *view, int focused);
    for this view, advances requestAnimationFrame and animations to
    `frame_time_ms` (the app's frame clock, monotonic milliseconds), updates style
    and layout. A CPU view repaints dirty regions into the surface before
-   returning. A GPU view (D3D11, GL; since 0.3) composites its layers on the
+   returning. A GPU view (every kind but CPU; since 0.3) composites its layers on the
    engine's compositor thread: the frame reaches zg_surface_acquire shortly after
    this returns (zg_runtime_wakeup_handle is signaled), and while the frame of
    the previous call is still being composited no new rendering update starts.

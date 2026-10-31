@@ -1,4 +1,4 @@
-// Texture mode with dma-bufs on Linux (ZeroG.md, "Backend GPU per piattaforma"),
+// Texture mode with dma-bufs on Linux (docs/design/graphics-presentation.md, "GPU backend per platform"),
 // the frames a Vulkan application imports: the engine renders the page on its
 // own GPU display into dma-bufs; the application's render thread imports each
 // acquired frame's planes (here into a GL context of its own, with

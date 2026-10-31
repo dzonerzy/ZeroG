@@ -1,4 +1,4 @@
-// MP4 through Windows' Media Foundation (ZeroG.md, "Media"): H.264 and AAC, the
+// MP4 through Windows' Media Foundation (docs/design/build-system-static-linking.md, "Media"): H.264 and AAC, the
 // formats whose patents keep their decoders out of the binary, decoded by the
 // OS's own codecs. The player's bytes reach Media Foundation as an
 // IMFByteStream (reads wait for the bytes, as for the other formats); a source

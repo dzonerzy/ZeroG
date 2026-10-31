@@ -1,4 +1,4 @@
-// AT-SPI for the application's windows (ZeroG.md, "Accessibilità"), written for
+// AT-SPI for the application's windows (docs/design/input-ime-clipboard-accessibility.md, "Accessibility"), written for
 // ZeroG over libdbus loaded at run time (DBus.h): no GLib, no D-Bus at build
 // time. The application is the root object (/org/a11y/atspi/accessible/root),
 // embedded in the AT-SPI registry; each window is a frame under it, and the

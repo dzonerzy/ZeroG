@@ -1,6 +1,6 @@
 #pragma once
 
-// A session's HTTP disk cache (ZeroG.md, "Cache HTTP"): WebKit's disk cache lives
+// A session's HTTP disk cache (docs/design/networking-storage-resources.md, "HTTP cache"): WebKit's disk cache lives
 // in WebKit2's network process, and curl has none, so the port keeps its own,
 // under the session's directory (HTTPCache/). Freshness and revalidation follow
 // HTTP caching as WebCore's CacheValidation implements it: max-age, Expires,

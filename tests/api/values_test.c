@@ -1,5 +1,5 @@
 /* Value conversions between JavaScript and the host, for every type of the C API
- * (ZeroG.md, "Testing": the binding level):
+ * (docs/design/testing-ci-upstream.md, "Test levels": the binding level):
  *   - every JavaScript type read by a binding with each zg_call_arg_* function;
  *   - every zg_value_* returned to JavaScript;
  *   - Promises resolved with JSON values and rejected;

@@ -1,6 +1,6 @@
 #pragma once
 
-// Window mode (ZeroG.md, "Modalità"): the engine creates a native window (SDL3, which
+// Window mode (docs/design/graphics-presentation.md, "Modes"): the engine creates a native window (SDL3, which
 // loads X11 or Wayland at run time on Linux), renders its view with the GPU and
 // presents it itself, paced by the display's vsync. requestAnimationFrame follows
 // the presentations (engine-driven, unlike texture mode).

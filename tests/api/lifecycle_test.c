@@ -1,5 +1,5 @@
 /* Creating and destroying everything the C API hands out, many times over, with
- * work still in flight (ZeroG.md, "Testing": memory). Meant to run under the
+ * work still in flight (docs/design/testing-ci-upstream.md, "Test levels": memory). Meant to run under the
  * AddressSanitizer build (tools/build.py --asan), where a use after free or an
  * overflow stops it; in any build it checks that the memory the runtime reports
  * comes back to where it was:

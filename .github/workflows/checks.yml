@@ -1,0 +1,73 @@
+# Quick checks on GitHub's hosted runners. A full build of the engine (WebKit and
+# its dependencies, hours and about 100 GB) does not fit them: full builds and
+# their tests run with tools/build.py on Windows and in the Linux Docker builder
+# (README, "Building").
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # include/zerog.h is the whole public API: it must build as C99 and C++17,
+  # warning-free, with every compiler applications use.
+  header-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: C99 and C++17, gcc and clang
+        run: |
+          printf '#include "zerog.h"\nint main(void) { return zg_version().major; }\n' > check.c
+          for cc in gcc clang; do
+            $cc -std=c99 -Wall -Wextra -Wpedantic -Werror -Iinclude -fsyntax-only check.c
+          done
+          for cxx in g++ clang++; do
+            $cxx -std=c++17 -Wall -Wextra -Wpedantic -Werror -Iinclude -fsyntax-only -x c++ check.c
+          done
+
+  header-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: C and C++ with MSVC and clang-cl
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: "1" # /nologo stays an option, not a path
+        run: |
+          printf '#include "zerog.h"\nint main(void) { return zg_version().major; }\n' > check.c
+          cl /nologo /W4 /WX /Zs /TC /Iinclude check.c
+          cl /nologo /W4 /WX /Zs /TP /std:c++17 /Iinclude check.c
+          clang-cl /nologo /W4 /WX /Zs /TC /Iinclude check.c
+
+  tools:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Unit tests of tools/
+        run: python -m unittest discover -s tests/tools -v
+
+  # The API reference is generated from include/zerog.h and must match it; the
+  # site builds without warnings (broken links, missing pages).
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: API reference up to date
+        run: python tools/apidoc.py --check
+      - name: Build the site
+        run: |
+          pip install mkdocs-material
+          mkdocs build --strict

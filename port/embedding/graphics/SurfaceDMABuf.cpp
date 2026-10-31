@@ -1,5 +1,5 @@
-// Texture mode for Vulkan, or any API that imports dma-bufs, on Linux (ZeroG.md,
-// "Backend GPU per piattaforma"): the engine keeps rendering with Skia over GL,
+// Texture mode for Vulkan, or any API that imports dma-bufs, on Linux (docs/design/
+// graphics-presentation.md, "GPU backend per platform"): the engine keeps rendering with Skia over GL,
 // on its own EGL display, into GL textures that are dma-bufs, and hands each
 // frame over as the dma-buf's planes plus a sync_file to wait on.
 //

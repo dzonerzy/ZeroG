@@ -1,6 +1,6 @@
 #pragma once
 
-// The resource loader (ZeroG.md, "Loader delle risorse"). WebKit's legacy
+// The resource loader (docs/design/networking-storage-resources.md, "Resource loader"). WebKit's legacy
 // ResourceHandle path is gone for curl ports, so loads go the way WebKit2's
 // WebLoaderStrategy sends them, without the network process: data: URLs are
 // decoded by WebCore itself, custom schemes (app://, the application's own) are

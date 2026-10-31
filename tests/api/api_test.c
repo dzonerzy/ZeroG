@@ -563,6 +563,13 @@ int main(int argc, char **argv)
         memset(&dmabuf, 0, sizeof dmabuf);
         dmabuf.size = sizeof dmabuf;
         CHECK(zg_surface_dmabuf(zg_view_surface(view), &frameData, &dmabuf) == ZG_ERROR_UNSUPPORTED, "a CPU frame has no dma-buf");
+        {
+            zg_win32_frame handles;
+            memset(&handles, 0, sizeof handles);
+            handles.size = sizeof handles;
+            CHECK(zg_surface_win32(zg_view_surface(view), &frameData, &handles) == ZG_ERROR_UNSUPPORTED, "a CPU frame has no Win32 handles");
+        }
+        zg_surface_device_lost(zg_view_surface(view)); /* nothing for a CPU surface */
         zg_surface_release(zg_view_surface(view), &frameData);
     }
     CHECK(zg_surface_acquire(zg_view_surface(view), &frameData) == ZG_ERROR_NOT_FOUND, "no newer frame");
@@ -820,6 +827,48 @@ int main(int argc, char **argv)
             zg_view_destroy(vulkanView);
         } else
             CHECK(strstr(zg_last_error(), "dma-buf") || strstr(zg_last_error(), "GPU"), "no dma-buf frames on this system, said so: %s", zg_last_error());
+    }
+#else
+    {
+        /* Texture mode for games (0.3): the Direct3D kinds need the game's device;
+           ZG_SURFACE_VULKAN frames are NT handles with their fences. */
+        zg_surface_config gameSurface;
+        zg_view_config gameConfig;
+        zg_view *gameView;
+        memset(&gameSurface, 0, sizeof gameSurface);
+        gameSurface.size = sizeof gameSurface;
+        gameConfig = viewConfig;
+        gameConfig.surface = &gameSurface;
+        gameSurface.kind = ZG_SURFACE_D3D12;
+        CHECK(!zg_view_create(context, &gameConfig) && strstr(zg_last_error(), "ID3D12CommandQueue"), "ZG_SURFACE_D3D12 without a queue: %s", zg_last_error());
+        gameSurface.kind = ZG_SURFACE_D3D9;
+        CHECK(!zg_view_create(context, &gameConfig) && strstr(zg_last_error(), "IDirect3DDevice9"), "ZG_SURFACE_D3D9 without a device: %s", zg_last_error());
+        gameSurface.kind = ZG_SURFACE_VULKAN;
+        gameView = zg_view_create(context, &gameConfig);
+        if (gameView) {
+            static const char gamePage[] = "<body style='background: teal'>";
+            zg_win32_frame handles;
+            int got = 0, attempt;
+            memset(&handles, 0, sizeof handles);
+            handles.size = sizeof handles;
+            zg_view_load_html(gameView, gamePage, sizeof gamePage - 1, NULL);
+            for (attempt = 0; attempt < 200 && !got; ++attempt) {
+                frame(gameView);
+                if (zg_surface_acquire(zg_view_surface(gameView), &frameData) == ZG_OK) {
+                    got = 1;
+                    CHECK(zg_surface_win32(zg_view_surface(gameView), &frameData, &handles) == ZG_OK && handles.texture_handle && handles.ready_fence_handle
+                            && handles.release_fence_handle && handles.release_value && handles.dxgi_format == 28 && handles.adapter_luid && handles.size == sizeof handles,
+                        "a ZG_SURFACE_VULKAN frame has its texture and fences as NT handles (ready %llu, release %llu)", (unsigned long long)handles.ready_value, (unsigned long long)handles.release_value);
+                    /* Not read: no Vulkan here to signal the release value, and the
+                       view goes before the engine would draw into that texture again. */
+                    zg_surface_release(zg_view_surface(gameView), &frameData);
+                } else
+                    sleepMilliseconds(5);
+            }
+            CHECK(got, "a ZG_SURFACE_VULKAN view produces frames");
+            zg_view_destroy(gameView);
+        } else
+            CHECK(0, "a ZG_SURFACE_VULKAN view: %s", zg_last_error());
     }
 #endif
 

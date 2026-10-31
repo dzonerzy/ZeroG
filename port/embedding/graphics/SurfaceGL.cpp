@@ -1,4 +1,4 @@
-// Texture mode on Linux (ZeroG.md, "Render thread separato"): Skia renders into GL
+// Texture mode on Linux (docs/design/graphics-presentation.md, "Separate render thread"): Skia renders into GL
 // textures in the engine's context, on the application's EGLDisplay, and each
 // texture is handed over as an EGLImage the application binds in its own context
 // (glEGLImageTargetTexture2DOES). EGL fences order the GPU work both ways: the
@@ -175,14 +175,15 @@ private:
     }
 
     // Application thread, with the context that used the texture current.
-    void didRelease(Buffer& buffer) final
+    bool didRelease(Buffer& buffer) final
     {
         if (eglGetCurrentContext() == EGL_NO_CONTEXT)
-            return;
+            return false;
         auto fence = eglCreateSync(m_display, EGL_SYNC_FENCE, nullptr);
         glFlush();
         if (auto previous = static_cast<Texture*>(buffer.backend)->releaseFence.exchange(fence); previous != EGL_NO_SYNC)
             eglDestroySync(m_display, previous);
+        return false;
     }
 
     EGLDisplay m_display;

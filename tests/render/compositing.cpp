@@ -1,4 +1,4 @@
-// GPU compositing (ZeroG.md, "Compositing", version 2): a GPU view's layers are
+// GPU compositing (docs/design/graphics-presentation.md, "Compositing", version 2): a GPU view's layers are
 // composited on the compositor thread. CSS animations of transform and opacity
 // produce frames there with no rendering update at all, one per application
 // frame (render()), none without, and at most as many as a cap allows;

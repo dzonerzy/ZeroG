@@ -1,7 +1,7 @@
 #pragma once
 
 // A view: one page, its size and scale, and the surface it renders into
-// (ZeroG.md, "Ciclo di un frame"). Engine thread only, except the surface's
+// (docs/design/graphics-presentation.md, "Frame cycle"). Engine thread only, except the surface's
 // acquire/release.
 
 #include "graphics/Surface.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-// Accessibility (ZeroG.md, "Accessibilità"): WebCore's accessibility tree as the
+// Accessibility (docs/design/input-ime-clipboard-accessibility.md, "Accessibility"): WebCore's accessibility tree as the
 // OS bridges read it (AccessibilityUIA.cpp on Windows, AccessibilityAtspi.cpp on
 // Linux). Engine thread only. Objects are WebCore's AXCoreObjects, kept across
 // calls by their AXID; a bridge looks them up again each time (object()), since

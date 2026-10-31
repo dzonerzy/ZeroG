@@ -1,4 +1,4 @@
-/* Binding latency (ZeroG.md, "Obiettivi misurabili"): the cost of one call
+/* Binding latency (docs/design/measurable-goals.md): the cost of one call
  * from page JavaScript to native code, through the public API only.
  *
  *   js       an empty JavaScript function, for comparison

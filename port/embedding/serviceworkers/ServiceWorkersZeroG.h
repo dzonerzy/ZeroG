@@ -1,6 +1,6 @@
 #pragma once
 
-// Service workers (ZeroG.md, "Service worker"; standard, dev and debug profiles).
+// Service workers (docs/design/networking-storage-resources.md, "Service workers"; standard, dev and debug profiles).
 // WebKit2 splits them over three processes: the page's connection
 // (WebSWClientConnection) talks to an SWServer in the network process, which
 // runs each worker in a web process of its site (WebSWContextManagerConnection)

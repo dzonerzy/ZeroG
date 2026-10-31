@@ -83,7 +83,7 @@ bool checkThread();
 
 zg_runtime* runtime();
 
-// Trust (ZeroG.md, "Origini fidate"): the application's own content (HTML it
+// Trust (docs/design/c-api.md, "Direct JavaScript bindings"): the application's own content (HTML it
 // loads itself as about:blank, its schemes), the dev server in dev profiles, then
 // the context's policy callback.
 bool isTrusted(zg_context&, const URL&, zg_trust_request, bool isMainFrame);

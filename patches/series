@@ -1,6 +1,6 @@
 # Patch series applied on top of WEBKIT_REVISION, in order.
 # One file per line, relative to this directory. Keep every patch minimal:
-# the size of this series is the port's health metric (see ZeroG.md, "Strategia upstream").
+# the size of this series is the port's health metric (see docs/design/testing-ci-upstream.md, "Upstream strategy").
 0001-cmake-forwarding-headers-instead-of-symlinks-on-windows.patch
 0002-add-zerog-port-and-platform-macro.patch
 0003-no-export-decorations-for-zerog.patch
@@ -35,3 +35,4 @@
 0032-webcore-media-player-layer-for-zerog.patch
 0033-webcore-media-controls-icons-for-zerog.patch
 0034-webcore-service-worker-connection-per-session.patch
+0035-wtf-thread-description-on-windows.patch

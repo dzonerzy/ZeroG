@@ -37,12 +37,12 @@ target_compile_definitions(ZeroGAPI PRIVATE
     ZEROG_PROFILE_NAME="${ZEROG_PROFILE}"
 )
 # The dev server origin is trusted only by the dev and debug profiles
-# (ZeroG.md, "Origini fidate").
+# (docs/design/c-api.md, "Direct JavaScript bindings").
 if (ZEROG_PROFILE STREQUAL "dev" OR ZEROG_PROFILE STREQUAL "debug")
     target_compile_definitions(ZeroGAPI PRIVATE ZEROG_DEV_PROFILE)
 endif ()
 
-# The example of ZeroG.md: a window, the frontend in app://, a binding.
+# The example of docs/design/c-api.md: a window, the frontend in app://, a binding.
 file(GLOB_RECURSE _zerog_hello_web "${ZEROG_SOURCE_DIR}/examples/hello/web/*")
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/hello_assets.c
@@ -146,6 +146,14 @@ WEBKIT_EXECUTABLE(ZeroGBindingBench)
 if (NOT WIN32)
     target_link_libraries(ZeroGBindingBench PRIVATE Threads::Threads)
 endif ()
+
+# Memory at rest, one scenario per process (tools/memory.py runs them all).
+set(ZeroGMemoryBench_SOURCES ${ZEROG_SOURCE_DIR}/tests/bench/memory.c)
+set(ZeroGMemoryBench_LIBRARIES ZeroGAPI)
+set(ZeroGMemoryBench_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGMemoryBench_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGMemoryBench)
+WEBKIT_EXECUTABLE(ZeroGMemoryBench)
 
 # A C program using only include/zerog.h, with a frontend packed by
 # tools/assets.py and compiled in, as an application does.

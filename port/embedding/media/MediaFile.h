@@ -1,6 +1,6 @@
 #pragma once
 
-// A media file the player decodes (ZeroG.md, "Media"): what it holds, its
+// A media file the player decodes (docs/design/build-system-static-linking.md, "Media"): what it holds, its
 // audio as float samples and its video as RGBA images, from a position.
 // Decode thread only. The formats are the royalty-free ones every browser
 // plays: WebM (VP8, VP9, AV1 video; Opus, Vorbis audio), Ogg (Opus, Vorbis),

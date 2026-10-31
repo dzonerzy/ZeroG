@@ -26,7 +26,7 @@
 
 #pragma once
 
-// GPU compositing (ZeroG.md, "Compositing", version 2): the single-process
+// GPU compositing (docs/design/graphics-presentation.md, "Compositing", version 2): the single-process
 // counterpart of WebKit2's LayerTreeHost and ThreadedCompositor
 // (Source/WebKit/WebProcess/WebPage/CoordinatedGraphics), on upstream's
 // coordinated graphics with Skia.

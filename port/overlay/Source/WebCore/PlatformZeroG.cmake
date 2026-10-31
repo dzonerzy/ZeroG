@@ -2,7 +2,7 @@
 # BoringSSL, WebCore's image decoders, FreeType + Skia's custom font manager.
 #
 # Platform pieces come from three places:
-# - ZeroG's own sources (platform/**/zerog), the platform layer of ZeroG.md;
+# - ZeroG's own sources (platform/**/zerog), the platform layer of docs/design/engine-port.md;
 # - upstream generic implementations, including the PlayStation port's files that
 #   have no SDK dependency (marked below), as a first version to be replaced by
 #   ZeroG's platform layer;

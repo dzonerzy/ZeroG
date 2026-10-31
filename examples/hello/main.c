@@ -1,4 +1,4 @@
-/* The example of ZeroG.md ("Esempio d'uso"): a native window showing the
+/* The example of docs/design/c-api.md ("Usage example"): a native window showing the
  * application's frontend from app://, with a synchronous binding.
  *
  * The frontend (web/) is packed into the binary at build time by

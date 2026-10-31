@@ -1,4 +1,4 @@
-// Fonts registered by the application (ZeroG.md, "Font incorporati"): its UI's
+// Fonts registered by the application (docs/design/text-fonts.md, "Embedded fonts"): its UI's
 // fonts come from memory, not from the system. A session keeps one style sheet
 // of @font-face rules, one per registered font, with the font inline as a data:
 // URL; every document of the session's pages gets it through the pages' user

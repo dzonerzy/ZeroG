@@ -179,7 +179,7 @@ View::View(Configuration&& configuration)
         settings.setLargeImageAsyncDecodingEnabled(false);
         settings.setAnimatedImageAsyncDecodingEnabled(false);
     }
-    // Compositing (ZeroG.md, "Compositing"): GPU views composite layers on the
+    // Compositing (docs/design/graphics-presentation.md, "Compositing"): GPU views composite layers on the
     // compositor thread (graphics/Compositor.h), which takes their surface over;
     // CPU views paint the page into one surface, damage only.
     if (m_surface->kind() != SurfaceKind::CPU) {

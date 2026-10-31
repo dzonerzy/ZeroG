@@ -6,10 +6,11 @@
 
 namespace WebCore {
 
-// The EGL display Skia's GPU backend renders through (ZeroG.md, "Backend GPU per
-// piattaforma"): ANGLE over D3D11 on Windows; on Linux the system driver, loaded
-// at runtime, without a window system (surfaceless or device platform). Contexts
-// are always offscreen: the application decides where frames are presented.
+// The EGL display Skia's GPU backend renders through
+// (docs/design/graphics-presentation.md, "GPU backend per platform"): ANGLE over
+// D3D11 on Windows; on Linux the system driver, loaded at runtime, without a
+// window system (surfaceless or device platform). Contexts are always
+// offscreen: the application decides where frames are presented.
 class PlatformDisplayZeroG final : public PlatformDisplay {
 public:
     // How a display was opened: the EGL platform (0 for eglGetDisplay) and its
@@ -25,6 +26,12 @@ public:
     // can be handed to it as EGLImages (Linux texture mode). `hostPlatform` is
     // how it was opened, when known; without it WebGL is not available on Linux.
     WEBCORE_EXPORT static std::unique_ptr<PlatformDisplayZeroG> create(void* hostDisplay = nullptr, std::optional<NativePlatform> hostPlatform = std::nullopt);
+
+#if OS(WINDOWS)
+    // The adapter ANGLE's D3D11 device is created on (its LUID, HighPart << 32 |
+    // LowPart), for displays created from now on; 0 is the system's default.
+    WEBCORE_EXPORT static void setAdapterLUID(uint64_t);
+#endif
 
     ~PlatformDisplayZeroG();
 

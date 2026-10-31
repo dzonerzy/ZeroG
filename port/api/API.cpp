@@ -15,6 +15,9 @@
 #include <WebCore/PasteboardItemsZeroG.h>
 #include <WebCore/SharedBuffer.h>
 #include <JavaScriptCore/ConsoleTypes.h>
+#if !OS(WINDOWS)
+#include <JavaScriptCore/JSBasePrivate.h> // JSConfigureSignalForGC
+#endif
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/VM.h>
@@ -582,7 +585,9 @@ zg_runtime* zg_runtime_create(const zg_runtime_config* configuration)
 
 #if !OS(WINDOWS)
     // JSC suspends threads with a signal during concurrent GC. Pick a real-time
-    // signal nobody handles instead of SIGUSR1, which hosts often use.
+    // signal nobody handles instead of SIGUSR1, which hosts often use, and give
+    // it to WTF before its threading starts (JSConfigureSignalForGC), without
+    // touching the host's environment. A JSC_SIGNAL_FOR_GC the user set wins.
     if (!getenv("JSC_SIGNAL_FOR_GC")) {
         int signal = config.gc_signal;
         for (int candidate = SIGRTMIN + 4; !signal && candidate <= SIGRTMAX; ++candidate) {
@@ -591,7 +596,7 @@ zg_runtime* zg_runtime_create(const zg_runtime_config* configuration)
                 signal = candidate;
         }
         if (signal)
-            setenv("JSC_SIGNAL_FOR_GC", std::to_string(signal).c_str(), 1);
+            JSConfigureSignalForGC(signal);
     }
 #endif
 
@@ -601,6 +606,7 @@ zg_runtime* zg_runtime_create(const zg_runtime_config* configuration)
     options.jitThreads = config.jit_threads;
     options.heapLimit = config.js_heap_limit;
     options.synchronousImageDecoding = config.sync_image_decoding;
+    options.adapterLUID = config.adapter_luid;
     initializeProcess(options);
     if (config.cache_limit) {
         auto limit = static_cast<unsigned>(std::min<size_t>(config.cache_limit, std::numeric_limits<unsigned>::max()));
@@ -1513,6 +1519,39 @@ void* zg_surface_device(zg_surface* surface)
     return surface && surface->surface ? surface->surface->device() : nullptr;
 }
 
+zg_result zg_surface_win32(zg_surface* surface, const zg_frame* frame, zg_win32_frame* out)
+{
+    clearError();
+    if (!surface || !surface->surface || !frame || !frame->internal || !out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no surface, frame or output"_s);
+    ZeroG::Frame internal;
+    internal.handle = frame->internal;
+    ZeroG::Win32Frame handles;
+    if (!surface->surface->win32(internal, handles))
+        return fail(ZG_ERROR_UNSUPPORTED, "frames of this surface have no Win32 handles"_s);
+    zg_win32_frame result { };
+    result.size = sizeof(zg_win32_frame);
+    result.texture_handle = reinterpret_cast<zg_native_handle>(handles.texture);
+    result.dxgi_format = handles.dxgiFormat;
+    result.ready_fence_handle = reinterpret_cast<zg_native_handle>(handles.readyFence);
+    result.ready_value = handles.readyValue;
+    result.release_fence_handle = reinterpret_cast<zg_native_handle>(handles.releaseFence);
+    result.release_value = handles.releaseValue;
+    result.buffer_id = handles.bufferID;
+    result.adapter_luid = handles.adapterLUID;
+    // As much as the caller's struct holds (an older one is shorter).
+    size_t size = std::min(out->size ? out->size : sizeof(zg_win32_frame), sizeof(zg_win32_frame));
+    memcpy(out, &result, size);
+    out->size = size;
+    return ZG_OK;
+}
+
+void zg_surface_device_lost(zg_surface* surface)
+{
+    if (surface && surface->surface)
+        surface->surface->deviceLost();
+}
+
 // ---- Views ----
 
 static zg_view* viewOrFail(zg_view* view)
@@ -1557,10 +1596,33 @@ zg_view* zg_view_create(zg_context* context, const zg_view_config* configuration
         }
         surface = createD3D11Surface(surfaceConfig.device, buffers);
         if (!surface) {
-            fail(ZG_ERROR_GPU, "cannot share D3D11 textures with the device (it must be on ANGLE's adapter)"_s);
+            fail(ZG_ERROR_UNSUPPORTED, makeString("cannot share D3D11 textures with the device: "_s, String::fromLatin1(lastSurfaceError())));
             return nullptr;
         }
         break;
+    case ZG_SURFACE_D3D12:
+    case ZG_SURFACE_VULKAN:
+    case ZG_SURFACE_D3D9: {
+        if (surfaceConfig.kind != ZG_SURFACE_VULKAN && !surfaceConfig.device) {
+            fail(ZG_ERROR_INVALID_ARGUMENT, surfaceConfig.kind == ZG_SURFACE_D3D12 ? "ZG_SURFACE_D3D12 needs the application's ID3D12CommandQueue as its device"_s : "ZG_SURFACE_D3D9 needs the application's IDirect3DDevice9 as its device"_s);
+            return nullptr;
+        }
+        if (!initializeGPU()) {
+            fail(ZG_ERROR_GPU, "no GPU (ANGLE over D3D11)"_s);
+            return nullptr;
+        }
+        if (surfaceConfig.kind == ZG_SURFACE_D3D12)
+            surface = createD3D12Surface(surfaceConfig.device, buffers);
+        else if (surfaceConfig.kind == ZG_SURFACE_VULKAN)
+            surface = createWin32Surface(buffers);
+        else
+            surface = createD3D9Surface(surfaceConfig.device, buffers);
+        if (!surface) {
+            fail(ZG_ERROR_UNSUPPORTED, String::fromLatin1(lastSurfaceError()));
+            return nullptr;
+        }
+        break;
+    }
 #else
     case ZG_SURFACE_GL:
         if (!surfaceConfig.device) {

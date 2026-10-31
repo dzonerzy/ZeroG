@@ -16,7 +16,7 @@ if (WIN32)
     # (angle_force_context_check_every_call; it replaces the per-context mutex).
     list(APPEND ANGLE_DEFINITIONS ANGLE_ENABLE_SHARE_CONTEXT_LOCK=1 ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Only for WebGL (ZeroG.md, "Backend GPU per piattaforma"): the GL backend over
+    # Only for WebGL (docs/design/graphics-presentation.md, "GPU backend per platform"): the GL backend over
     # the system's EGL, loaded at run time, as PlatformWPE.cmake builds it.
     list(APPEND ANGLE_DEFINITIONS ANGLE_PLATFORM_LINUX EGL_NO_PLATFORM_SPECIFIC_TYPES)
     include(linux.cmake)

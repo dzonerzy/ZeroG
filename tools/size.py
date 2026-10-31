@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure what the engine adds to an application (ZeroG.md, "Obiettivi misurabili").
+"""Measure what the engine adds to an application (docs/design/measurable-goals.md).
 
 For each profile's build directory, the example application (ZeroGHello, which
 links the whole engine statically) is measured as an application would ship

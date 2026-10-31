@@ -1,4 +1,4 @@
-// Accessibility on Windows (ZeroG.md, "Accessibilità"): a UI Automation client,
+// Accessibility on Windows (docs/design/input-ime-clipboard-accessibility.md, "Accessibility"): a UI Automation client,
 // on a thread of its own as a screen reader would be, finds the page's controls
 // in the window by name and uses them: a button is invoked, a text field read and
 // set, a check box toggled, a slider read; moving the focus to the text field

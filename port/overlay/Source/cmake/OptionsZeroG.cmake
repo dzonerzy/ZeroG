@@ -4,7 +4,7 @@
 
 find_package(Threads REQUIRED)
 
-# Build profile (ZeroG.md, "Profili di build"), passed by tools/build.py.
+# Build profile (docs/design/build-system-static-linking.md, "Build profiles"), passed by tools/build.py.
 set(ZEROG_PROFILE "minimal" CACHE STRING "minimal, standard, dev or debug")
 if (ZEROG_PROFILE STREQUAL "minimal")
     set(_zerog_full_web OFF)
@@ -30,17 +30,21 @@ if (MSVC)
     if (NOT ZEROG_PROFILE STREQUAL "debug")
         MSVC_ADD_COMPILE_OPTIONS(-gline-tables-only)
     endif ()
-    # Size (ZeroG.md, "Metriche"): data in sections of their own (/Gw; /O2 gives
+    # Size (docs/design/text-fonts.md, "Binary size"): data in sections of their own (/Gw; /O2 gives
     # functions theirs), so an application's /OPT:REF drops what it never
     # reaches. OptionsMSVC turns identical code folding off because folded
     # functions compare equal; safe ICF folds only those whose address is never
     # taken (clang's address-significance tables), which keeps that true.
+    # Not under the sanitizers: folded data (two identical string literals) is
+    # two globals at one address to AddressSanitizer's ODR check.
     if (NOT ZEROG_PROFILE STREQUAL "debug")
         MSVC_ADD_COMPILE_OPTIONS(/Gw)
-        get_directory_property(_zerog_link_options LINK_OPTIONS)
-        list(REMOVE_ITEM _zerog_link_options /OPT:NOICF)
-        set_directory_properties(PROPERTIES LINK_OPTIONS "${_zerog_link_options}")
-        add_link_options(/OPT:SAFEICF)
+        if (NOT ENABLE_SANITIZERS)
+            get_directory_property(_zerog_link_options LINK_OPTIONS)
+            list(REMOVE_ITEM _zerog_link_options /OPT:NOICF)
+            set_directory_properties(PROPERTIES LINK_OPTIONS "${_zerog_link_options}")
+            add_link_options(/OPT:SAFEICF)
+        endif ()
     endif ()
 else ()
     set(CMAKE_C_VISIBILITY_PRESET hidden)
@@ -66,16 +70,23 @@ if (ZEROG_ZIG AND WTF_CPU_X86_64 AND NOT CMAKE_LIBRARY_ARCHITECTURE)
     set(CMAKE_LIBRARY_ARCHITECTURE x86_64-linux-gnu)
 endif ()
 if (NOT MSVC AND NOT ZEROG_PROFILE STREQUAL "debug")
-    # Size (ZeroG.md, "Metriche"): every function and datum in a section of its
+    # Size (docs/design/text-fonts.md, "Binary size"): every function and datum in a section of its
     # own, so the link drops what nothing reaches. OptionsCommon does this only
     # when the linker's --help mentions --gc-sections, which zig's does not
     # print. (zig cc passes no --icf to its linker: no code folding here.)
     add_compile_options(-ffunction-sections -fdata-sections)
     add_link_options("LINKER:--gc-sections")
+    # Line tables, as on Windows (-gline-tables-only above): crash stacks keep
+    # their functions and lines once tools/symbols.py has moved them out of the
+    # binary into separate debug files.
+    add_compile_options(-gline-tables-only)
+    # A build ID in every binary: debug files are found by it (debuginfod's
+    # layout, GDB's .build-id directories).
+    add_link_options("LINKER:--build-id")
 endif ()
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ZEROG_ZIG)
     # Executables built in the port (jsc, tests) carry the C++ runtime: only glibc
-    # stays dynamic (ZeroG.md, "Cosa resta dinamico a runtime").
+    # stays dynamic (docs/design/dependencies.md, "What stays dynamic at runtime").
     string(APPEND CMAKE_EXE_LINKER_FLAGS " -static-libstdc++ -static-libgcc")
     # WTF/JSC link the bare name "atomic" when ATOMICS_REQUIRE_LIBATOMIC; an
     # imported target of that name takes precedence and points at the static library.
@@ -95,7 +106,7 @@ option(ZEROG_MIMALLOC_SECURE "mimalloc hardened mode: guard pages, randomized al
 add_definitions(-DJS_NO_EXPORT)
 
 set(PROJECT_VERSION_MAJOR 0)
-set(PROJECT_VERSION_MINOR 1) # include/zerog.h
+set(PROJECT_VERSION_MINOR 3) # include/zerog.h
 set(PROJECT_VERSION_MICRO 0)
 set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_MICRO})
 
@@ -120,7 +131,7 @@ if (ENABLE_SANITIZERS AND MSVC)
 endif ()
 
 WEBKIT_OPTION_BEGIN()
-# Allocator (ZeroG.md, "Allocatore di memoria"): the vendored mimalloc on every OS,
+# Allocator (docs/design/host-coexistence.md, "Memory allocator"): the vendored mimalloc on every OS,
 # so allocation behaves the same everywhere; no libpas/Gigacage. It never replaces
 # the host's malloc (MI_OVERRIDE is off upstream) and its symbols are private to
 # the bundle. ZEROG_MIMALLOC_SECURE turns on mimalloc's hardened mode
@@ -133,7 +144,7 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA PRIVATE ON)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE ON) # toDataURL, toBlob
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_WOFF2 PRIVATE ON)
 
-# Functions per profile (ZeroG.md, "Funzioni da spegnere").
+# Functions per profile (docs/design/dependencies.md, "Features to turn off").
 # WebGL over ANGLE, composited as layers (GraphicsContextGLZeroG.cpp): ANGLE is
 # the GL on Windows; on Linux its GL backend runs over the system's EGL
 # (ThirdParty/ANGLE/PlatformZeroG.cmake), as GTK and WPE build it.
@@ -155,7 +166,7 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_SAMPLING_PROFILER PRIVATE ${_zerog_inspe
 if (NOT _zerog_inspector)
     add_definitions(-DENABLE_ZYDIS=0)
 endif ()
-# Media (ZeroG.md, "Media"): ENABLE_VIDEO stays on in every profile (no upstream
+# Media (docs/design/build-system-static-linking.md, "Media"): ENABLE_VIDEO stays on in every profile (no upstream
 # port builds without it and WebCore compiles media code unguarded). The standard,
 # dev and debug profiles have ZeroG's media engine (port/embedding/media: WebM,
 # Ogg, MP3, FLAC, WAV; MP4 on Windows), Web Audio and Media Source Extensions
@@ -168,7 +179,7 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SOURCE PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)
 # AVIF in the full profiles (libavif over dav1d, the AV1 decoder media uses).
-# JPEG XL is left out everywhere (ZeroG.md), and so is color management.
+# JPEG XL is left out everywhere (docs/design/dependencies.md), and so is color management.
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_AVIF PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_JPEGXL PRIVATE OFF)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_LCMS PRIVATE OFF)
@@ -298,7 +309,7 @@ endif ()
 # compiled into the engine), as Cocoa and GStreamer ports load them.
 SET_AND_EXPOSE_TO_BUILD(USE_CONCATENATED_IMPULSE_RESPONSES ${ENABLE_WEB_AUDIO})
 
-# GPU (ZeroG.md, "Backend GPU per piattaforma"): Skia Ganesh over GLES through EGL,
+# GPU (docs/design/graphics-presentation.md, "GPU backend per platform"): Skia Ganesh over GLES through EGL,
 # the one GPU path upstream supports. Windows uses ANGLE (GL over D3D11), built in
 # tree. Linux uses the system driver, loaded at run time; only the Khronos headers
 # are needed to build, so no EGL/GLES library is linked.
@@ -324,7 +335,7 @@ else ()
 endif ()
 SET_AND_EXPOSE_TO_BUILD(USE_EGL ON)
 
-# Compositing version 2 (ZeroG.md, "Compositing"): upstream's coordinated graphics
+# Compositing version 2 (docs/design/graphics-presentation.md, "Compositing"): upstream's coordinated graphics
 # with Skia, as GTK and WPE build it (no TextureMapper). GPU views composite their
 # layers on the compositor thread (port/embedding/graphics/Compositor.*).
 SET_AND_EXPOSE_TO_BUILD(USE_COORDINATED_GRAPHICS ON)

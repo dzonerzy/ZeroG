@@ -1,5 +1,5 @@
 /* Compile-only check: zerog.h is valid C99 and the usage example from
-   ZeroG.md ("Esempio d'uso") compiles against it unchanged. */
+   docs/design/c-api.md ("Usage example") compiles against it unchanged. */
 #include <zerog.h>
 #include <stdio.h>
 

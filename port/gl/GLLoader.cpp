@@ -1,5 +1,5 @@
-// Runtime loading of the system's EGL and GLES driver on Linux (ZeroG.md, "Backend
-// GPU per piattaforma": drivers are loaded with dlopen, as games do). Only the C
+// Runtime loading of the system's EGL and GLES driver on Linux (docs/design/
+// graphics-presentation.md, "GPU backend per platform": drivers are loaded with dlopen, as games do). Only the C
 // library and the GPU driver stay dynamic.
 
 #include "GLLoader.h"

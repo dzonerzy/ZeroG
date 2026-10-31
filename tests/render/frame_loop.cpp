@@ -1,4 +1,4 @@
-// The frame loop of texture and CPU modes (ZeroG.md, "Ciclo di un frame"): the
+// The frame loop of texture and CPU modes (docs/design/graphics-presentation.md, "Frame cycle"): the
 // application gives each frame's time, requestAnimationFrame follows it, and each
 // frame repaints only what changed. The incrementally updated buffers must match a
 // full repaint of the page.

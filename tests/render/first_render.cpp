@@ -1,4 +1,4 @@
-// Phase 1 gate (ZeroG.md, "Roadmap"): HTML from a string, laid out and painted
+// Phase 1 gate (docs/design/roadmap.md): HTML from a string, laid out and painted
 // through Skia, saved as PNG, with pixels checked where the page puts known
 // colors. With --gpu the page is also painted on the GPU (Skia Ganesh over EGL:
 // ANGLE on Windows, the system driver on Linux), checked the same way and

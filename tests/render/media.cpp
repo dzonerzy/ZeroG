@@ -1,4 +1,4 @@
-// Media (ZeroG.md, "Media"): <audio> and <video> through ZeroG's engine, in the
+// Media (docs/design/build-system-static-linking.md, "Media"): <audio> and <video> through ZeroG's engine, in the
 // standard, dev and debug builds. Pages served from app:// (tests/media: tiny
 // files made for the test) are played: canPlayType answers for the formats;
 // each audio format (Opus and Vorbis in Ogg and WebM, MP3, FLAC, WAV) loads its

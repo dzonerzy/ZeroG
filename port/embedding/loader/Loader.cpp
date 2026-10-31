@@ -626,7 +626,7 @@ Session::RegisterResult Session::registerScheme(const String& scheme, Ref<Scheme
     if (m_schemeHandlers.contains(scheme))
         return RegisterResult::AlreadyRegistered;
 
-    // ZeroG.md, "Schema custom app://": secure (so crypto.subtle and other
+    // docs/design/networking-storage-resources.md, "Custom app:// scheme": secure (so crypto.subtle and other
     // secure-context APIs work) and CORS-enabled (fetch). Process-wide in WebCore.
     LegacySchemeRegistry::registerURLSchemeAsSecure(scheme);
     LegacySchemeRegistry::registerURLSchemeAsCORSEnabled(scheme);

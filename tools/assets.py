@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pack a directory into a ZeroG asset archive for zg_context_mount_assets
-(ZeroG.md, "Schema custom app://"): the application's frontend, embedded in its
+(docs/design/networking-storage-resources.md, "Custom app:// scheme"): the application's frontend, embedded in its
 binary and served from memory under app://.
 
 Each file is stored as is or zlib-compressed, whichever is smaller; formats that

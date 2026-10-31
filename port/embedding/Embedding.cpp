@@ -68,6 +68,9 @@ void initializeProcess(const ProcessOptions& options)
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [&] {
         s_processOptions = options;
+#if OS(WINDOWS)
+        PlatformDisplayZeroG::setAdapterLUID(options.adapterLUID);
+#endif
         JSC::Options::initialize([&] {
             if (!options.jit)
                 JSC::Options::useJIT() = false;

@@ -1,6 +1,6 @@
 #pragma once
 
-// ZeroG's media engine for WebCore (ZeroG.md, "Media"; standard, dev and debug
+// ZeroG's media engine for WebCore (docs/design/build-system-static-linking.md, "Media"; standard, dev and debug
 // profiles): <audio> and <video> for WebM (VP8, VP9, AV1 with Opus or Vorbis),
 // Ogg (Opus, Vorbis), MP3, FLAC and WAV. The page's loader brings the bytes; a
 // decode thread per player demuxes and decodes them (MediaFile) ahead of the

@@ -1,4 +1,4 @@
-// Accessibility on Linux (ZeroG.md, "Accessibilità"): an AT-SPI client, on a
+// Accessibility on Linux (docs/design/input-ime-clipboard-accessibility.md, "Accessibility"): an AT-SPI client, on a
 // thread and a D-Bus connection of its own as a screen reader would be, finds
 // the application through the AT-SPI registry, walks to the page's controls by
 // name and uses them: a button's action, a text field's text read and set, a

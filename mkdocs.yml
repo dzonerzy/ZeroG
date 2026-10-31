@@ -1,0 +1,113 @@
+site_name: ZeroG
+site_description: A single-process WebKit engine with a small, stable C API, linked statically into your application.
+site_url: https://dzonerzy.github.io/ZeroG/
+repo_url: https://github.com/dzonerzy/ZeroG
+repo_name: dzonerzy/ZeroG
+edit_uri: edit/main/docs/
+copyright: ZeroG contributors
+
+theme:
+  name: material
+  logo: assets/logo/mark.svg
+  favicon: assets/logo/mark.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/index.md
+      - Building: getting-started/building.md
+      - Your first app: getting-started/first-app.md
+  - Guides:
+      - guides/index.md
+      - Concepts: guides/concepts.md
+      - JavaScript bindings: guides/bindings.md
+      - App assets and schemes: guides/assets-and-schemes.md
+      - Trust and security: guides/security.md
+      - Window mode: guides/window-mode.md
+      - Texture mode: guides/texture-mode.md
+      - Game overlays: guides/game-overlays.md
+      - Storage and networking: guides/storage-networking.md
+      - Media: guides/media.md
+      - Web Inspector: guides/inspector.md
+      - Accessibility: guides/accessibility.md
+      - Profiles and binary size: guides/profiles-and-size.md
+      - Memory: guides/memory.md
+      - Symbols and crashes: guides/symbols-and-crashes.md
+      - Licensing and relinking: guides/licensing.md
+  - API reference:
+      - reference/index.md
+      - Handles: reference/handles.md
+      - Errors: reference/errors.md
+      - Logging and diagnostics: reference/logging-and-diagnostics.md
+      - Runtime: reference/runtime.md
+      - Context: reference/context.md
+      - Surfaces: reference/surfaces.md
+      - Views: reference/views.md
+      - JavaScript bindings: reference/direct-javascript-bindings.md
+      - Windows: reference/windows.md
+  - Design:
+      - design/index.md
+      - Overview: design/overview.md
+      - Context: design/context.md
+      - Architecture: design/architecture.md
+      - The engine port: design/engine-port.md
+      - Process model: design/process-model.md
+      - Coexisting with the host: design/host-coexistence.md
+      - Graphics and presentation: design/graphics-presentation.md
+      - Text and fonts: design/text-fonts.md
+      - Networking, storage and resources: design/networking-storage-resources.md
+      - Input, IME, clipboard, accessibility: design/input-ime-clipboard-accessibility.md
+      - The C API: design/c-api.md
+      - Build system and static linking: design/build-system-static-linking.md
+      - Dependencies: design/dependencies.md
+      - Licensing and the LGPL: design/licensing-lgpl.md
+      - Security: design/security.md
+      - The Zig framework: design/zig-framework.md
+      - Measurable goals: design/measurable-goals.md
+      - Roadmap: design/roadmap.md
+      - Testing, CI and upstream: design/testing-ci-upstream.md
+      - Risks and open questions: design/risks-open-questions.md
+      - Sources: design/sources.md
+  - Project:
+      - project/index.md
+      - Contributing: project/contributing.md
+      - Testing: project/testing.md
+      - Changes to the C API: api-changes.md
+      - Provenance of derived files: PROVENANCE.md
+      - Measurements: project/measurements.md

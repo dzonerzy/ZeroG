@@ -23,8 +23,8 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// http and https loads over WebCore's curl classes (ZeroG.md, "Rete, storage e
-// risorse"): requests run on curl's network thread, and their responses come
+// http and https loads over WebCore's curl classes (docs/design/
+// networking-storage-resources.md): requests run on curl's network thread, and their responses come
 // back to the engine thread in pieces, streamed into the page's loader. The
 // response, redirect and cookie handling is derived, at the pinned WebKit
 // commit, from WebKit's NetworkDataTaskCurl (docs/PROVENANCE.md).

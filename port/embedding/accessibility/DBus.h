@@ -1,6 +1,6 @@
 #pragma once
 
-// libdbus, loaded at run time (ZeroG.md, "Cosa resta dinamico a runtime"): the
+// libdbus, loaded at run time (docs/design/dependencies.md, "What stays dynamic at runtime"): the
 // AT-SPI bridge talks D-Bus only on systems that have it, and building needs no
 // D-Bus headers. The types and constants are libdbus's public ABI (dbus/
 // dbus-message.h, dbus-errors.h, dbus-protocol.h), stable since 1.0.

@@ -18,14 +18,27 @@ using NativePlatform = PlatformDisplayZeroG::NativePlatform;
 
 #if OS(WINDOWS)
 
+static uint64_t s_adapterLUID;
+
+void PlatformDisplayZeroG::setAdapterLUID(uint64_t luid)
+{
+    s_adapterLUID = luid;
+}
+
 static RefPtr<GLDisplay> createGLDisplay(std::optional<NativePlatform>&)
 {
-    const EGLint attributes[] = {
+    EGLint attributes[] = {
         EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
         // Debug layers fill uninitialized buffers with a clear color.
         EGL_PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE, EGL_FALSE,
+        // The application's adapter (a game's), so its device can open the
+        // engine's textures; ANGLE takes the LUID in two halves.
+        EGL_PLATFORM_ANGLE_D3D_LUID_HIGH_ANGLE, static_cast<EGLint>(s_adapterLUID >> 32),
+        EGL_PLATFORM_ANGLE_D3D_LUID_LOW_ANGLE, static_cast<EGLint>(s_adapterLUID & 0xffffffff),
         EGL_NONE,
     };
+    if (!s_adapterLUID)
+        attributes[4] = EGL_NONE; // the system's default adapter
     return GLDisplay::create(eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attributes));
 }
 

@@ -63,6 +63,8 @@ if (WIN32)
     list(APPEND ZeroGEmbedding_SOURCES
         accessibility/AccessibilityUIA.cpp
         graphics/SurfaceD3D11.cpp
+        graphics/SurfaceD3D12.cpp
+        graphics/SurfaceD3D9.cpp
     )
     list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi ole32 oleaut32 uiautomationcore)
 else ()
@@ -246,6 +248,28 @@ set(ZeroGTexture_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DI
 WEBKIT_EXECUTABLE_DECLARE(ZeroGTexture)
 WEBKIT_EXECUTABLE(ZeroGTexture)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGTexture)
+
+# Texture mode for games on Windows: D3D12 (frames opened on the game's queue),
+# Direct3D 9 (shared with 9Ex devices, copied for plain ones) and Vulkan (NT
+# handles of the textures and fences, imported by the game).
+if (WIN32)
+    set(ZeroGTextureD3D12_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/texture_d3d12.cpp)
+    set(ZeroGTextureD3D12_LIBRARIES ZeroGEmbedding d3d12 dxgi)
+    set(ZeroGTextureD3D9_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/texture_d3d9.cpp)
+    set(ZeroGTextureD3D9_LIBRARIES ZeroGEmbedding d3d9)
+    # Vulkan: the headers and vulkan-1.lib from the sysroot (deps/vcpkg.json);
+    # the GPU driver's vulkan-1.dll at run time.
+    find_library(ZEROG_VULKAN_LIBRARY vulkan-1 REQUIRED)
+    set(ZeroGTextureVulkan_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/texture_vulkan_win.cpp)
+    set(ZeroGTextureVulkan_LIBRARIES ZeroGEmbedding dxgi ${ZEROG_VULKAN_LIBRARY})
+    foreach (_zerog_test IN ITEMS ZeroGTextureD3D12 ZeroGTextureD3D9 ZeroGTextureVulkan)
+        set(${_zerog_test}_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+        set(${_zerog_test}_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+        WEBKIT_EXECUTABLE_DECLARE(${_zerog_test})
+        WEBKIT_EXECUTABLE(${_zerog_test})
+        ZEROG_USE_WEBCORE_INCLUDES(${_zerog_test})
+    endforeach ()
+endif ()
 
 # Texture mode with dma-bufs (Linux): the frames a Vulkan application imports.
 if (NOT WIN32)

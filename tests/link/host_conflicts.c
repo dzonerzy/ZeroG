@@ -2,7 +2,7 @@
    version (identical symbol names, linked from the stock ICU libraries) and its
    own mi_malloc. Linked together with the engine bundle, there must be no
    duplicate symbols, and each side must keep using its own copy
-   (ZeroG.md, "Simboli nel link statico"). */
+   (docs/design/host-coexistence.md, "Symbols in static linking"). */
 #include <JavaScriptCore/JavaScript.h>
 #include <unicode/uloc.h>
 #include <unicode/ustring.h>

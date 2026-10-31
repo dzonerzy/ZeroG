@@ -1,0 +1,19 @@
+diff --git a/Source/WTF/wtf/win/ThreadingWin.cpp b/Source/WTF/wtf/win/ThreadingWin.cpp
+index f3b3ec3943..7b22a5ac7b 100644
+--- a/Source/WTF/wtf/win/ThreadingWin.cpp
++++ b/Source/WTF/wtf/win/ThreadingWin.cpp
+@@ -151,6 +151,14 @@ void Thread::initializeCurrentThreadInternal(const char* szThreadName)
+         RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), reinterpret_cast<ULONG_PTR*>(&info));
+     } __except(EXCEPTION_CONTINUE_EXECUTION) { }
+
++#if PLATFORM(ZEROG)
++    // The exception above names the thread for an attached debugger only; crash
++    // dumps, ETW traces and profilers read its description (Windows 10 1607).
++    wchar_t description[128];
++    if (MultiByteToWideChar(CP_UTF8, 0, info.szName, -1, description, std::size(description)))
++        SetThreadDescription(GetCurrentThread(), description);
++#endif
++
+     initializeCurrentThreadEvenIfNonWTFCreated();
+ }
+

@@ -1,7 +1,7 @@
 # Symbols that stay public in the engine bundle (tools/build.py bundle).
 # fnmatch patterns, one per line. Everything else defined in the bundle is made
 # local (Linux) or renamed with the zg_ prefix (Windows, C symbols), so it cannot
-# collide with the host (ZeroG.md, "Simboli nel link statico").
+# collide with the host (docs/design/host-coexistence.md, "Symbols in static linking").
 
 zg_*
 

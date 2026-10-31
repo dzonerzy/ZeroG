@@ -1,0 +1,26 @@
+# The patch series and the overlay apply to the pinned WebKit revision. Run when
+# they or the revision change (a shallow fetch of WebKit is about 2 GB).
+name: patches
+
+on:
+  push:
+    paths: [patches/**, port/overlay/**, WEBKIT_REVISION, tools/webkit.py]
+  pull_request:
+    paths: [patches/**, port/overlay/**, WEBKIT_REVISION, tools/webkit.py]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Fetch WebKit at WEBKIT_REVISION (shallow)
+        run: python tools/webkit.py fetch
+      - name: Apply patches/series and port/overlay
+        run: python tools/webkit.py prepare

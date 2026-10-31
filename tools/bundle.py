@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the engine bundle: one archive with every engine object and its static
 dependencies, where only the public API (port/api/exports.txt) stays public
-(ZeroG.md, "Simboli nel link statico").
+(docs/design/host-coexistence.md, "Symbols in static linking").
 
 Linux (ELF): everything is partially linked (`ld -r`) into one relocatable
 object, then `objcopy --keep-global-symbols` makes every other symbol local.

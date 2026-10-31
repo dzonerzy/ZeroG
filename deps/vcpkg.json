@@ -1,7 +1,7 @@
 {
   "name": "zerog-deps",
   "version-string": "0",
-  "description": "Static dependency sysroot for the ZeroG port (ZeroG.md, 'Dipendenze'). Every library is static and built with the pinned toolchain; features are trimmed to what WebCore uses.",
+  "description": "Static dependency sysroot for the ZeroG port (docs/design/dependencies.md). Every library is static and built with the pinned toolchain; features are trimmed to what WebCore uses.",
   "dependencies": [
     { "name": "icu", "default-features": false },
     "zlib",
@@ -18,9 +18,10 @@
     "woff2",
     { "name": "egl-registry", "platform": "linux", "$comment": "Khronos EGL headers only; the driver is loaded at run time" },
     { "name": "opengl-registry", "platform": "linux", "$comment": "Khronos GLES headers only" },
+    { "name": "vulkan-loader", "platform": "windows", "$comment": "tests only (ZeroGTextureVulkan): the headers and vulkan-1.lib; at run time the GPU driver's vulkan-1.dll. The engine does not link it" },
     {
       "name": "sdl3",
-      "$comment": "Window mode (ZeroG.md, 'Modalità finestra'): window, events, input. X11 and Wayland are loaded at run time; IBus (D-Bus) comes with IME support.",
+      "$comment": "Window mode (docs/design/graphics-presentation.md, 'Modes'): window, events, input. X11 and Wayland are loaded at run time; IBus (D-Bus) comes with IME support.",
       "default-features": false,
       "features": [
         { "name": "x11", "platform": "linux" },
@@ -31,7 +32,7 @@
     {
       "name": "libwebm",
       "features": ["parser"],
-      "$comment": "Media (ZeroG.md, 'Media'; standard, dev and debug profiles): WebM and Matroska demuxing; the parser feature (deps/ports/libwebm) for Media Source Extensions. The codecs below are all royalty-free and permissively licensed."
+      "$comment": "Media (docs/design/build-system-static-linking.md, 'Media'; standard, dev and debug profiles): WebM and Matroska demuxing; the parser feature (deps/ports/libwebm) for Media Source Extensions. The codecs below are all royalty-free and permissively licensed."
     },
     { "name": "libvpx", "default-features": false, "$comment": "VP8 and VP9 decoding" },
     { "name": "dav1d", "default-features": false, "$comment": "AV1 decoding" },
