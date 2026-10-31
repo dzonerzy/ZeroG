@@ -65,7 +65,9 @@ std::unique_ptr<View> View::create(Configuration&& configuration)
 
 static Ref<Page> createPage(View& view)
 {
-    auto configuration = pageConfigurationWithEmptyClients(std::nullopt, view.session().sessionID());
+    // A page identifier, as WebKit2 gives each page: WebCore keys per-page
+    // services by it (the media session manager that admits playback, drags).
+    auto configuration = pageConfigurationWithEmptyClients(PageIdentifier::generate(), view.session().sessionID());
     // The empty clients are made for SVG images, whose frames are fully sandboxed;
     // a ZeroG page is the application's own UI.
     auto& mainFrameParameters = std::get<PageConfiguration::LocalMainFrameCreationParameters>(configuration.mainFrameCreationParameters);

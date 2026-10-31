@@ -74,6 +74,40 @@ else ()
     list(APPEND ZeroGEmbedding_LIBRARIES ${CMAKE_DL_LIBS})
 endif ()
 
+# Media (standard, dev and debug profiles): the engine and its codecs, all
+# royalty-free and permissively licensed, from the sysroot.
+if (ZEROG_MEDIA)
+    list(APPEND ZeroGEmbedding_SOURCES
+        media/AudioFile.cpp
+        media/AudioOutput.cpp
+        media/MediaBytes.cpp
+        media/MediaFile.cpp
+        media/MediaPlayerPrivateZeroG.cpp
+        media/WebMFile.cpp
+    )
+    find_package(unofficial-libwebm CONFIG REQUIRED)
+    find_package(unofficial-libvpx CONFIG REQUIRED)
+    find_package(Opus CONFIG REQUIRED)
+    find_package(OpusFile CONFIG REQUIRED)
+    find_package(Ogg CONFIG REQUIRED)
+    find_package(Vorbis CONFIG REQUIRED)
+    find_package(libyuv CONFIG REQUIRED)
+    # dav1d installs a pkg-config file only; drlibs is header-only.
+    find_library(ZEROG_DAV1D_LIBRARY NAMES dav1d libdav1d REQUIRED)
+    find_path(ZEROG_DRLIBS_INCLUDE_DIR dr_mp3.h REQUIRED)
+    list(APPEND ZeroGEmbedding_LIBRARIES
+        unofficial::libwebm::libwebm
+        unofficial::libvpx::libvpx
+        ${ZEROG_DAV1D_LIBRARY}
+        OpusFile::opusfile
+        Opus::opus
+        Vorbis::vorbisfile
+        Vorbis::vorbis
+        Ogg::ogg
+        yuv
+    )
+endif ()
+
 # The Web Inspector (dev and debug profiles): WebInspectorUI builds its frontend
 # into a resource directory (Source/WebInspectorUI/CMakeLists.txt); packed with
 # tools/assets.py, it is compiled in and served under inspector://. The
@@ -111,6 +145,10 @@ WEBKIT_LIBRARY(ZeroGEmbedding)
 if (ENABLE_WEBINSPECTORUI)
     target_compile_definitions(ZeroGEmbedding PRIVATE ZEROG_INSPECTOR=1)
     add_dependencies(ZeroGEmbedding WebInspectorUI)
+endif ()
+if (ZEROG_MEDIA)
+    target_compile_definitions(ZeroGEmbedding PRIVATE ZEROG_MEDIA=1)
+    target_include_directories(ZeroGEmbedding SYSTEM PRIVATE ${ZEROG_DRLIBS_INCLUDE_DIR} ${ZEROG_DRLIBS_INCLUDE_DIR}/webm)
 endif ()
 
 # WebCore's headers include those of its dependencies (ICU, Skia, HarfBuzz, curl...),
@@ -208,6 +246,19 @@ WEBKIT_EXECUTABLE_DECLARE(ZeroGCompositing)
 WEBKIT_EXECUTABLE(ZeroGCompositing)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGCompositing)
 
+# Media: <audio> and <video> of each format from app://, against tests/media
+# (the minimal build: nothing plays).
+set(ZeroGMedia_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/media.cpp)
+set(ZeroGMedia_LIBRARIES ZeroGEmbedding)
+set(ZeroGMedia_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+set(ZeroGMedia_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES})
+WEBKIT_EXECUTABLE_DECLARE(ZeroGMedia)
+WEBKIT_EXECUTABLE(ZeroGMedia)
+ZEROG_USE_WEBCORE_INCLUDES(ZeroGMedia)
+target_compile_definitions(ZeroGMedia PRIVATE ZEROG_TEST_MEDIA="${ZEROG_SOURCE_DIR}/tests/media")
+if (ZEROG_MEDIA)
+    target_compile_definitions(ZeroGMedia PRIVATE ZEROG_MEDIA=1)
+endif ()
 # The Web Inspector: local frontend, closing, the remote inspector's target list.
 set(ZeroGInspector_SOURCES ${ZEROG_SOURCE_DIR}/tests/render/inspector.cpp)
 set(ZeroGInspector_LIBRARIES ZeroGEmbedding)

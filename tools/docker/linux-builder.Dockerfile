@@ -48,6 +48,12 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libx11-dev libxext-dev libxkbcommon-dev libwayland-dev libwayland-bin wayland-protocols libegl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Headers for SDL3's sound backends (media): ALSA, PulseAudio and PipeWire, also
+# loaded at run time (deps/ports/sdl3, feature system-audio).
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libasound2-dev libpulse-dev libpipewire-0.3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # For the render tests only, the engine depends on neither: fonts (it reads
 # whatever the host has under /usr/share/fonts), Mesa's EGL with llvmpipe, a
 # software GPU driver for the GPU tests (port/gl loads the system driver), and

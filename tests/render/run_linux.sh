@@ -40,6 +40,8 @@ else
     echo "SKIP texture mode with dma-bufs: no /dev/dri (docker run --device /dev/dri)"
 fi
 run "GPU compositing" "$bin/ZeroGCompositing"
+# SDL's dummy sound driver plays in real time with no device: the audio clock runs.
+run "media: audio and video (standard, dev and debug builds)" env SDL_AUDIODRIVER=dummy "$bin/ZeroGMedia"
 run "input" "$bin/ZeroGInput"
 run "resource loader" "$bin/ZeroGLoader"
 run "window on X11" xvfb-run -a "$bin/ZeroGWindow"

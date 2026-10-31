@@ -122,10 +122,12 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY_OMGJIT PRIVATE ${_zerog_full
 # and DFG (smaller, less JIT attack surface); other profiles have both.
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_FTL_JIT PRIVATE ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE ${_zerog_inspector})
-# Media (ZeroG.md, "Media"): no backend yet, so nothing plays. ENABLE_VIDEO stays on:
-# no upstream port builds without it and WebCore compiles media code unguarded;
-# <video>/<audio> exist and report that they cannot play. Web Audio is off (as on
-# PlayStation, which builds that way).
+# Media (ZeroG.md, "Media"): ENABLE_VIDEO stays on in every profile (no upstream
+# port builds without it and WebCore compiles media code unguarded). The standard,
+# dev and debug profiles have ZeroG's media engine (port/embedding/media: WebM,
+# Ogg, MP3, FLAC, WAV); in minimal <video>/<audio> exist and report that they
+# cannot play. Web Audio is off for now (as PlayStation builds).
+set(ZEROG_MEDIA ${_zerog_full_web})
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE OFF)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)
 # Image formats and color management left out of every profile for now.

@@ -24,9 +24,22 @@
       "default-features": false,
       "features": [
         { "name": "x11", "platform": "linux" },
-        { "name": "wayland", "platform": "linux" }
+        { "name": "wayland", "platform": "linux" },
+        { "name": "system-audio", "platform": "linux", "$comment": "media sound on Linux: ALSA, PulseAudio and PipeWire, loaded at run time (deps/ports/sdl3); Windows has WASAPI" }
       ]
     },
+    {
+      "name": "libwebm",
+      "$comment": "Media (ZeroG.md, 'Media'; standard, dev and debug profiles): WebM and Matroska demuxing. The codecs below are all royalty-free and permissively licensed."
+    },
+    { "name": "libvpx", "default-features": false, "$comment": "VP8 and VP9 decoding" },
+    { "name": "dav1d", "default-features": false, "$comment": "AV1 decoding" },
+    { "name": "opus", "default-features": false },
+    { "name": "opusfile", "default-features": false, "$comment": "Ogg Opus files, without its HTTP client" },
+    "libogg",
+    "libvorbis",
+    { "name": "drlibs", "$comment": "MP3, FLAC and WAV decoding, header-only" },
+    { "name": "libyuv", "default-features": false, "$comment": "decoded YUV frames to RGBA" },
     {
       "name": "curl",
       "$comment": "HTTP/1.1 and HTTP/2 over BoringSSL; brotli/zstd decoding; WebSocket for dev-mode hot reload. Cookies and the PSL are handled by WebCore.",

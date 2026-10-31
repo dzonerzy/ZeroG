@@ -2,6 +2,9 @@
 #include "Embedding.h"
 
 #include "PlatformStrategiesZeroG.h"
+#if defined(ZEROG_MEDIA)
+#include "media/MediaPlayerPrivateZeroG.h"
+#endif
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSLock.h>
@@ -90,6 +93,10 @@ void initializeProcess(const ProcessOptions& options)
         // A page's own clipboard and drag data (DataTransfer.setData with any
         // type, navigator.clipboard), kept as WebKit's ports keep it.
         DeprecatedGlobalSettings::setCustomPasteboardDataEnabled(true);
+#if ENABLE(VIDEO) && defined(ZEROG_MEDIA)
+        // <audio> and <video> play through ZeroG's engine (media/).
+        Media::registerMediaEngine();
+#endif
         populateJITOperations();
         ProcessWarming::prewarmGlobally();
         RunLoop::setWakeUpCallback([] {

@@ -53,6 +53,11 @@ Engine features of roadmap phases 3 and 4:
   read and set, and focus,
   value, name, state and structure changes are announced. No new function;
   texture-mode views have no bridge yet.
+- Media (standard, dev and debug profiles): `<audio>` and `<video>` play WebM
+  (VP8, VP9, AV1 with Opus or Vorbis), Ogg (Opus, Vorbis), MP3, FLAC and WAV,
+  from any scheme the page loads from; sound goes to the system's default
+  device. No new function. Before, media elements reported that they could not
+  play (the minimal profile still does).
 - dma-buf frames (Linux): `ZG_SURFACE_VULKAN` views render on the engine's own
   GPU into dma-bufs, for Vulkan (VK_EXT_external_memory_dma_buf) or any API
   that imports them. `zg_surface_dmabuf` gives a frame's format, modifier and

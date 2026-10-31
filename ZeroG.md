@@ -438,7 +438,7 @@ Senza GLib, libsoup e GStreamer spariscono anche i moduli caricati a runtime, ch
 WebCore ha bisogno di un backend di riproduzione per `<video>`, `<audio>` e Web Audio, e nei port upstream è GStreamer o AVFoundation. Il port proprio ne deve fornire uno.
 
 - **Versione 1**: nessun backend media, quindi niente riproduzione. `ENABLE_VIDEO` resta acceso senza backend: nessun port upstream compila con video spento e WebCore compila il codice media senza guardie, quindi spegnerlo vorrebbe dire una serie di patch crescente. Gli elementi `<video>` e `<audio>` esistono e segnalano che non possono riprodurre. `ENABLE_WEB_AUDIO` è spento (combinazione già usata dal port PlayStation).
-- **Dopo**: un backend unico basato su FFmpeg (LGPL, link statico con gli stessi obblighi di WebCore), oppure backend per OS (Media Foundation, AVFoundation). È una questione aperta.
+- **Dopo** (deciso): nei profili standard, dev e debug un motore proprio (`port/embedding/media`) su librerie separate, tutte senza royalty e con licenze permissive, al posto di FFmpeg: libwebm per WebM, libvpx (VP8, VP9), dav1d (AV1), libopus, libogg/opusfile/libvorbis per Ogg, dr_libs per MP3, FLAC e WAV, libyuv per la conversione dei frame. Nessun codec brevettato nel binario: H.264, HEVC e AAC passano dal sistema operativo dove c'è (Media Foundation su Windows, in seguito). L'audio esce con SDL3 (WASAPI; ALSA, PulseAudio, PipeWire caricati a runtime). Il profilo minimal resta senza motore.
 
 ### Profili di build
 
@@ -564,7 +564,10 @@ Questa sezione descrive il design tecnico, non è una consulenza legale. Prima d
 | libjpeg-turbo | BSD e licenza IJG |
 | libwebp | BSD 3-Clause |
 | SQLite | Pubblico dominio |
-| SDL3 (solo modalità finestra) | Licenza zlib |
+| SDL3 (modalità finestra, audio dei media) | Licenza zlib |
+| Media (standard, dev, debug): libwebm, libvpx, libopus, libogg, opusfile, libvorbis, libyuv | BSD 3-Clause (libvpx anche ISC) |
+| Media: dav1d | BSD 2-Clause |
+| Media: dr_libs (dr_mp3, dr_flac, dr_wav) | Pubblico dominio (Unlicense) o MIT-0 |
 | Codice del motore | Da decidere: proposta BSD 2-Clause, coerente con WebKit |
 
 Il layer di embedding eredita la licenza del codice da cui eventualmente deriva: BSD se riprende parti di WebKitLegacy, LGPL se riprende parti del WebCore di Ultralight. Va tracciato file per file fin dall'inizio (`docs/PROVENANCE.md`). In ogni caso si linka a WTF, JSC e WebCore, quindi l'obbligo di relink copre l'intero archivio del motore: il relink kit resta lo strumento giusto, con lo stesso design.
