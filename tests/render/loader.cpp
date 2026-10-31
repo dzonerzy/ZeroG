@@ -91,6 +91,28 @@ self.addEventListener('fetch', event => {
 self.addEventListener('message', event => event.source.postMessage('pong ' + event.data));
 )JS";
 
+// Navigation preload, with a header value of its own; the page comes from the
+// preload as the worker answers with it.
+constexpr auto preloadWorkerScript = R"JS(
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', event => event.waitUntil(self.registration.navigationPreload.enable()
+  .then(() => self.registration.navigationPreload.setHeaderValue('zerog'))));
+self.addEventListener('fetch', event => {
+  if (event.request.mode === 'navigate')
+    event.respondWith(event.preloadResponse.then(response => response || new Response('<!DOCTYPE html><title>no preload</title>', { headers: { 'Content-Type': 'text/html' } })));
+});
+)JS";
+
+// After `const version = N;`: answers /sw/update/version with its version.
+constexpr auto updateWorkerScript = R"JS(
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', event => {
+  if (new URL(event.request.url).pathname === '/sw/update/version')
+    event.respondWith(new Response(String(version)));
+});
+)JS";
+
 // ---- An archive in tools/assets.py's format ----
 
 void appendLittleEndian(Vector<uint8_t>& out, uint64_t value, size_t size)
@@ -315,6 +337,7 @@ public:
         return m_hits[path];
     }
     int notModified() const { return m_notModified; }
+    void setWorkerVersion(int version) { m_workerVersion = version; }
 
 private:
     void run()
@@ -577,6 +600,16 @@ private:
             return response("200 OK", "text/javascript", serviceWorkerScript);
         if (path == "/sw/network.txt")
             return response("200 OK", "text/plain", "from the network " + count());
+        // Navigation preload: the page tells the header the preload carried.
+        if (path == "/sw/preload/worker.js")
+            return response("200 OK", "text/javascript", preloadWorkerScript);
+        if (path == "/sw/preload/page.html")
+            return response("200 OK", "text/html", "<!DOCTYPE html><title>preload " + header(request, "Service-Worker-Navigation-Preload") + "</title>");
+        // A worker whose script the test changes (its version).
+        if (path == "/sw/update/worker.js")
+            return response("200 OK", "text/javascript", "const version = " + std::to_string(m_workerVersion.load()) + ";\n" + updateWorkerScript);
+        if (path == "/sw/update/page.html")
+            return response("200 OK", "text/html", "<!DOCTYPE html><title>update page</title>");
         return response("404 Not Found", "text/plain", "missing");
     }
 
@@ -589,6 +622,7 @@ private:
     std::atomic<bool> m_stopping { false };
     std::atomic<int> m_requests { 0 };
     std::atomic<int> m_notModified { 0 };
+    std::atomic<int> m_workerVersion { 1 };
     std::map<std::string, int> m_hits;
     bssl::UniquePtr<SSL_CTX> m_tls;
 };
@@ -1150,6 +1184,39 @@ int main()
         withSession({ }, [&](ZeroG::View& view, Client& client) {
             load(view, client, makeString(http, "/sw/offline.html"_s));
             passed &= check(view.evaluateScript("document.title"_s) != "offline page"_s && server.hits("/sw/offline.html") == 1, "another session has none: the page comes from the server (404)");
+        });
+        auto registerAndActivate = [&](ZeroG::View& view, ASCIILiteral script, ASCIILiteral scope) {
+            return await(view, makeString("navigator.serviceWorker.register('"_s, script, "', { scope: '"_s, scope, "' }).then(r => r.installing || r.waiting || r.active)"
+                ".then(w => w.state === 'activated' ? w.state : new Promise(resolve => w.onstatechange = () => w.state === 'activated' && resolve(w.state)))"_s));
+        };
+        // Navigation preload: the navigation reaches the server once, with the
+        // registration's header value, and the worker answers with it.
+        withSession({ }, [&](ZeroG::View& view, Client& client) {
+            load(view, client, makeString(http, "/sw/preload/page.html"_s));
+            auto state = registerAndActivate(view, "/sw/preload/worker.js"_s, "/sw/preload/"_s);
+            passed &= check(state == "activated"_s, "a worker enables navigation preload: %s", state.utf8().data());
+            int before = server.hits("/sw/preload/page.html");
+            load(view, client, makeString(http, "/sw/preload/page.html"_s));
+            auto title = view.evaluateScript("document.title"_s);
+            passed &= check(title == "preload zerog"_s && server.hits("/sw/preload/page.html") == before + 1, "a navigation is preloaded once, with its header, and given to the page by the worker: %s, %d request(s)",
+                title.utf8().data(), server.hits("/sw/preload/page.html") - before);
+        });
+        // A changed script: the next navigation the worker controls checks it,
+        // and the new version takes over.
+        withSession({ }, [&](ZeroG::View& view, Client& client) {
+            server.setWorkerVersion(1);
+            load(view, client, makeString(http, "/sw/update/page.html"_s));
+            auto state = registerAndActivate(view, "/sw/update/worker.js"_s, "/sw/update/"_s);
+            await(view, "navigator.serviceWorker.controller ? 1 : new Promise(r => navigator.serviceWorker.oncontrollerchange = () => r(1))"_s);
+            auto first = fetchText(view, "/sw/update/version"_s);
+            passed &= check(state == "activated"_s && first == "1"_s, "version 1 of a worker controls its page: %s", first.utf8().data());
+            server.setWorkerVersion(2);
+            int scriptFetches = server.hits("/sw/update/worker.js");
+            load(view, client, makeString(http, "/sw/update/page.html"_s));
+            auto updated = await(view, "(async () => { for (let i = 0; i < 50; ++i) { const v = await fetch('/sw/update/version').then(r => r.text());"
+                " if (v === '2') return v; await new Promise(r => setTimeout(r, 100)); } return 'still ' + await fetch('/sw/update/version').then(r => r.text()); })()"_s);
+            passed &= check(updated == "2"_s && server.hits("/sw/update/worker.js") > scriptFetches, "the next navigation fetches the changed script and version 2 takes over: %s (%d script fetch(es))",
+                updated.utf8().data(), server.hits("/sw/update/worker.js") - scriptFetches);
         });
 #else
         withSession({ }, [&](ZeroG::View& view, Client& client) {

@@ -54,7 +54,16 @@
 #include <WebCore/ServiceWorkerClientData.h>
 #include <WebCore/ServiceWorkerContextData.h>
 #include <WebCore/ServiceWorkerFetch.h>
+#include <WebCore/ContentSecurityPolicyResponseHeaders.h>
+#include <WebCore/CrossOriginEmbedderPolicy.h>
+#include <WebCore/ScriptBuffer.h>
+#include <WebCore/SecurityOrigin.h>
+#include <WebCore/SecurityPolicy.h>
+#include <WebCore/ServiceWorkerJob.h>
 #include <WebCore/ServiceWorkerJobData.h>
+#include <WebCore/TextResourceDecoder.h>
+#include <pal/text/TextEncoding.h>
+#include <wtf/text/StringBuilder.h>
 #include <WebCore/ServiceWorkerProvider.h>
 #include <WebCore/ServiceWorkerRegistrationData.h>
 #include <WebCore/ServiceWorkerRegistrationKey.h>
@@ -432,6 +441,7 @@ public:
     static Ref<ServerConnection> create(SWServer& server) { return adoptRef(*new ServerConnection(server)); }
 
     void setClient(ClientConnection* client) { m_client = client; }
+    void setDelegate(SWServerDelegate& delegate) { m_delegate = delegate; }
 
     // The client's calls (WebSWServerConnection's handlers).
     using SWServer::Connection::finishFetchingScriptInServer;
@@ -449,6 +459,7 @@ public:
             return;
         if (jobData.scopeURL.isNull())
             return rejectJobInClient(jobData.identifier().jobIdentifier, ExceptionData { ExceptionCode::InvalidStateError, "Scope URL is empty"_s });
+        m_clientJobs.add(jobData.identifier().jobIdentifier);
         server->scheduleJob(WTF::move(jobData));
     }
 
@@ -633,6 +644,11 @@ private:
     }
     void startScriptFetchInClient(ServiceWorkerJobIdentifier jobIdentifier, const ServiceWorkerRegistrationKey& key, FetchOptions::Cache cachePolicy) final
     {
+        // A job no page scheduled: the server's own soft update. WebKit2's
+        // network process tells them by its process identifier, which here is
+        // the pages' connection's too.
+        if (!m_clientJobs.contains(jobIdentifier))
+            return fetchScriptForSoftUpdate(jobIdentifier, key, cachePolicy == FetchOptions::Cache::NoCache);
         toClient([jobIdentifier, key = ServiceWorkerRegistrationKey { key }, cachePolicy](ClientConnection& client) mutable {
             client.startScriptFetchForServer(jobIdentifier, WTF::move(key), cachePolicy);
         });
@@ -701,7 +717,44 @@ private:
     void updateBackgroundFetchRegistration(const BackgroundFetchInformation&) final { }
     void contextConnectionCreated(SWServerToContextConnection&) final { }
 
+    // SWServer::startScriptFetch's soft update path, with the request
+    // SWServer::createScriptRequest makes.
+    void fetchScriptForSoftUpdate(ServiceWorkerJobIdentifier jobIdentifier, const ServiceWorkerRegistrationKey& key, bool shouldRefreshCache)
+    {
+        ServiceWorkerJobDataIdentifier job { identifier(), jobIdentifier };
+        RefPtr server = this->server();
+        RefPtr registration = server ? server->getRegistration(key) : nullptr;
+        RefPtr newestWorker = registration ? registration->getNewestWorker() : nullptr;
+        auto* delegate = m_delegate.get();
+        if (!newestWorker || !delegate)
+            return finishFetchingScriptInServer(job, key, workerFetchError(ResourceError { ResourceError::Type::Cancellation }));
+
+        ServiceWorkerJobData jobData { identifier(), ServiceWorkerIdentifier::generate() };
+        jobData.scriptURL = registration->scriptURL();
+        jobData.topOrigin = key.topOrigin();
+        jobData.scopeURL = registration->scopeURLWithoutFragment();
+        jobData.workerType = newestWorker->type();
+        jobData.type = ServiceWorkerJobType::Update;
+
+        ResourceRequest request { URL { jobData.scriptURL } };
+        auto origin = SecurityOrigin::create(jobData.scriptURL);
+        request.setAllowCookies(true);
+        request.setFirstPartyForCookies(jobData.topOrigin.securityOrigin()->toURL());
+        request.setHTTPHeaderField(HTTPHeaderName::Origin, origin->toString());
+        request.setHTTPReferrer(SecurityPolicy::referrerToOriginString(jobData.scriptURL));
+        request.setHTTPHeaderField(HTTPHeaderName::ServiceWorker, "script"_s);
+        request.setPriority(ResourceLoadPriority::Low);
+        request.setIsAppInitiated(registration->isAppInitiated());
+
+        delegate->softUpdate(WTF::move(jobData), shouldRefreshCache, WTF::move(request), [weakThis = WeakPtr { *this }, job, key](WorkerFetchResult&& result) mutable {
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->finishFetchingScriptInServer(job, key, WTF::move(result));
+        });
+    }
+
     RefPtr<ClientConnection> m_client;
+    WeakPtr<SWServerDelegate> m_delegate;
+    HashSet<ServiceWorkerJobIdentifier> m_clientJobs;
     HashMap<ScriptExecutionContextIdentifier, ClientOrigin> m_clientOrigins;
     HashMap<ServiceWorkerJobIdentifier, CompletionHandler<void(UnregisterJobResult&&)>> m_unregisterJobs;
 };
@@ -1130,6 +1183,101 @@ private:
     RefPtr<ClientConnection> m_closed;
 };
 
+// ---- A worker's script fetched again (ServiceWorkerSoftUpdateLoader) ----
+
+// The update algorithm's fetch, steps 9.7 to 9.17: the response is checked as
+// a registration's would be, the script decoded; SWServer compares it with the
+// worker's and installs a new one if it changed.
+class SoftUpdateLoader final : public LoadClient {
+public:
+    using Handler = CompletionHandler<void(WorkerFetchResult&&)>;
+
+    static void start(Session& session, ServiceWorkerJobData&& jobData, bool shouldRefreshCache, ResourceRequest&& request, Handler&& handler)
+    {
+        Ref loader = adoptRef(*new SoftUpdateLoader(WTF::move(jobData), WTF::move(handler)));
+        // Past a day since the last check, or as the registration asks, around the HTTP cache.
+        if (shouldRefreshCache)
+            request.setCachePolicy(ResourceRequestCachePolicy::ReloadIgnoringCacheData);
+        // The task and the loader hold each other until the load ends.
+        loader->m_task = createNetworkTask(loader.get(), session, request);
+        RefPtr { loader->m_task }->start();
+    }
+
+private:
+    SoftUpdateLoader(ServiceWorkerJobData&& jobData, Handler&& handler)
+        : m_jobData(WTF::move(jobData))
+        , m_handler(WTF::move(handler))
+    {
+    }
+
+    void didReceiveResponse(const ResourceResponse& response, CompletionHandler<void(bool)>&& continueLoad) final
+    {
+        auto source = m_jobData.workerType == WorkerType::Module ? WorkerScriptLoader::Source::ModuleScript : WorkerScriptLoader::Source::ClassicWorkerScript;
+        auto error = WorkerScriptLoader::validateWorkerResponse(response, source, FetchOptions::Destination::Serviceworker);
+        if (error.isNull())
+            error = ServiceWorkerJob::validateServiceWorkerResponse(m_jobData, response);
+        if (!error.isNull()) {
+            fail(WTF::move(error));
+            return continueLoad(false);
+        }
+        if (auto& certificateInfo = response.certificateInfo())
+            m_certificateInfo = *certificateInfo;
+        m_contentSecurityPolicy = ContentSecurityPolicyResponseHeaders { response };
+        // Service workers are always secure contexts.
+        m_crossOriginEmbedderPolicy = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, nullptr);
+        m_referrerPolicy = response.httpHeaderField(HTTPHeaderName::ReferrerPolicy);
+        if (response.textEncodingName().isEmpty())
+            m_decoder = TextResourceDecoder::create(TextResourceDecoder::ContentType::PlainText, PAL::UTF8Encoding());
+        else
+            m_decoder = TextResourceDecoder::create(TextResourceDecoder::ContentType::PlainText, PAL::TextEncoding { response.textEncodingName() });
+        continueLoad(true);
+    }
+
+    // A redirected script fails the update, as in WebKit2.
+    void willSendRequest(ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&& completionHandler) final
+    {
+        fail(ResourceError { ResourceError::Type::Cancellation });
+        completionHandler({ });
+    }
+
+    void didReceiveData(Ref<SharedBuffer>&& data) final
+    {
+        if (m_decoder)
+            m_script.append(m_decoder->decode(data->span()));
+    }
+
+    void didFinish() final
+    {
+        if (!m_handler)
+            return done();
+        if (m_decoder)
+            m_script.append(m_decoder->flush());
+        m_handler({ ScriptBuffer { m_script.toString() }, m_jobData.scriptURL, m_certificateInfo, m_contentSecurityPolicy, m_crossOriginEmbedderPolicy, m_referrerPolicy, { } });
+        done();
+    }
+
+    void didFail(const ResourceError& error) final { fail(ResourceError { error }); }
+
+    void fail(ResourceError&& error)
+    {
+        if (auto handler = std::exchange(m_handler, nullptr))
+            handler(workerFetchError(WTF::move(error)));
+        done();
+    }
+
+    void done() { m_task = nullptr; }
+
+    ServiceWorkerJobData m_jobData;
+    Handler m_handler;
+    RefPtr<LoadTask> m_task;
+    RefPtr<TextResourceDecoder> m_decoder;
+    StringBuilder m_script;
+    CertificateInfo m_certificateInfo;
+    ContentSecurityPolicyResponseHeaders m_contentSecurityPolicy;
+    CrossOriginEmbedderPolicy m_crossOriginEmbedderPolicy;
+    String m_referrerPolicy;
+};
+
 // ---- A session's service workers ----
 
 class Workers final : public ServiceWorkerSession, public SWServerDelegate, public CanMakeCheckedPtr<Workers> {
@@ -1187,18 +1335,22 @@ private:
         auto databaseDirectory = directory;
         m_server = SWServer::create(*this, makeUniqueRef<OriginStore>(), false, WTF::move(databaseDirectory), session.sessionID(), false, true, std::nullopt, ServiceWorkerIsInspectable::No);
         m_serverConnection = ServerConnection::create(*m_server);
+        m_serverConnection->setDelegate(*this);
         m_server->addConnection(*m_serverConnection);
         m_clientConnection = ClientConnection::create(*m_serverConnection);
         m_serverConnection->setClient(m_clientConnection.get());
         Provider::singleton().add(session.sessionID(), *m_clientConnection);
     }
 
-    // Updates fetch the script again through the session's loader; a failed
-    // soft update keeps the worker that is there (WebKit2's
-    // ServiceWorkerSoftUpdateLoader checks the bytes it gets).
-    void softUpdate(ServiceWorkerJobData&&, bool, ResourceRequest&& request, CompletionHandler<void(WorkerFetchResult&&)>&& callback) final
+    // The worker's script fetched again through the session's network loader
+    // (a navigation it controls schedules it, as do update() and functional
+    // events). A failed fetch keeps the worker there.
+    void softUpdate(ServiceWorkerJobData&& jobData, bool shouldRefreshCache, ResourceRequest&& request, CompletionHandler<void(WorkerFetchResult&&)>&& callback) final
     {
-        callback(workerFetchError(ResourceError { errorDomainWebKitInternal, 0, request.url(), "Service worker updates are not fetched"_s, ResourceError::Type::Cancellation }));
+        RefPtr session = m_session;
+        if (!session)
+            return callback(workerFetchError(ResourceError { ResourceError::Type::Cancellation }));
+        SoftUpdateLoader::start(*session, WTF::move(jobData), shouldRefreshCache, WTF::move(request), WTF::move(callback));
     }
 
     void createContextConnection(const Site& site, std::optional<ProcessIdentifier>, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, CrossOriginEmbedderPolicyValue policy, CompletionHandler<void()>&& completionHandler) final
@@ -1347,8 +1499,8 @@ private:
     void didFinish(const NetworkLoadMetrics&) final;
     void didNotHandle() final;
     void setCancelledCallback(Function<void()>&& callback) final { m_cancelledCallback = WTF::move(callback); }
-    // No navigation preload: the load goes as it would without the worker.
-    void usePreload() final { didNotHandle(); }
+    // respondWith(event.preloadResponse): the page gets the preload.
+    void usePreload() final;
     void contextIsStopping() final
     {
         if (m_isDone)
@@ -1376,6 +1528,7 @@ private:
 // page's response policy, as SchemeTask does; when it does not, the load goes
 // the way it would have gone (`fallback`).
 class BlobBodyClient;
+class PreloadClient;
 
 class ServiceWorkerLoad final : public LoadTask, public CanMakeWeakPtr<ServiceWorkerLoad> {
 public:
@@ -1401,9 +1554,23 @@ public:
     void didFail(const ResourceError&);
     void didNotHandle();
     void loadBlob(const URL&);
+    void usePreload();
+
+    // The navigation preload's load (PreloadClient).
+    void preloadDidReceiveResponse();
+    void preloadDidReceiveData(Ref<SharedBuffer>&&);
+    void preloadDidFinish();
+    void preloadDidFail(const ResourceError&);
 
 private:
     ServiceWorkerLoad(Workers& workers, ResourceLoader& loader, std::optional<ServiceWorkerRegistrationIdentifier> registration, std::optional<SecurityOriginData> topOrigin, Function<RefPtr<LoadTask>()>&& fallback);
+
+    void startPreloadIfEnabled(SWServerRegistration&);
+    void sendPreloadToWorker();
+    void deliverPreload();
+    void cancelPreload();
+    void softUpdateIfNeeded();
+    void receiveResponse(ResourceResponse&&);
 
     void start() final;
     void stop() final;
@@ -1432,6 +1599,75 @@ private:
     Deque<Function<void()>> m_queue;
     RefPtr<FetchLoader> m_blobLoader;
     RefPtr<BlobBodyClient> m_blobClient;
+    // Navigation preload: the page's request, sent while the worker starts.
+    RefPtr<PreloadClient> m_preload;
+    RefPtr<LoadTask> m_preloadTask;
+    bool m_preloadSentToWorker { false };
+    bool m_usingPreload { false };
+    bool m_deliveringPreload { false };
+    bool m_checkedForUpdate { false };
+};
+
+// The navigation preload's response and body, kept until the worker decides:
+// its own response (the preload is dropped), the preload (the page gets it),
+// or none (the page gets it too, as it would from the network).
+class PreloadClient final : public LoadClient {
+public:
+    static Ref<PreloadClient> create(ServiceWorkerLoad& load) { return adoptRef(*new PreloadClient(load)); }
+
+    void detach() { m_load = nullptr; }
+    const std::optional<ResourceResponse>& response() const LIFETIME_BOUND { return m_response; }
+    Vector<Ref<SharedBuffer>> takeData() { return std::exchange(m_data, { }); }
+    bool isFinished() const { return m_isFinished; }
+    const std::optional<ResourceError>& error() const LIFETIME_BOUND { return m_error; }
+
+private:
+    explicit PreloadClient(ServiceWorkerLoad& load)
+        : m_load(load)
+    {
+    }
+
+    void didReceiveResponse(const ResourceResponse& response, CompletionHandler<void(bool)>&& continueLoad) final
+    {
+        m_response = response;
+        continueLoad(true);
+        if (RefPtr load = m_load.get())
+            load->preloadDidReceiveResponse();
+    }
+    // A redirect fails the preload: the page's own load follows it then.
+    void willSendRequest(ResourceRequest&&, const ResourceResponse& response, CompletionHandler<void(ResourceRequest&&)>&& completionHandler) final
+    {
+        completionHandler({ });
+        didFail(ResourceError { errorDomainWebKitInternal, 0, response.url(), "The navigation preload was redirected"_s });
+    }
+    void didReceiveData(Ref<SharedBuffer>&& data) final
+    {
+        if (RefPtr load = m_load.get(); load && m_forwarding)
+            return load->preloadDidReceiveData(WTF::move(data));
+        m_data.append(WTF::move(data));
+    }
+    void didFinish() final
+    {
+        m_isFinished = true;
+        if (RefPtr load = m_load.get())
+            load->preloadDidFinish();
+    }
+    void didFail(const ResourceError& error) final
+    {
+        if (m_error)
+            return;
+        m_error = error;
+        if (RefPtr load = m_load.get())
+            load->preloadDidFail(error);
+    }
+
+    friend class ServiceWorkerLoad;
+    WeakPtr<ServiceWorkerLoad> m_load;
+    std::optional<ResourceResponse> m_response;
+    Vector<Ref<SharedBuffer>> m_data;
+    bool m_isFinished { false };
+    bool m_forwarding { false };
+    std::optional<ResourceError> m_error;
 };
 
 template<typename Function> void FetchClient::toLoad(Function&& function)
@@ -1512,6 +1748,16 @@ void FetchClient::didFinish(const NetworkLoadMetrics&)
     });
 }
 
+void FetchClient::usePreload()
+{
+    if (m_isDone)
+        return;
+    finished();
+    toLoad([](ServiceWorkerLoad& load) {
+        load.usePreload();
+    });
+}
+
 void FetchClient::didNotHandle()
 {
     if (m_isDone)
@@ -1578,6 +1824,7 @@ void ServiceWorkerLoad::startWorker()
     if (!worker || worker->hasTimedOutAnyFetchTasks())
         return didNotHandle();
     m_worker = worker->identifier();
+    startPreloadIfEnabled(*registration);
     worker->whenActivated([weakThis = WeakPtr { *this }](bool success) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
@@ -1627,7 +1874,127 @@ void ServiceWorkerLoad::startFetch()
     m_fetchStarted = true;
     auto request = m_request;
     auto referrer = request.httpReferrer();
-    proxy->startFetch(connection->identifier(), m_fetch, FetchClient::create(m_fetch, *m_worker, connection->identifier()), WTF::move(request), WTF::move(referrer), FetchOptions { m_options }, false, WTF::move(clientIdentifier), WTF::move(resultingClientIdentifier));
+    proxy->startFetch(connection->identifier(), m_fetch, FetchClient::create(m_fetch, *m_worker, connection->identifier()), WTF::move(request), WTF::move(referrer), FetchOptions { m_options }, !!m_preload, WTF::move(clientIdentifier), WTF::move(resultingClientIdentifier));
+    // A preload that answered while the worker started.
+    if (m_preload && (m_preload->response() || m_preload->error()))
+        sendPreloadToWorker();
+}
+
+// As the worker starts, the navigation goes to the network too, if the
+// registration asked (navigationPreload.enable()); the worker sees it as
+// event.preloadResponse.
+void ServiceWorkerLoad::startPreloadIfEnabled(SWServerRegistration& registration)
+{
+    auto& state = registration.navigationPreloadState();
+    if (!state.enabled || m_options.mode != FetchOptions::Mode::Navigate || m_request.httpMethod() != "GET"_s)
+        return;
+    RefPtr workers = m_workers.get();
+    RefPtr session = workers ? workers->session() : nullptr;
+    if (!session)
+        return;
+    auto request = m_request;
+    request.addHTTPHeaderField(HTTPHeaderName::ServiceWorkerNavigationPreload, state.headerValue);
+    m_preload = PreloadClient::create(*this);
+    m_preloadTask = createNetworkTask(*m_preload, *session, request);
+    RefPtr { m_preloadTask }->start();
+}
+
+void ServiceWorkerLoad::sendPreloadToWorker()
+{
+    if (m_preloadSentToWorker || !m_fetchStarted || m_usingPreload)
+        return;
+    RefPtr workers = m_workers.get();
+    RefPtr connection = workers ? workers->serverConnection() : nullptr;
+    RefPtr proxy = m_worker ? SWContextManager::singleton().serviceWorkerThreadProxy(*m_worker) : nullptr;
+    if (!connection || !proxy)
+        return;
+    m_preloadSentToWorker = true;
+    if (auto& error = m_preload->error())
+        proxy->navigationPreloadFailed(connection->identifier(), m_fetch, ResourceError { *error });
+    else
+        proxy->navigationPreloadIsReady(connection->identifier(), m_fetch, ResourceResponse { *m_preload->response() });
+}
+
+void ServiceWorkerLoad::preloadDidReceiveResponse()
+{
+    if (m_usingPreload)
+        return deliverPreload();
+    sendPreloadToWorker();
+}
+
+void ServiceWorkerLoad::preloadDidReceiveData(Ref<SharedBuffer>&& data)
+{
+    didReceiveData(WTF::move(data));
+}
+
+void ServiceWorkerLoad::preloadDidFinish()
+{
+    if (m_deliveringPreload)
+        didFinish();
+}
+
+void ServiceWorkerLoad::preloadDidFail(const ResourceError& error)
+{
+    if (m_deliveringPreload)
+        return didFail(error);
+    if (m_usingPreload) {
+        // Nothing came: the page's load goes to the network itself.
+        cancelPreload();
+        m_usingPreload = false;
+        return didNotHandle();
+    }
+    sendPreloadToWorker();
+}
+
+// The worker took the preload, or did not answer: the page gets the preload's
+// response and body, once the response is there.
+void ServiceWorkerLoad::usePreload()
+{
+    softUpdateIfNeeded();
+    fetchesInProgress().remove(m_fetch);
+    if (!m_preload) {
+        m_usingPreload = false;
+        return didNotHandle();
+    }
+    m_usingPreload = true;
+    if (m_preload->error())
+        return preloadDidFail(*m_preload->error());
+    if (m_preload->response())
+        deliverPreload();
+}
+
+void ServiceWorkerLoad::deliverPreload()
+{
+    if (m_deliveringPreload)
+        return;
+    m_deliveringPreload = true;
+    receiveResponse(ResourceResponse { *m_preload->response() });
+    for (auto& data : m_preload->takeData())
+        didReceiveData(WTF::move(data));
+    m_preload->m_forwarding = true;
+    if (m_preload->isFinished())
+        didFinish();
+}
+
+void ServiceWorkerLoad::cancelPreload()
+{
+    if (RefPtr preload = std::exchange(m_preload, nullptr))
+        preload->detach();
+    if (RefPtr task = std::exchange(m_preloadTask, nullptr))
+        task->stop();
+}
+
+// A navigation the worker controls asks for its script to be checked again
+// (ServiceWorkerFetchTask::softUpdateIfNeeded); the registration decides when.
+void ServiceWorkerLoad::softUpdateIfNeeded()
+{
+    if (std::exchange(m_checkedForUpdate, true) || !m_registration)
+        return;
+    RefPtr workers = m_workers.get();
+    RefPtr server = workers ? workers->server() : nullptr;
+    RefPtr registration = server ? server->getRegistration(*m_registration) : nullptr;
+    if (registration && registration->shouldSoftUpdate(m_options))
+        registration->scheduleSoftUpdate(m_request.isAppInitiated() ? IsAppInitiated::Yes : IsAppInitiated::No);
 }
 
 void ServiceWorkerLoad::stop()
@@ -1636,6 +2003,7 @@ void ServiceWorkerLoad::stop()
         fallback->stop();
         return;
     }
+    cancelPreload();
     if (!m_target.isActive())
         return;
     m_target.clear();
@@ -1678,7 +2046,14 @@ void ServiceWorkerLoad::processQueue()
 
 void ServiceWorkerLoad::didReceiveResponse(ResourceResponse&& response)
 {
+    softUpdateIfNeeded();
+    cancelPreload();
     response.setSource(ResourceResponse::Source::ServiceWorker);
+    receiveResponse(WTF::move(response));
+}
+
+void ServiceWorkerLoad::receiveResponse(ResourceResponse&& response)
+{
     runOrQueue([this, protectedThis = Ref { *this }, response = WTF::move(response)] mutable {
         if (!m_target.isActive())
             return;
@@ -1704,6 +2079,8 @@ void ServiceWorkerLoad::didReceiveData(Ref<SharedBuffer>&& data)
 void ServiceWorkerLoad::didFinish()
 {
     fetchesInProgress().remove(m_fetch);
+    if (!m_deliveringPreload)
+        cancelPreload();
     runOrQueue([this, protectedThis = Ref { *this }] {
         m_target.didFinish(NetworkLoadMetrics { });
     });
@@ -1712,6 +2089,8 @@ void ServiceWorkerLoad::didFinish()
 void ServiceWorkerLoad::didFail(const ResourceError& error)
 {
     fetchesInProgress().remove(m_fetch);
+    if (!m_deliveringPreload)
+        cancelPreload();
     runOrQueue([this, protectedThis = Ref { *this }, error] {
         m_target.didFail(error);
     });
@@ -1722,6 +2101,8 @@ void ServiceWorkerLoad::didFail(const ResourceError& error)
 void ServiceWorkerLoad::didReceiveRedirection(ResourceResponse&& response)
 {
     fetchesInProgress().remove(m_fetch);
+    softUpdateIfNeeded();
+    cancelPreload();
     runOrQueue([this, protectedThis = Ref { *this }, response = WTF::move(response)] mutable {
         if (!m_target.isActive())
             return;
@@ -1742,6 +2123,11 @@ void ServiceWorkerLoad::didReceiveRedirection(ResourceResponse&& response)
 void ServiceWorkerLoad::didNotHandle()
 {
     fetchesInProgress().remove(m_fetch);
+    softUpdateIfNeeded();
+    // The preload is the network's answer already.
+    if (m_preload && !m_preload->error() && !m_usingPreload && m_target.isActive())
+        return usePreload();
+    cancelPreload();
     RefPtr loader = m_target.loader();
     if (!loader)
         return;
@@ -1803,6 +2189,7 @@ void ServiceWorkerLoad::loadBlob(const URL& blobURL)
 ServiceWorkerLoad::~ServiceWorkerLoad()
 {
     fetchesInProgress().remove(m_fetch);
+    cancelPreload();
 }
 
 // ---- Which loads go to a worker (WebSWServerConnection::createFetchTask) ----

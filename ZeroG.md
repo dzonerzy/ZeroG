@@ -304,7 +304,9 @@ In WebKit2 i service worker attraversano tre processi: la connessione della pagi
 - Navigazioni e script dei worker nello scope di una registrazione la seguono; i subresource dei client controllati vanno al worker; quello a cui il worker non risponde (niente `respondWith`) prosegue come senza worker. Le regole del router che mandano alla rete saltano il worker.
 - Registrazioni nella directory dati (`ServiceWorkers/`, il database SQLite di WebCore su una work queue), in memoria per i contesti effimeri; la sessione successiva sulla stessa directory le ritrova dalla prima navigazione.
 - WebCore assume un processo per sessione; ZeroG ha più sessioni nello stesso processo, quindi la connessione dei service worker si cerca per sessione (patch 0034).
-- Solo http e https, come in WebKit. Niente push, notifiche, background fetch, navigation preload, aggiornamenti in background dello script (`softUpdate`) né `clients.openWindow`: un'applicazione non ha altre finestre del browser.
+- Aggiornamenti: una navigazione controllata (come `update()` e gli eventi funzionali) fa ricontrollare lo script al server, che lo riscarica con il loader di rete della sessione e installa la nuova versione se i byte sono cambiati (il soft update di WebKit2). Il loader ha per questo un terzo tipo di destinazione oltre a pagine e download (`LoadClient`).
+- Navigation preload: se la registrazione lo abilita, la navigazione parte verso la rete mentre il worker si avvia, con l'header `Service-Worker-Navigation-Preload`; il worker la vede come `event.preloadResponse`, e se la usa (o non risponde) la pagina riceve quella risposta, senza una seconda richiesta.
+- Solo http e https, come in WebKit. Niente push, notifiche, background fetch né `clients.openWindow`: un'applicazione non ha altre finestre del browser, e push e notifiche richiederebbero un'API pubblica (l'applicazione che consegna i messaggi e mostra le notifiche).
 - Nel profilo minimal `navigator.serviceWorker` non esiste.
 
 ### Schema custom `app://`
@@ -799,7 +801,7 @@ Il rischio che può far fallire il progetto è il **costo di mantenimento del la
 
 - [x] Backend WebSocket nel single-process: deciso e fatto, implementazione nel layer di embedding sopra curl.
 - [x] Cache API: decisa e fatta nei profili standard, dev e debug, con uno storage proprio nel layer di embedding; spenta in minimal.
-- [x] Service worker: fatti nei profili standard, dev e debug, tutti nel processo del motore; spenti in minimal. Restano fuori push, notifiche, background fetch, navigation preload e gli aggiornamenti in background dello script.
+- [x] Service worker: fatti nei profili standard, dev e debug, tutti nel processo del motore; spenti in minimal. Con aggiornamenti dello script e navigation preload. Restano fuori push, notifiche e background fetch.
 - [x] AVIF: fatto nei profili standard, dev e debug (libavif sopra dav1d); spento in minimal.
 - [x] JPEG XL: deciso, escluso da tutti i profili (poco diffuso, dipendenze pesanti).
 - [ ] Context menu: callback verso l'host e menu nativo in modalità finestra.

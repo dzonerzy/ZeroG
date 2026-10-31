@@ -122,6 +122,11 @@ LoadTarget::LoadTarget(Download& download)
 {
 }
 
+LoadTarget::LoadTarget(LoadClient& client)
+    : m_client(&client)
+{
+}
+
 LoadTarget::~LoadTarget() = default;
 
 ResourceLoader* LoadTarget::loader()
@@ -135,11 +140,13 @@ void LoadTarget::clear()
 {
     m_loader = nullptr;
     m_download = nullptr;
+    m_client = nullptr;
 }
 
 void LoadTarget::convertToDownload(Download& download)
 {
     m_loader = nullptr;
+    m_client = nullptr;
     m_download = &download;
 }
 
@@ -158,6 +165,10 @@ void LoadTarget::didReceiveResponse(ResourceResponse&& response, CompletionHandl
         continueLoad(accepted);
         return;
     }
+    if (RefPtr client = m_client) {
+        client->didReceiveResponse(response, WTF::move(continueLoad));
+        return;
+    }
     continueLoad(false);
 }
 
@@ -165,6 +176,15 @@ void LoadTarget::willSendRequest(ResourceRequest&& request, const ResourceRespon
 {
     if (RefPtr loader = this->loader()) {
         loader->willSendRequest(WTF::move(request), redirectResponse, WTF::move(completionHandler));
+        return;
+    }
+    if (RefPtr client = m_client) {
+        client->willSendRequest(WTF::move(request), redirectResponse, [this, client, completionHandler = WTF::move(completionHandler)](ResourceRequest&& request) mutable {
+            // Refused: the client is done with the load.
+            if (request.isNull() && m_client == client)
+                m_client = nullptr;
+            completionHandler(WTF::move(request));
+        });
         return;
     }
     // A download follows its redirects.
@@ -183,6 +203,8 @@ void LoadTarget::didReceiveData(Ref<SharedBuffer>&& data)
         loader->didReceiveData(data, data->size(), DataPayloadType::DataPayloadBytes);
     else if (RefPtr download = m_download)
         download->didReceiveData(data->span());
+    else if (RefPtr client = m_client)
+        client->didReceiveData(WTF::move(data));
 }
 
 // The target is forgotten first: finishing removes the loader from the strategy,
@@ -191,22 +213,28 @@ void LoadTarget::didFinish(const NetworkLoadMetrics& metrics)
 {
     RefPtr loader = this->loader();
     RefPtr download = m_download;
+    RefPtr client = m_client;
     clear();
     if (loader)
         loader->didFinishLoading(metrics);
     else if (download)
         download->didFinish();
+    else if (client)
+        client->didFinish();
 }
 
 void LoadTarget::didFail(const ResourceError& error)
 {
     RefPtr loader = this->loader();
     RefPtr download = m_download;
+    RefPtr client = m_client;
     clear();
     if (loader)
         loader->didFail(error);
     else if (download)
         download->didFail(error);
+    else if (client)
+        client->didFail(error);
 }
 
 // ---- Scheme tasks ----

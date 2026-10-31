@@ -57,19 +57,35 @@ public:
     virtual bool convertToDownload(Download&) = 0;
 };
 
-// Where a task's results go: the page's ResourceLoader, or a Download (from the
-// start, or after the page's load was converted).
+// A load for the engine itself (a service worker's script update, a navigation
+// preload), not for a page. Calls arrive as a page's would.
+class LoadClient : public RefCounted<LoadClient> {
+public:
+    virtual ~LoadClient() = default;
+    // `continueLoad(true)` for the body.
+    virtual void didReceiveResponse(const WebCore::ResourceResponse&, CompletionHandler<void(bool)>&& continueLoad) = 0;
+    // A redirect: the request to follow, or a null one, after which nothing
+    // more comes (the client ends the load itself).
+    virtual void willSendRequest(WebCore::ResourceRequest&&, const WebCore::ResourceResponse& redirectResponse, CompletionHandler<void(WebCore::ResourceRequest&&)>&&) = 0;
+    virtual void didReceiveData(Ref<WebCore::SharedBuffer>&&) = 0;
+    virtual void didFinish() = 0;
+    virtual void didFail(const WebCore::ResourceError&) = 0;
+};
+
+// Where a task's results go: the page's ResourceLoader, a Download (from the
+// start, or after the page's load was converted), or the engine's own client.
 class LoadTarget {
 public:
     LoadTarget() = default;
     explicit LoadTarget(WebCore::ResourceLoader&);
     explicit LoadTarget(Download&);
+    explicit LoadTarget(LoadClient&);
     ~LoadTarget();
 
     // Null once WebCore's loader reached its end.
     WebCore::ResourceLoader* loader();
     Download* download() const { return m_download.get(); }
-    bool isActive() { return loader() || m_download; }
+    bool isActive() { return loader() || m_download || m_client; }
     void clear();
     void convertToDownload(Download&);
 
@@ -85,6 +101,7 @@ public:
 private:
     RefPtr<WebCore::ResourceLoader> m_loader;
     RefPtr<Download> m_download;
+    RefPtr<LoadClient> m_client;
 };
 
 // One load answered by a SchemeHandler. Calls arrive in order: a response, its
@@ -234,6 +251,7 @@ void initializeCertificates();
 size_t addTrustedCertificates(std::span<const uint8_t> pem);
 Ref<LoadTask> createNetworkTask(WebCore::ResourceLoader&);
 Ref<LoadTask> createNetworkTask(Download&, Session&, const WebCore::ResourceRequest&);
+Ref<LoadTask> createNetworkTask(LoadClient&, Session&, const WebCore::ResourceRequest&);
 bool loadNetworkResourceSynchronously(Session&, const WebCore::ResourceRequest&, WebCore::ResourceError&, WebCore::ResourceResponse&, Vector<uint8_t>&);
 
 // Errors handed to WebCore, in WebKit's domains so its loader classifies them.

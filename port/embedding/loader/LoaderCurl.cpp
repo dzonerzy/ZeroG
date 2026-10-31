@@ -161,6 +161,10 @@ public:
     {
         return adoptRef(*new NetworkTask(LoadTarget { download }, session, request));
     }
+    static Ref<NetworkTask> create(LoadClient& client, Session& session, const ResourceRequest& request)
+    {
+        return adoptRef(*new NetworkTask(LoadTarget { client }, session, request));
+    }
 
     void ref() const final { LoadTask::ref(); }
     void deref() const final { LoadTask::deref(); }
@@ -481,6 +485,11 @@ Ref<LoadTask> createNetworkTask(ResourceLoader& loader)
 Ref<LoadTask> createNetworkTask(Download& download, Session& session, const ResourceRequest& request)
 {
     return NetworkTask::create(download, session, request);
+}
+
+Ref<LoadTask> createNetworkTask(LoadClient& client, Session& session, const ResourceRequest& request)
+{
+    return NetworkTask::create(client, session, request);
 }
 
 // ---- Synchronous loads (synchronous XMLHttpRequest) ----
