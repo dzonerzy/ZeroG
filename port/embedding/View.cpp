@@ -319,7 +319,10 @@ void View::resize(const IntSize& size)
             frameView->resize(size);
     }
     resizeSurface();
-    invalidateAll();
+    // A whole new frame at the new size: for a composited view damage alone
+    // asks for none (the layers keep their own), and a page that does not
+    // change would keep showing the frame of the old size.
+    repaint();
     m_needsRenderingUpdate = true;
 }
 
@@ -330,7 +333,7 @@ void View::setScale(float scale)
     m_scale = scale;
     m_page->setDeviceScaleFactor(scale);
     resizeSurface();
-    invalidateAll();
+    repaint();
     m_needsRenderingUpdate = true;
 }
 

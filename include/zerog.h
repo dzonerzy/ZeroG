@@ -68,7 +68,7 @@ extern "C" {
 
 #define ZG_VERSION_MAJOR 0
 #define ZG_VERSION_MINOR 5
-#define ZG_VERSION_PATCH 0
+#define ZG_VERSION_PATCH 1
 
 /* ------------------------------------------------------------------------ */
 /* Handles                                                                   */

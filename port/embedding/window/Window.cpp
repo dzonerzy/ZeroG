@@ -1703,6 +1703,17 @@ bool Window::present()
 
     m_presentContext->swapBuffers();
     ++m_presentedFrames;
+    // The first frame at a new size went to the old buffers: the swap chain
+    // takes the window's new size at the swap (ANGLE on Windows), with buffers
+    // that start black. Another frame, into them, for a page that would not
+    // draw again.
+    bool resized = std::exchange(m_lastPresentedSize, IntSize { width, height }) != IntSize { width, height };
+    if (resized && m_presentedFrames > 1) {
+        callOnMainThread([sdlWindow = m_window] {
+            if (auto* window = windows().get(sdlWindow))
+                window->m_view->repaint();
+        });
+    }
     // The window is shown with its first frame, by the engine thread (SDL's
     // windows belong to it).
     if (m_view->compositor()) {

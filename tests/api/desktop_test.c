@@ -277,8 +277,32 @@ static int closeFirst(void)
 static int openSecond(void) { openedSecond = openFromCallback(); return 1; }
 
 #ifdef _WIN32
-/* The color at the middle of a window's client area, as it is on screen. */
+/* The color at a point of a window's client area (fractions of its size), as
+   it is on screen. */
+static unsigned pixelAt(zg_window *window, double fx, double fy);
+static unsigned readPixel(zg_window *window, double fx, double fy);
+
 static unsigned middlePixel(zg_window *window)
+{
+    return pixelAt(window, 0.5, 0.5);
+}
+
+static int runUntil(int (*until)(void), double milliseconds);
+
+static unsigned pixelAt(zg_window *window, double fx, double fy)
+{
+    /* Windows opened by a background process may be covered by the user's
+       window, and a covered window's frames are not kept: above everything
+       for the read, given the time to draw again (uncovered, it repaints). */
+    unsigned result;
+    zg_window_set_always_on_top(window, 1);
+    runUntil(NULL, 400);
+    result = readPixel(window, fx, fy);
+    zg_window_set_always_on_top(window, 0);
+    return result;
+}
+
+static unsigned readPixel(zg_window *window, double fx, double fy)
 {
     HWND hwnd = (HWND)zg_window_native_handle(window);
     RECT client;
@@ -289,7 +313,7 @@ static unsigned middlePixel(zg_window *window)
     bitmap = CreateCompatibleBitmap(screen, client.right, client.bottom);
     SelectObject(memory, bitmap);
     PrintWindow(hwnd, memory, PW_CLIENTONLY | 2 /* PW_RENDERFULLCONTENT */);
-    color = GetPixel(memory, client.right / 2, client.bottom / 2);
+    color = GetPixel(memory, (int)(client.right * fx), (int)(client.bottom * fy));
     DeleteObject(bitmap);
     DeleteDC(memory);
     ReleaseDC(NULL, screen);
@@ -410,6 +434,14 @@ int main(void)
     /* Sizes. */
     CHECK(zg_window_set_size(mainWindow, 500, 350) == ZG_OK && runUntil(isResized, 3000), "resized to 500x350: callback %ux%u", resizedWidth, resizedHeight);
     CHECK(zg_window_get_size(mainWindow, &width, &height) == ZG_OK && width == 500 && height == 350, "and reads 500x350: %ux%u", width, height);
+#ifdef _WIN32
+    /* Grown with nothing changing on the page: the new area shows it too. */
+    zg_window_set_size(mainWindow, 700, 500);
+    runUntil(NULL, 600);
+    CHECK(pixelAt(mainWindow, 0.9, 0.9) == 0x553333, "grown to 700x500, the new area shows the page (0x%06x)", pixelAt(mainWindow, 0.9, 0.9));
+    zg_window_set_size(mainWindow, 500, 350);
+    runUntil(NULL, 300);
+#endif
     CHECK(zg_window_set_size(mainWindow, 0, 100) == ZG_ERROR_INVALID_ARGUMENT, "a size of 0 is refused: %s", zg_last_error());
     zg_window_set_min_size(mainWindow, 300, 200);
     zg_window_set_size(mainWindow, 100, 100);

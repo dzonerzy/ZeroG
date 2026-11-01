@@ -102,11 +102,15 @@ def git(*args):
 
 
 def strip_bundle(source, target):
-    """The bundle without debug information (line tables included)."""
+    """The bundle without debug information (line tables included), and
+    without the address-significance tables: they name symbols by index, which
+    stripping shifts, and LLD rejects such a table when it folds identical code
+    (lld-link /OPT:ICF, as Zig's release builds link). Without it LLD folds
+    less, never wrongly."""
     objcopy = shutil.which("llvm-objcopy", path=build.build_env()["PATH"]) or shutil.which("objcopy")
     if not objcopy:
         sys.exit("no llvm-objcopy or objcopy to strip the bundle")
-    subprocess.run([objcopy, "--strip-debug", str(source), str(target)], check=True)
+    subprocess.run([objcopy, "--strip-debug", "--remove-section=.llvm_addrsig", str(source), str(target)], check=True)
 
 
 def stage(args, build_dir, staging):
@@ -166,6 +170,15 @@ def check(staging):
         cmd[0] = shutil.which(cmd[0], path=env.get("PATH")) or cmd[0]
         print("+", " ".join(cmd), flush=True)
         subprocess.run(cmd, check=True, env=env)
+        if IS_WINDOWS:
+            # LLD folding identical code, as Zig's release builds link: it reads
+            # sections MSVC's linker ignores (the address-significance tables).
+            lld = shutil.which("lld-link", path=env.get("PATH")) or "lld-link"
+            lld_cmd = [lld, "/nologo", *map(str, sorted(work.glob("*.obj"))), str(staging / "lib" / BUNDLE), *system,
+                       *build.link_runtime(), "/OPT:REF", "/OPT:ICF", f"/OUT:{work / 'hello-lld.exe'}"]
+            print("+", " ".join(lld_cmd), flush=True)
+            subprocess.run(lld_cmd, check=True, env=env)
+            print("ok    it links with LLD folding identical code (Zig's release builds)")
         if IS_WINDOWS or os.environ.get("DISPLAY"):
             subprocess.run([str(exe), "--smoke"], check=True)
             print("ok    the example builds from the package and runs")

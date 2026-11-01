@@ -257,6 +257,8 @@ private:
     WebCore::IntSize m_pixelSize WTF_GUARDED_BY_LOCK(m_presentLock);
     WebCore::IntSize m_nativeWindowSize WTF_GUARDED_BY_LOCK(m_presentLock); // Wayland: applied before a swap
     std::atomic<bool> m_captureRequested { false };
+    // Where frames are presented (the compositor thread, or the engine's).
+    WebCore::IntSize m_lastPresentedSize;
     Vector<uint8_t> m_capture WTF_GUARDED_BY_LOCK(m_presentLock);
     WebCore::IntSize m_captureSize WTF_GUARDED_BY_LOCK(m_presentLock);
     std::array<SDL_Cursor*, 32> m_cursors { }; // by SDL_SystemCursor

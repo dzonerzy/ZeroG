@@ -6,6 +6,19 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## 0.5.1
+
+Fixes, no API change:
+
+- A window that grew showed the frame of its old size, black around it, until
+  the page drew again (a page that does not change: until a click). A resize now
+  draws a whole new frame, and on Windows a second one into the swap chain's
+  resized buffers.
+- The Windows packages linked with MSVC's linker but not with LLD folding
+  identical code (Zig's release builds): stripping the debug information left
+  address-significance tables naming the wrong symbols. They are stripped too
+  now, and the package check links with LLD as well.
+
 ## 0.5.0
 
 What desktop applications need of their windows:
