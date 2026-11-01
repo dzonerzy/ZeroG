@@ -192,7 +192,26 @@ def configure_options(args):
     return opts
 
 
+def sync_overlay():
+    """port/overlay/ as the WebKit tree has it: `tools/webkit.py prepare` copies
+    it once, so an overlay file edited since would build stale. Copies the ones
+    that differ (they are ZeroG's own files; upstream files are patches)."""
+    overlay = ROOT / "port" / "overlay"
+    for src in sorted(p for p in overlay.rglob("*") if p.is_file() and p.name != ".gitkeep"):
+        dst = WEBKIT / src.relative_to(overlay)
+        if dst.exists() and dst.read_bytes() == src.read_bytes():
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        except OSError as error:
+            sys.exit(f"{src.relative_to(ROOT)} differs from the WebKit tree's copy, which cannot be updated "
+                     f"here ({error}): run tools/webkit.py prepare, or build once where the tree is writable")
+        print(f"overlay: updated {src.relative_to(overlay).as_posix()}")
+
+
 def cmd_configure(args):
+    sync_overlay()
     out = build_dir(args)
     out.mkdir(parents=True, exist_ok=True)
     defs = [f"-D{k}={v}" for k, v in configure_options(args).items()]
@@ -200,6 +219,7 @@ def cmd_configure(args):
 
 
 def cmd_build(args):
+    sync_overlay()
     out = build_dir(args)
     start = time.monotonic()
     cmd = ["cmake", "--build", out]
