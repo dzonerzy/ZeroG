@@ -41,6 +41,7 @@ set(ZeroGEmbedding_SOURCES
     # Window mode (SDL3).
     window/ClipboardSDL.cpp
     window/KeyboardSDL.cpp
+    window/Menu.cpp
     window/Window.cpp
 
     # Web storage and IndexedDB, in process (from WebKitLegacy).
@@ -65,6 +66,7 @@ if (WIN32)
         graphics/SurfaceD3D11.cpp
         graphics/SurfaceD3D12.cpp
         graphics/SurfaceD3D9.cpp
+        window/MenuWin.cpp
     )
     list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi ole32 oleaut32 uiautomationcore)
 else ()

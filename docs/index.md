@@ -35,7 +35,7 @@ Skia renderer, the same fonts and text stack everywhere.
 
 ## Status
 
-The C API is at version 0.4 (0.3 frozen): additions only within 0.x
+The C API is at version 0.5 (0.3 frozen): additions only within 0.x
 ([changes](api-changes.md)). Windows and Linux are supported; macOS is
 planned.
 

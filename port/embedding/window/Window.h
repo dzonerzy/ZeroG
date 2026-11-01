@@ -5,11 +5,14 @@
 // presents it itself, paced by the display's vsync. requestAnimationFrame follows
 // the presentations (engine-driven, unlike texture mode).
 
+#include "Menu.h"
 #include "View.h"
 #include <array>
 #include <atomic>
 #include <memory>
+#include <expected>
 #include <wtf/Lock.h>
+#include <wtf/StdLibExtras.h>
 #include <optional>
 #include <wtf/Seconds.h>
 #include <wtf/Vector.h>
@@ -67,17 +70,111 @@ public:
     void quit() { m_closed = true; }
     bool isClosed() const { return m_closed; }
 
+    enum class State : uint8_t { Normal, Minimized, Maximized, Fullscreen, Hidden };
+
+    // What happens to the window, on the engine thread. Calls come last in the
+    // handling of an event: the client may close the window (the API defers
+    // destroying it until the loop is out of its calls).
+    class Client {
+    public:
+        virtual ~Client() = default;
+        // False keeps the window open.
+        virtual bool closeRequested() { return true; }
+        virtual void resized(const WebCore::IntSize&) { } // logical pixels
+        virtual void moved(const WebCore::IntPoint&) { } // desktop coordinates
+        virtual void focusChanged(bool) { }
+        virtual void stateChanged(State) { }
+        virtual void menuItemChosen(unsigned) { }
+        virtual void screenChanged() { }
+    };
+    void setClient(Client* client) { m_client = client; }
+
     void setTitle(const String&);
-    void setSize(const WebCore::IntSize&); // logical pixels
+    // Logical pixels.
+    void setSize(const WebCore::IntSize&);
+    WebCore::IntSize size() const;
+    // 0 for no limit.
+    void setMinimumSize(const WebCore::IntSize&);
+    void setMaximumSize(const WebCore::IntSize&);
+    void setResizable(bool);
+    // Desktop coordinates; false where windows cannot be placed (Wayland).
+    bool setPosition(const WebCore::IntPoint&);
+    std::optional<WebCore::IntPoint> position() const;
+    bool center();
     void setFullscreen(bool);
+    void minimize();
+    void maximize();
+    void restore();
+    void show();
+    void hide();
+    void setAlwaysOnTop(bool);
+    State state() const;
     // Above the other windows, with the keyboard focus.
     void raise();
     Seconds refreshInterval() const { return m_refreshInterval; }
     void* nativeHandle() const; // HWND, X11 Window, wl_surface*
+    // SDL's window ID: never reused in the process.
+    uint32_t id() const;
+
+    // The connected screens; empty without a window system.
+    struct Screen {
+        WebCore::IntRect bounds; // desktop coordinates
+        WebCore::IntRect workArea;
+        float scale { 1 };
+        float refreshRate { 0 };
+        bool primary { false };
+        String name;
+    };
+    static Vector<Screen> screens();
+    // The index in screens() of the window's.
+    std::optional<size_t> screen() const;
 
     // The system's file dialog for <input type=file> (SDL3), its answer on the
     // engine thread: the chosen paths, or nullopt.
     void showOpenDialog(const WebCore::FileChooserSettings&, CompletionHandler<void(std::optional<Vector<String>>&&)>&&);
+
+    // The system's dialogs for the application. Answers come on the engine
+    // thread after the call, always; the window may be gone by then (the
+    // handler must not assume it exists).
+    struct FileDialog {
+        enum class Kind : uint8_t { Open, OpenFolder, Save };
+        Kind kind { Kind::Open };
+        String title;
+        String acceptLabel;
+        String location;
+        Vector<std::pair<String, String>> filters; // name, "png;jpg"
+        bool multiple { false };
+    };
+    // The chosen paths (none: cancelled), or why there is no dialog.
+    using FileDialogHandler = CompletionHandler<void(std::expected<Vector<String>, String>&&)>;
+    void showFileDialog(FileDialog&&, FileDialogHandler&&);
+
+    struct MessageDialog {
+        enum class Kind : uint8_t { Info, Warning, Error };
+        struct Button {
+            int id { 0 };
+            String label;
+            bool isDefault { false };
+            bool isCancel { false };
+        };
+        Kind kind { Kind::Info };
+        String title;
+        String message;
+        Vector<Button> buttons;
+    };
+    // The chosen button's id, or why there is no box.
+    using MessageDialogHandler = CompletionHandler<void(std::expected<int, String>&&)>;
+    void showMessageDialog(MessageDialog&&, MessageDialogHandler&&);
+
+    // Native menus (Windows; false elsewhere). The menu bar's accelerators
+    // choose their items ahead of the page.
+    static bool hasNativeMenus();
+    bool setMenu(const Menu*);
+    void setMenuItemChecked(unsigned id, bool);
+    void setMenuItemEnabled(unsigned id, bool);
+    // At a point of the view (logical pixels); returns once the menu closed,
+    // the chosen item comes to the client afterwards.
+    bool popupMenu(const Menu&, const WebCore::FloatPoint&);
 
     // What a point of a frameless window is to the window system (window
     // points): an edge resizes it, a region the page marks
@@ -101,6 +198,13 @@ private:
     static View::MouseButton mouseButton(uint8_t);
     static View::MouseButton pressedButton(uint32_t);
     void updateSize();
+    // SDL's window units per logical pixel (pixels on Windows and X11, so the
+    // display's scale; 1 on Wayland).
+    float unitsPerLogicalPixel() const;
+    void stateMayHaveChanged();
+    // True if the key chose a menu bar item.
+    bool handleAccelerator(const SDL_Event&);
+    void collectAccelerators(const Vector<Menu::Item>&);
     // Presents the surface's newest frame with the window's context: on the
     // compositor thread for a composited view (the swap's vsync wait is there),
     // else on the engine thread.
@@ -137,6 +241,18 @@ private:
     WebCore::FloatPoint m_dropPoint;
     // The page for screen readers: UI Automation, AT-SPI (accessibility/).
     std::unique_ptr<Accessibility::Bridge> m_accessibility;
+    Client* m_client { nullptr };
+    State m_state { State::Hidden };
+    // The menu bar's items with accelerators, and which are disabled.
+    struct MenuAccelerator {
+        Accelerator accelerator;
+        unsigned id { 0 };
+        bool enabled { true };
+    };
+    Vector<MenuAccelerator> m_accelerators;
+#if OS(WINDOWS)
+    std::unique_ptr<NativeMenus> m_menus;
+#endif
 };
 
 } // namespace ZeroG

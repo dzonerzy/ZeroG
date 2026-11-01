@@ -86,6 +86,15 @@ set(ZeroGObjectsTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGObjectsTest)
 WEBKIT_EXECUTABLE(ZeroGObjectsTest)
 
+# What desktop applications need of their windows (API 0.5): control, events,
+# screens, dialogs, native menus.
+set(ZeroGDesktopTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/desktop_test.c)
+set(ZeroGDesktopTest_LIBRARIES ZeroGAPI)
+set(ZeroGDesktopTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGDesktopTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGDesktopTest)
+WEBKIT_EXECUTABLE(ZeroGDesktopTest)
+
 # localStorage, sessionStorage and IndexedDB in the data directory.
 set(ZeroGStorageTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/storage_test.c)
 set(ZeroGStorageTest_LIBRARIES ZeroGAPI)

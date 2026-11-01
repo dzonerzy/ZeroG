@@ -51,6 +51,7 @@ run "C API without a display" "$bin/ZeroGAPITest" --no-window
 run "value conversions" "$bin/ZeroGValuesTest"
 run "scripts, bytes, references and classes" "$bin/ZeroGBindingsTest"
 run "a page's objects from C" "$bin/ZeroGObjectsTest"
+run "windows, screens, dialogs and menus (X11)" xvfb-run -a "$bin/ZeroGDesktopTest"
 run "localStorage, sessionStorage, IndexedDB and the Cache API" "$bin/ZeroGStorageTest"
 run "clipboard, file chooser, drag and drop" "$bin/ZeroGHostTest"
 run "Web Inspector (dev and debug builds)" "$bin/ZeroGInspector"
@@ -78,6 +79,7 @@ weston --backend=headless --renderer=gl --socket=zerog-wayland > /tmp/weston.log
 weston=$!
 sleep 3
 run "window on Wayland" env WAYLAND_DISPLAY=zerog-wayland SDL_VIDEO_DRIVER=wayland timeout 120 "$bin/ZeroGWindow"
+run "windows, screens, dialogs and menus (Wayland)" env WAYLAND_DISPLAY=zerog-wayland SDL_VIDEO_DRIVER=wayland timeout 120 "$bin/ZeroGDesktopTest"
 kill $weston 2>/dev/null
 
 exit $failed

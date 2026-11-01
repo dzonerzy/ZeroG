@@ -1,13 +1,15 @@
 /*
  * ZeroG — public C API.
  *
- * Version 0.4: the API of docs/design/c-api.md as frozen at the end of
+ * Version 0.5: the API of docs/design/c-api.md as frozen at the end of
  * roadmap phase 2 (0.1), with binary values, references to JavaScript values,
  * classes and page scripts (0.2), the engine features of phases 3 and 4 (0.3,
  * frozen): storage, clipboard, file chooser, drag and drop, context menus,
  * windows (transparent, frameless, click-through), the Web Inspector, and
- * texture mode for every graphics API games use; and a page's objects read and
- * changed from native code through references (0.4). Within 0.x a minor version
+ * texture mode for every graphics API games use; a page's objects read and
+ * changed from native code through references (0.4); and what desktop
+ * applications need of their windows (0.5): control and events, screens, the
+ * system's dialogs, native menus. Within 0.x a minor version
  * may add functions, enum values and fields at the end of config structs;
  * nothing is renamed or removed and no meaning changes without a new minor
  * version and a note in docs/api-changes.md.
@@ -65,7 +67,7 @@ extern "C" {
 #endif
 
 #define ZG_VERSION_MAJOR 0
-#define ZG_VERSION_MINOR 4
+#define ZG_VERSION_MINOR 5
 #define ZG_VERSION_PATCH 0
 
 /* ------------------------------------------------------------------------ */
@@ -1035,6 +1037,9 @@ typedef struct zg_window_config {
        frame to the CPU (on Windows the window is then a layered window
        updated from it). Windows and X11; Wayland ignores it. */
     int click_through;
+    /* (0.5) Nonzero: the window starts hidden; zg_window_show shows it.
+       Otherwise it appears with its first frame. */
+    int hidden;
 } zg_window_config;
 
 /* Frameless windows move by the page's regions marked with the CSS custom
@@ -1048,6 +1053,204 @@ ZG_API zg_view *zg_window_view(zg_window *win);
 ZG_API void zg_window_set_title(zg_window *win, const char *title);
 ZG_API void zg_window_set_fullscreen(zg_window *win, int fullscreen);
 ZG_API void *zg_window_native_handle(zg_window *win); /* HWND, NSWindow*, X11/Wayland surface */
+
+/* ---- Window control (0.5) ----
+
+   Sizes are logical pixels, the page's CSS pixels (as zg_window_config's).
+   Positions are desktop coordinates, those of zg_screen's bounds: the window
+   system's own units (physical pixels on Windows and X11). Wayland lets no
+   application place its windows: setting or reading a position fails there
+   with ZG_ERROR_UNSUPPORTED. */
+
+typedef enum zg_window_state {
+    ZG_WINDOW_NORMAL = 0,
+    ZG_WINDOW_MINIMIZED,
+    ZG_WINDOW_MAXIMIZED,
+    ZG_WINDOW_FULLSCREEN,
+    ZG_WINDOW_HIDDEN
+} zg_window_state;
+
+ZG_API zg_result zg_window_set_size(zg_window *win, unsigned width, unsigned height);
+ZG_API zg_result zg_window_get_size(zg_window *win, unsigned *width, unsigned *height);
+/* The smallest and largest size the user can give the window; 0 for no limit. */
+ZG_API zg_result zg_window_set_min_size(zg_window *win, unsigned width, unsigned height);
+ZG_API zg_result zg_window_set_max_size(zg_window *win, unsigned width, unsigned height);
+ZG_API zg_result zg_window_set_resizable(zg_window *win, int resizable);
+/* The position of the window's top-left corner (its frame's, if it has one). */
+ZG_API zg_result zg_window_set_position(zg_window *win, int x, int y);
+ZG_API zg_result zg_window_get_position(zg_window *win, int *x, int *y);
+/* Centered on the screen it is on (zg_window_screen). */
+ZG_API zg_result zg_window_center(zg_window *win);
+ZG_API zg_result zg_window_minimize(zg_window *win);
+ZG_API zg_result zg_window_maximize(zg_window *win);
+/* Back to normal from minimized or maximized. */
+ZG_API zg_result zg_window_restore(zg_window *win);
+ZG_API zg_result zg_window_show(zg_window *win);
+ZG_API zg_result zg_window_hide(zg_window *win);
+/* Above the other windows with the keyboard focus, where the window system
+   allows it (it may only flash the window in the taskbar). */
+ZG_API zg_result zg_window_focus(zg_window *win);
+ZG_API zg_result zg_window_set_always_on_top(zg_window *win, int on_top);
+ZG_API zg_window_state zg_window_get_state(zg_window *win);
+
+/* ---- Window events (0.5) ----
+
+   Delivered on the runtime thread while it runs the loop. Without callbacks
+   a window closes when the user asks it to, and the runtime's loop ends once
+   every window is closed. A closed window is hidden; it stays valid until
+   zg_window_destroy, which callbacks may call (for any window). */
+typedef struct zg_window_callbacks {
+    size_t size;
+    void *user;
+    /* The user asked to close the window (close button, Alt+F4, the window
+       menu). Return nonzero to close it, 0 to keep it open. NULL: it closes. */
+    int  (*close_requested)(zg_window *win, void *user);
+    /* The new size, logical pixels. */
+    void (*resized)(zg_window *win, unsigned width, unsigned height, void *user);
+    /* The new position, desktop coordinates (not on Wayland). */
+    void (*moved)(zg_window *win, int x, int y, void *user);
+    void (*focus_changed)(zg_window *win, int focused, void *user);
+    void (*state_changed)(zg_window *win, zg_window_state state, void *user);
+    /* An item of the window's menu bar or of a popup menu was chosen, by
+       click or by its accelerator. */
+    void (*menu_item)(zg_window *win, unsigned id, void *user);
+    /* The window moved to another screen (zg_window_screen gives which), or
+       its screen's scale changed. */
+    void (*screen_changed)(zg_window *win, void *user);
+} zg_window_callbacks;
+
+ZG_API zg_result zg_window_set_callbacks(zg_window *win, const zg_window_callbacks *callbacks);
+
+/* ---- Screens (0.5) ----
+
+   The connected screens, in the window system's order. They are known once a
+   window exists; before, zg_screen_count opens the window system's display. */
+typedef struct zg_screen {
+    size_t size;               /* set by the caller: sizeof(zg_screen) */
+    int x, y;                  /* bounds, desktop coordinates */
+    unsigned width, height;
+    int work_x, work_y;        /* the bounds without taskbars, docks and panels */
+    unsigned work_width, work_height;
+    float scale;               /* device pixels per logical pixel (1.5 at 150%) */
+    float refresh_rate;        /* Hz; 0 if unknown */
+    int primary;
+    char name[128];            /* UTF-8, possibly truncated; may be empty */
+} zg_screen;
+
+ZG_API size_t    zg_screen_count(zg_runtime *rt);
+ZG_API zg_result zg_screen_get(zg_runtime *rt, size_t index, zg_screen *out);
+/* The index of the screen the window is mostly on. */
+ZG_API zg_result zg_window_screen(zg_window *win, size_t *index);
+
+/* ---- Dialogs (0.5) ----
+
+   The system's own dialogs, modal to their window: the Windows ones, and on
+   Linux the desktop's through xdg-desktop-portal (zenity if no portal runs).
+   The answer comes to a callback on the runtime thread, never during the
+   call that shows the dialog, and always exactly once: if the window was
+   destroyed first, with `win` NULL and ZG_ERROR_NOT_FOUND. */
+
+typedef enum zg_file_dialog_kind {
+    ZG_FILE_DIALOG_OPEN = 0,   /* existing files */
+    ZG_FILE_DIALOG_OPEN_FOLDER,
+    ZG_FILE_DIALOG_SAVE
+} zg_file_dialog_kind;
+
+typedef struct zg_file_filter {
+    const char *name;          /* "Images" */
+    const char *pattern;       /* extensions separated by ';' ("png;jpg"), or "*" */
+} zg_file_filter;
+
+typedef struct zg_file_dialog {
+    size_t size;
+    zg_file_dialog_kind kind;
+    const char *title;         /* NULL: the system's */
+    const char *accept_label;  /* the accept button's label; NULL: the system's */
+    const char *location;      /* a folder, or (SAVE) a suggested file path */
+    const zg_file_filter *filters; /* not for OPEN_FOLDER */
+    size_t filter_count;
+    int multiple;              /* OPEN and OPEN_FOLDER: several may be chosen */
+} zg_file_dialog;
+
+/* `result` ZG_OK with `count` 0: the user cancelled. Another result: the
+   dialog could not be shown, zg_last_error() says why during the call. The
+   paths live until the callback returns. */
+typedef void (*zg_file_dialog_fn)(zg_window *win, zg_result result, const char *const *paths,
+                                  size_t count, void *user);
+/* The strings in `dialog` are copied. */
+ZG_API zg_result zg_window_file_dialog(zg_window *win, const zg_file_dialog *dialog,
+                                       zg_file_dialog_fn done, void *user);
+
+typedef enum zg_message_kind {
+    ZG_MESSAGE_INFO = 0,
+    ZG_MESSAGE_WARNING,
+    ZG_MESSAGE_ERROR
+} zg_message_kind;
+
+typedef enum zg_message_button_flags {
+    ZG_MESSAGE_BUTTON_DEFAULT = 1, /* chosen by Enter */
+    ZG_MESSAGE_BUTTON_CANCEL  = 2  /* chosen by Escape and by closing the box */
+} zg_message_button_flags;
+
+typedef struct zg_message_button {
+    int id;
+    const char *label;
+    unsigned flags;            /* zg_message_button_flags */
+} zg_message_button;
+
+typedef struct zg_message_box {
+    size_t size;
+    zg_message_kind kind;
+    const char *title;
+    const char *message;
+    const zg_message_button *buttons; /* in display order; none: one "OK", id 0 */
+    size_t button_count;
+} zg_message_box;
+
+/* `button_id` is the chosen button's id (the CANCEL one if the box was closed,
+   -1 if it has none). The window's page does not run while the box is open. */
+typedef void (*zg_message_box_fn)(zg_window *win, zg_result result, int button_id, void *user);
+ZG_API zg_result zg_window_message_box(zg_window *win, const zg_message_box *box,
+                                       zg_message_box_fn done, void *user);
+
+/* ---- Native menus (0.5) ----
+
+   A zg_menu describes a menu: the window builds its native menu from it when
+   it is set, so the description may be changed or destroyed afterwards
+   (change the window's items with zg_window_menu_set_*). Chosen items come to
+   the window's menu_item callback with their id; a checkbox item's mark
+   changes only with zg_window_menu_set_checked.
+
+   Windows only: elsewhere zg_window_set_menu and zg_window_popup_menu fail
+   with ZG_ERROR_UNSUPPORTED (draw menus in the page there). */
+typedef struct zg_menu zg_menu;
+
+typedef enum zg_menu_item_flags {
+    ZG_MENU_ITEM_CHECKBOX = 1,
+    ZG_MENU_ITEM_CHECKED  = 2,
+    ZG_MENU_ITEM_DISABLED = 4
+} zg_menu_item_flags;
+
+ZG_API zg_menu  *zg_menu_create(void);
+ZG_API void      zg_menu_destroy(zg_menu *menu);
+/* `id` from 1 to 65535, unique in the window's menus. `label` may mark its access key
+   with '&' ("&Open"). `accelerator` (may be NULL) is a key with modifiers,
+   "Ctrl+S", "Ctrl+Shift+N", "Alt+F4", "F5": shown in the item, and pressing
+   it while the window has the focus chooses the item, ahead of the page. */
+ZG_API zg_result zg_menu_add_item(zg_menu *menu, unsigned id, const char *label,
+                                  const char *accelerator, unsigned flags);
+ZG_API zg_result zg_menu_add_separator(zg_menu *menu);
+/* `submenu`'s items are copied: it can be destroyed after the call. */
+ZG_API zg_result zg_menu_add_submenu(zg_menu *menu, const char *label, const zg_menu *submenu);
+
+/* The window's menu bar, NULL to remove it. Its submenus are the top-level
+   entries. */
+ZG_API zg_result zg_window_set_menu(zg_window *win, const zg_menu *menu);
+ZG_API zg_result zg_window_menu_set_checked(zg_window *win, unsigned id, int checked);
+ZG_API zg_result zg_window_menu_set_enabled(zg_window *win, unsigned id, int enabled);
+/* A popup menu at (x, y), the view's logical pixels (a zg_context_menu's
+   position). The chosen item, if any, comes to menu_item after the call. */
+ZG_API zg_result zg_window_popup_menu(zg_window *win, const zg_menu *menu, float x, float y);
 
 #ifdef __cplusplus
 }

@@ -60,14 +60,25 @@ struct zg_context {
 
 struct zg_window {
     zg_context* context { nullptr };
+    zg_window_callbacks callbacks { };
+    // Before the window: it goes after the window does.
+    std::unique_ptr<ZeroG::Window::Client> client;
     std::unique_ptr<ZeroG::Window> window;
     zg_view view;
+};
+
+struct zg_menu {
+    ZeroG::Menu menu;
 };
 
 struct zg_runtime {
     zg_runtime_config config { };
     std::vector<zg_context*> contexts;
     std::vector<zg_window*> windows;
+    // While the loop is inside a window's work (its events, frames, the
+    // engine's tasks), windows destroyed by callbacks wait here.
+    unsigned dispatching { 0 };
+    std::vector<zg_window*> destroyedWindows;
     // The Web Inspector's windows (zg_view_show_inspector): the engine's own.
     std::vector<std::unique_ptr<ZeroG::Window>> inspectorWindows;
     std::atomic<bool> quit { false }; // zg_runtime_quit, from any thread

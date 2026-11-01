@@ -1,0 +1,472 @@
+/* What desktop applications need of their windows (API 0.5), from C:
+ *   - screens: count, bounds, work area, scale, the primary one, the window's;
+ *   - window control: logical sizes, limits, positions (not on Wayland),
+ *     hidden at creation then shown, state changes, always on top;
+ *   - window events: resized, moved, state, close requested and refused;
+ *   - destroying windows from callbacks, the window running its own;
+ *   - dialogs: arguments checked, the answer for a destroyed window, and on
+ *     Windows a message box and a file dialog closed by the test;
+ *   - native menus: on Windows a menu bar chosen by WM_COMMAND and by its
+ *     accelerator (and not while disabled), a popup menu chosen by keyboard;
+ *     elsewhere ZG_ERROR_UNSUPPORTED.
+ *
+ * Usage: desktop_test
+ */
+
+#include "zerog.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+static int failures;
+
+#define CHECK(condition, ...) do {                      \
+        int ok_ = (condition);                          \
+        printf("%s ", ok_ ? "ok  " : "FAIL");           \
+        printf(__VA_ARGS__);                            \
+        printf("\n");                                   \
+        if (!ok_)                                       \
+            ++failures;                                 \
+    } while (0)
+
+static zg_runtime *runtime;
+
+/* ---- Running the loop until something happened ----
+
+   The window's page calls Test.tick every 10 ms; the loop ends when the
+   condition holds or the time is up. */
+
+static int (*condition)(void);
+static double deadline;
+
+static zg_value *tick(zg_call *call, void *user)
+{
+    (void)call;
+    (void)user;
+    if ((condition && condition()) || zg_runtime_now_ms() > deadline)
+        zg_runtime_quit(runtime);
+    return NULL;
+}
+
+static int runUntil(int (*until)(void), double milliseconds)
+{
+    condition = until;
+    deadline = zg_runtime_now_ms() + milliseconds;
+    zg_runtime_run(runtime);
+    condition = NULL;
+    return until ? until() : 1;
+}
+
+static const char tickingPage[] =
+    "<!DOCTYPE html><body style='background: #335'><script>"
+    "setInterval(() => Test.tick(), 10);"
+    "</script></body>";
+
+static zg_window *createWindow(zg_context *context, const char *title, int hidden)
+{
+    zg_window_config config = { sizeof config };
+    zg_window *window;
+    config.title = title;
+    config.width = 400;
+    config.height = 300;
+    config.hidden = hidden;
+    window = zg_window_create(context, &config);
+    if (window) {
+        zg_view_bind(zg_window_view(window), "Test.tick", tick, NULL);
+        zg_view_load_html(zg_window_view(window), tickingPage, sizeof tickingPage - 1, NULL);
+    }
+    return window;
+}
+
+/* ---- Window events ---- */
+
+static unsigned resizedWidth, resizedHeight;
+static int movedX = -99999, movedY = -99999;
+static zg_window_state lastState = (zg_window_state)-1;
+static int stateChanges;
+static unsigned chosenItem;
+static int menuChoices;
+static int closeRequests;
+static int allowClose;
+
+static int onCloseRequested(zg_window *window, void *user)
+{
+    (void)window;
+    (void)user;
+    ++closeRequests;
+    return allowClose;
+}
+
+static void onResized(zg_window *window, unsigned width, unsigned height, void *user)
+{
+    (void)window;
+    (void)user;
+    resizedWidth = width;
+    resizedHeight = height;
+}
+
+static void onMoved(zg_window *window, int x, int y, void *user)
+{
+    (void)window;
+    (void)user;
+    movedX = x;
+    movedY = y;
+}
+
+static void onStateChanged(zg_window *window, zg_window_state state, void *user)
+{
+    (void)window;
+    (void)user;
+    lastState = state;
+    ++stateChanges;
+}
+
+static void onMenuItem(zg_window *window, unsigned id, void *user)
+{
+    (void)window;
+    (void)user;
+    chosenItem = id;
+    ++menuChoices;
+}
+
+static zg_window *mainWindow;
+
+static int isShown(void) { return lastState == ZG_WINDOW_NORMAL; }
+static int isResized(void) { return resizedWidth == 500 && resizedHeight == 350; }
+static int isMoved(void) { return movedX == 120 && movedY == 140; }
+static int isMaximized(void) { return lastState == ZG_WINDOW_MAXIMIZED; }
+static int isMinimized(void) { return lastState == ZG_WINDOW_MINIMIZED; }
+static int isNormal(void) { return lastState == ZG_WINDOW_NORMAL; }
+static int isHidden(void) { return lastState == ZG_WINDOW_HIDDEN; }
+static int hasMenuChoice(void) { return menuChoices > 0; }
+static int hasCloseRequest(void) { return closeRequests > 0; }
+
+/* ---- Destroying windows from callbacks ---- */
+
+static zg_window *selfDestroying;
+
+static zg_value *destroySelf(zg_call *call, void *user)
+{
+    (void)call;
+    (void)user;
+    /* The window whose page runs this call, from inside its own work. */
+    zg_window_destroy(selfDestroying);
+    selfDestroying = NULL;
+    zg_runtime_quit(runtime);
+    return NULL;
+}
+
+/* ---- Dialogs ---- */
+
+static int dialogAnswers;
+static zg_window *dialogWindow;
+static zg_result dialogResult;
+static int dialogButton;
+static size_t dialogPaths;
+
+static void onMessageBox(zg_window *window, zg_result result, int button, void *user)
+{
+    (void)user;
+    dialogWindow = window;
+    dialogResult = result;
+    dialogButton = button;
+    ++dialogAnswers;
+}
+
+static void onFileDialog(zg_window *window, zg_result result, const char *const *paths, size_t count, void *user)
+{
+    (void)paths;
+    (void)user;
+    dialogWindow = window;
+    dialogResult = result;
+    dialogPaths = count;
+    ++dialogAnswers;
+}
+
+static int hasDialogAnswer(void) { return dialogAnswers > 0; }
+
+#ifdef _WIN32
+/* Closes the first window of `className` titled `title` that appears, from a
+   thread of its own (dialogs and menus run modal loops on theirs). */
+typedef struct {
+    const wchar_t *className;
+    const wchar_t *title;
+    int keys; /* nonzero: Down then Enter (a menu), else WM_CLOSE */
+} Closer;
+
+static DWORD WINAPI closeWhenShown(void *argument)
+{
+    Closer *closer = argument;
+    int attempt;
+    for (attempt = 0; attempt < 200; ++attempt) {
+        HWND found = FindWindowW(closer->className, closer->title);
+        if (found && IsWindowVisible(found)) {
+            Sleep(100);
+            if (closer->keys) {
+                PostMessageW(found, WM_KEYDOWN, VK_DOWN, 0);
+                PostMessageW(found, WM_KEYDOWN, VK_RETURN, 0);
+            } else
+                PostMessageW(found, WM_CLOSE, 0, 0);
+            return 0;
+        }
+        Sleep(25);
+    }
+    return 1;
+}
+
+static void closeLater(Closer *closer)
+{
+    CloseHandle(CreateThread(NULL, 0, closeWhenShown, closer, 0, NULL));
+}
+
+/* A key press as the window gets it from Windows. */
+static void postKey(HWND window, UINT message, WPARAM key)
+{
+    UINT scancode = MapVirtualKeyW((UINT)key, MAPVK_VK_TO_VSC);
+    LPARAM lParam = 1 | ((LPARAM)scancode << 16);
+    if (message == WM_KEYUP)
+        lParam |= (LPARAM)3 << 30;
+    PostMessageW(window, message, key, lParam);
+}
+
+static void pressCtrl(HWND window, WPARAM key)
+{
+    postKey(window, WM_KEYDOWN, VK_CONTROL);
+    postKey(window, WM_KEYDOWN, key);
+    postKey(window, WM_KEYUP, key);
+    postKey(window, WM_KEYUP, VK_CONTROL);
+}
+#endif
+
+int main(void)
+{
+    zg_runtime_config runtimeConfig = { sizeof runtimeConfig };
+    zg_context_config contextConfig = { sizeof contextConfig };
+    zg_window_callbacks callbacks = { sizeof callbacks };
+    zg_screen screen = { sizeof screen };
+    zg_context *context;
+    size_t screens, index, primaries = 0;
+    unsigned width = 0, height = 0;
+    int x = 0, y = 0;
+    int placeable;
+    zg_result result;
+
+    setvbuf(stdout, NULL, _IONBF, 0);
+    runtime = zg_runtime_create(&runtimeConfig);
+    contextConfig.ephemeral = 1;
+    context = zg_context_create(runtime, &contextConfig);
+
+    /* Screens, before any window. */
+    screens = zg_screen_count(runtime);
+    CHECK(screens >= 1, "%u screen(s) connected", (unsigned)screens);
+    for (index = 0; index < screens; ++index) {
+        screen.size = sizeof screen;
+        CHECK(zg_screen_get(runtime, index, &screen) == ZG_OK && screen.width > 0 && screen.height > 0 && screen.scale > 0
+            && screen.work_width > 0 && screen.work_width <= screen.width && screen.work_height <= screen.height,
+            "screen %u '%s': %ux%u at %d,%d, work area %ux%u, scale %.2f, %.0f Hz%s", (unsigned)index, screen.name,
+            screen.width, screen.height, screen.x, screen.y, screen.work_width, screen.work_height, screen.scale,
+            screen.refresh_rate, screen.primary ? ", primary" : "");
+        primaries += screen.primary != 0;
+    }
+    CHECK(primaries == 1, "one primary screen (%u)", (unsigned)primaries);
+    CHECK(zg_screen_get(runtime, screens, &screen) == ZG_ERROR_NOT_FOUND, "no screen past the last: %s", zg_last_error());
+
+    /* A window created hidden, shown later. */
+    mainWindow = createWindow(context, "ZeroG desktop test", 1);
+    CHECK(mainWindow != NULL, "window created %s", mainWindow ? "" : zg_last_error());
+    if (!mainWindow)
+        return 1;
+    callbacks.close_requested = onCloseRequested;
+    callbacks.resized = onResized;
+    callbacks.moved = onMoved;
+    callbacks.state_changed = onStateChanged;
+    callbacks.menu_item = onMenuItem;
+    CHECK(zg_window_set_callbacks(mainWindow, &callbacks) == ZG_OK, "window callbacks set");
+    CHECK(zg_window_get_state(mainWindow) == ZG_WINDOW_HIDDEN, "created hidden: state %d", zg_window_get_state(mainWindow));
+    runUntil(NULL, 200);
+    CHECK(zg_window_get_state(mainWindow) == ZG_WINDOW_HIDDEN, "it stays hidden while its page runs");
+    CHECK(zg_window_get_size(mainWindow, &width, &height) == ZG_OK && width == 400 && height == 300, "its size is the logical size asked for: %ux%u", width, height);
+    CHECK(zg_window_show(mainWindow) == ZG_OK && runUntil(isShown, 3000), "shown: state_changed NORMAL (%d)", lastState);
+    CHECK(zg_window_screen(mainWindow, &index) == ZG_OK && index < screens, "on screen %u", (unsigned)index);
+
+    /* Sizes. */
+    CHECK(zg_window_set_size(mainWindow, 500, 350) == ZG_OK && runUntil(isResized, 3000), "resized to 500x350: callback %ux%u", resizedWidth, resizedHeight);
+    CHECK(zg_window_get_size(mainWindow, &width, &height) == ZG_OK && width == 500 && height == 350, "and reads 500x350: %ux%u", width, height);
+    CHECK(zg_window_set_size(mainWindow, 0, 100) == ZG_ERROR_INVALID_ARGUMENT, "a size of 0 is refused: %s", zg_last_error());
+    zg_window_set_min_size(mainWindow, 300, 200);
+    zg_window_set_size(mainWindow, 100, 100);
+    zg_window_get_size(mainWindow, &width, &height);
+    CHECK(width >= 300 && height >= 200, "the minimum size holds: %ux%u", width, height);
+    zg_window_set_min_size(mainWindow, 0, 0);
+    zg_window_set_max_size(mainWindow, 450, 320);
+    zg_window_set_size(mainWindow, 800, 600);
+    zg_window_get_size(mainWindow, &width, &height);
+    CHECK(width <= 450 && height <= 320, "the maximum size holds: %ux%u", width, height);
+    zg_window_set_max_size(mainWindow, 0, 0);
+    zg_window_set_size(mainWindow, 500, 350);
+    CHECK(zg_window_set_resizable(mainWindow, 0) == ZG_OK && zg_window_set_resizable(mainWindow, 1) == ZG_OK, "resizable off and on");
+    CHECK(zg_window_set_always_on_top(mainWindow, 1) == ZG_OK && zg_window_set_always_on_top(mainWindow, 0) == ZG_OK, "always on top on and off");
+    CHECK(zg_window_focus(mainWindow) == ZG_OK, "focus asked for");
+
+    /* Positions, where the window system lets applications place windows. */
+    result = zg_window_set_position(mainWindow, 120, 140);
+    placeable = result == ZG_OK;
+    if (placeable) {
+        CHECK(runUntil(isMoved, 3000), "moved to 120,140: callback %d,%d", movedX, movedY);
+        CHECK(zg_window_get_position(mainWindow, &x, &y) == ZG_OK && x == 120 && y == 140, "and reads 120,140: %d,%d", x, y);
+        CHECK(zg_window_center(mainWindow) == ZG_OK, "centered");
+    } else {
+        CHECK(result == ZG_ERROR_UNSUPPORTED && zg_window_get_position(mainWindow, &x, &y) == ZG_ERROR_UNSUPPORTED
+            && zg_window_center(mainWindow) == ZG_ERROR_UNSUPPORTED, "no positions here: %s", zg_last_error());
+    }
+
+#ifdef _WIN32
+    /* States (they need a window manager: Windows has one; Xvfb has none). */
+    CHECK(zg_window_maximize(mainWindow) == ZG_OK && runUntil(isMaximized, 3000), "maximized (%d)", lastState);
+    CHECK(zg_window_restore(mainWindow) == ZG_OK && runUntil(isNormal, 3000), "restored (%d)", lastState);
+    CHECK(zg_window_minimize(mainWindow) == ZG_OK && runUntil(isMinimized, 3000), "minimized (%d)", lastState);
+    CHECK(zg_window_restore(mainWindow) == ZG_OK && runUntil(isNormal, 3000), "restored (%d)", lastState);
+#endif
+    CHECK(zg_window_hide(mainWindow) == ZG_OK && runUntil(isHidden, 3000), "hidden (%d)", lastState);
+    CHECK(zg_window_show(mainWindow) == ZG_OK && runUntil(isShown, 3000), "shown again (%d)", lastState);
+
+    /* Menus. */
+    {
+        zg_menu *bar = zg_menu_create(), *file = zg_menu_create(), *popup = zg_menu_create();
+        CHECK(zg_menu_add_item(file, 1, "&Open", "Ctrl+O", 0) == ZG_OK, "an item with an accelerator");
+        CHECK(zg_menu_add_item(file, 2, "&Save", "Ctrl+Shift+S", ZG_MENU_ITEM_DISABLED) == ZG_OK, "a disabled item");
+        CHECK(zg_menu_add_separator(file) == ZG_OK, "a separator");
+        CHECK(zg_menu_add_item(file, 3, "&Word wrap", NULL, ZG_MENU_ITEM_CHECKBOX | ZG_MENU_ITEM_CHECKED) == ZG_OK, "a checkbox item");
+        CHECK(zg_menu_add_submenu(bar, "&File", file) == ZG_OK, "a submenu");
+        CHECK(zg_menu_add_item(file, 0, "Zero", NULL, 0) == ZG_ERROR_INVALID_ARGUMENT, "id 0 is refused: %s", zg_last_error());
+        CHECK(zg_menu_add_item(file, 70000, "Big", NULL, 0) == ZG_ERROR_INVALID_ARGUMENT, "ids past 65535 are refused");
+        CHECK(zg_menu_add_item(file, 4, "Bad", "Ctrl+Nope", 0) == ZG_ERROR_INVALID_ARGUMENT, "an unknown key is refused: %s", zg_last_error());
+        zg_menu_add_item(popup, 10, "First", NULL, 0);
+        zg_menu_add_item(popup, 11, "Second", NULL, 0);
+        zg_menu_destroy(file); /* copied into the bar */
+#ifdef _WIN32
+        {
+            HWND hwnd = (HWND)zg_window_native_handle(mainWindow);
+            static Closer menuCloser = { L"#32768", NULL, 1 };
+            CHECK(zg_window_set_menu(mainWindow, bar) == ZG_OK && GetMenu(hwnd) != NULL, "a native menu bar");
+            menuChoices = 0;
+            PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1, 0), 0);
+            CHECK(runUntil(hasMenuChoice, 3000) && chosenItem == 1, "an item chosen by WM_COMMAND: %u", chosenItem);
+            menuChoices = 0;
+            pressCtrl(hwnd, 'O');
+            CHECK(runUntil(hasMenuChoice, 3000) && chosenItem == 1, "an item chosen by its accelerator: %u", chosenItem);
+            menuChoices = 0;
+            pressCtrl(hwnd, 'S'); /* not Ctrl+Shift+S, and disabled */
+            CHECK(zg_window_menu_set_enabled(mainWindow, 1, 0) == ZG_OK, "an item disabled");
+            pressCtrl(hwnd, 'O');
+            runUntil(NULL, 300);
+            CHECK(menuChoices == 0, "disabled items and other keys choose nothing (%d)", menuChoices);
+            CHECK(zg_window_menu_set_enabled(mainWindow, 1, 1) == ZG_OK && zg_window_menu_set_checked(mainWindow, 3, 0) == ZG_OK
+                && !(GetMenuState(GetMenu(hwnd), 3, MF_BYCOMMAND) & MF_CHECKED), "a check mark removed");
+            menuChoices = 0;
+            closeLater(&menuCloser);
+            CHECK(zg_window_popup_menu(mainWindow, popup, 20, 20) == ZG_OK && runUntil(hasMenuChoice, 3000) && chosenItem == 10,
+                "a popup menu's item chosen by keyboard: %u", chosenItem);
+            CHECK(zg_window_set_menu(mainWindow, NULL) == ZG_OK && GetMenu(hwnd) == NULL, "the menu bar removed");
+        }
+#else
+        CHECK(zg_window_set_menu(mainWindow, bar) == ZG_ERROR_UNSUPPORTED, "no native menus here: %s", zg_last_error());
+        CHECK(zg_window_popup_menu(mainWindow, popup, 20, 20) == ZG_ERROR_UNSUPPORTED, "nor popup menus");
+        CHECK(zg_window_menu_set_checked(mainWindow, 3, 0) == ZG_ERROR_UNSUPPORTED, "nor their items");
+#endif
+        zg_menu_destroy(bar);
+        zg_menu_destroy(popup);
+    }
+
+    /* Dialogs. */
+    {
+        zg_message_box box = { sizeof box };
+        zg_message_button buttons[2] = { { 7, "Yes", ZG_MESSAGE_BUTTON_DEFAULT }, { 8, "No", ZG_MESSAGE_BUTTON_CANCEL } };
+        zg_file_dialog dialog = { sizeof dialog };
+        zg_file_filter filter = { "Text", "txt;md" };
+        zg_window *doomed;
+
+        dialog.kind = (zg_file_dialog_kind)99;
+        CHECK(zg_window_file_dialog(mainWindow, &dialog, onFileDialog, NULL) == ZG_ERROR_INVALID_ARGUMENT, "an unknown dialog kind is refused");
+        dialog.kind = ZG_FILE_DIALOG_OPEN;
+        dialog.filter_count = 1;
+        CHECK(zg_window_file_dialog(mainWindow, &dialog, onFileDialog, NULL) == ZG_ERROR_INVALID_ARGUMENT, "filters counted but missing are refused");
+        CHECK(zg_window_message_box(mainWindow, &box, NULL, NULL) == ZG_ERROR_INVALID_ARGUMENT, "a dialog needs its callback");
+
+        /* Answered after its window was destroyed: NULL, NOT_FOUND. */
+        doomed = createWindow(context, "doomed", 1);
+        box.title = "never shown";
+        box.message = "the window goes first";
+        dialogAnswers = 0;
+        CHECK(zg_window_message_box(doomed, &box, onMessageBox, NULL) == ZG_OK, "a message box asked for");
+        CHECK(dialogAnswers == 0, "the answer does not come during the call");
+        zg_window_destroy(doomed);
+        CHECK(runUntil(hasDialogAnswer, 3000) && dialogWindow == NULL && dialogResult == ZG_ERROR_NOT_FOUND,
+            "its window destroyed first: the answer comes with no window (%d)", dialogResult);
+
+#ifdef _WIN32
+        {
+            static Closer boxCloser = { NULL, L"ZeroG test box", 0 };
+            static Closer dialogCloser = { NULL, L"ZeroG test open", 0 };
+            box.title = "ZeroG test box";
+            box.message = "Closed by the test";
+            box.kind = ZG_MESSAGE_WARNING;
+            box.buttons = buttons;
+            box.button_count = 2;
+            dialogAnswers = 0;
+            closeLater(&boxCloser);
+            CHECK(zg_window_message_box(mainWindow, &box, onMessageBox, NULL) == ZG_OK && runUntil(hasDialogAnswer, 5000)
+                && dialogWindow == mainWindow && dialogResult == ZG_OK && dialogButton == 8,
+                "a message box closed: its cancel button's id (%d, %s)", dialogButton, zg_last_error());
+
+            dialog.title = "ZeroG test open";
+            dialog.filters = &filter;
+            dialogAnswers = 0;
+            closeLater(&dialogCloser);
+            CHECK(zg_window_file_dialog(mainWindow, &dialog, onFileDialog, NULL) == ZG_OK && runUntil(hasDialogAnswer, 5000)
+                && dialogWindow == mainWindow && dialogResult == ZG_OK && dialogPaths == 0,
+                "a file dialog cancelled: no paths (%d)", dialogResult);
+        }
+#else
+        (void)buttons;
+        (void)filter;
+#endif
+    }
+
+    /* A window that destroys itself from its own page's call. */
+    selfDestroying = createWindow(context, "self-destroying", 1);
+    {
+        static const char page[] = "<script>setTimeout(() => Test.destroySelf(), 50);</script>";
+        zg_view_bind(zg_window_view(selfDestroying), "Test.destroySelf", destroySelf, NULL);
+        zg_view_load_html(zg_window_view(selfDestroying), page, sizeof page - 1, NULL);
+    }
+    runUntil(NULL, 3000);
+    CHECK(selfDestroying == NULL, "a window destroyed from its own page's call");
+    CHECK(zg_window_get_size(mainWindow, &width, &height) == ZG_OK, "and the loop goes on with the others");
+
+#ifdef _WIN32
+    /* Close requests: refused, then accepted (the loop ends with the last window). */
+    {
+        HWND hwnd = (HWND)zg_window_native_handle(mainWindow);
+        allowClose = 0;
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        CHECK(runUntil(hasCloseRequest, 3000) && zg_window_get_state(mainWindow) != ZG_WINDOW_HIDDEN, "a close request refused: the window stays");
+        allowClose = 1;
+        closeRequests = 0;
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        runUntil(NULL, 3000);
+        CHECK(closeRequests == 1 && zg_window_get_state(mainWindow) == ZG_WINDOW_HIDDEN, "a close request accepted: hidden, and the loop ended (%d requests, state %d)",
+            closeRequests, zg_window_get_state(mainWindow));
+    }
+#endif
+
+    zg_window_destroy(mainWindow);
+    zg_runtime_destroy(runtime);
+    printf("%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
+    return failures ? 1 : 0;
+}

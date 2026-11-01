@@ -9,13 +9,15 @@ Everything public is in one header, [`include/zerog.h`](https://github.com/dzone
 ```text
 ZeroG — public C API.
 
-Version 0.4: the API of docs/design/c-api.md as frozen at the end of
+Version 0.5: the API of docs/design/c-api.md as frozen at the end of
 roadmap phase 2 (0.1), with binary values, references to JavaScript values,
 classes and page scripts (0.2), the engine features of phases 3 and 4 (0.3,
 frozen): storage, clipboard, file chooser, drag and drop, context menus,
 windows (transparent, frameless, click-through), the Web Inspector, and
-texture mode for every graphics API games use; and a page's objects read and
-changed from native code through references (0.4). Within 0.x a minor version
+texture mode for every graphics API games use; a page's objects read and
+changed from native code through references (0.4); and what desktop
+applications need of their windows (0.5): control and events, screens, the
+system's dialogs, native menus. Within 0.x a minor version
 may add functions, enum values and fields at the end of config structs;
 nothing is renamed or removed and no meaning changes without a new minor
 version and a note in docs/api-changes.md.
@@ -121,6 +123,11 @@ Rules that hold for every function below:
 - [`zg_file_chooser_choose`](views.md#zg_file_chooser_choose)
 - [`zg_free`](direct-javascript-bindings.md#zg_free)
 - [`zg_last_error`](errors.md#zg_last_error)
+- [`zg_menu_add_item`](windows.md#zg_menu_add_item)
+- [`zg_menu_add_separator`](windows.md#zg_menu_add_separator)
+- [`zg_menu_add_submenu`](windows.md#zg_menu_add_submenu)
+- [`zg_menu_create`](windows.md#zg_menu_create)
+- [`zg_menu_destroy`](windows.md#zg_menu_destroy)
 - [`zg_promise_reject`](direct-javascript-bindings.md#zg_promise_reject)
 - [`zg_promise_resolve`](direct-javascript-bindings.md#zg_promise_resolve)
 - [`zg_promise_resolve_bytes`](direct-javascript-bindings.md#zg_promise_resolve_bytes)
@@ -156,6 +163,8 @@ Rules that hold for every function below:
 - [`zg_scheme_request_method`](context.md#zg_scheme_request_method)
 - [`zg_scheme_request_respond`](context.md#zg_scheme_request_respond)
 - [`zg_scheme_request_url`](context.md#zg_scheme_request_url)
+- [`zg_screen_count`](windows.md#zg_screen_count)
+- [`zg_screen_get`](windows.md#zg_screen_get)
 - [`zg_surface_acquire`](surfaces.md#zg_surface_acquire)
 - [`zg_surface_device`](surfaces.md#zg_surface_device)
 - [`zg_surface_device_lost`](surfaces.md#zg_surface_device_lost)
@@ -205,9 +214,33 @@ Rules that hold for every function below:
 - [`zg_view_show_inspector`](views.md#zg_view_show_inspector)
 - [`zg_view_stop`](views.md#zg_view_stop)
 - [`zg_view_surface`](views.md#zg_view_surface)
+- [`zg_window_center`](windows.md#zg_window_center)
 - [`zg_window_create`](windows.md#zg_window_create)
 - [`zg_window_destroy`](windows.md#zg_window_destroy)
+- [`zg_window_file_dialog`](windows.md#zg_window_file_dialog)
+- [`zg_window_focus`](windows.md#zg_window_focus)
+- [`zg_window_get_position`](windows.md#zg_window_get_position)
+- [`zg_window_get_size`](windows.md#zg_window_get_size)
+- [`zg_window_get_state`](windows.md#zg_window_get_state)
+- [`zg_window_hide`](windows.md#zg_window_hide)
+- [`zg_window_maximize`](windows.md#zg_window_maximize)
+- [`zg_window_menu_set_checked`](windows.md#zg_window_menu_set_checked)
+- [`zg_window_menu_set_enabled`](windows.md#zg_window_menu_set_enabled)
+- [`zg_window_message_box`](windows.md#zg_window_message_box)
+- [`zg_window_minimize`](windows.md#zg_window_minimize)
 - [`zg_window_native_handle`](windows.md#zg_window_native_handle)
+- [`zg_window_popup_menu`](windows.md#zg_window_popup_menu)
+- [`zg_window_restore`](windows.md#zg_window_restore)
+- [`zg_window_screen`](windows.md#zg_window_screen)
+- [`zg_window_set_always_on_top`](windows.md#zg_window_set_always_on_top)
+- [`zg_window_set_callbacks`](windows.md#zg_window_set_callbacks)
 - [`zg_window_set_fullscreen`](windows.md#zg_window_set_fullscreen)
+- [`zg_window_set_max_size`](windows.md#zg_window_set_max_size)
+- [`zg_window_set_menu`](windows.md#zg_window_set_menu)
+- [`zg_window_set_min_size`](windows.md#zg_window_set_min_size)
+- [`zg_window_set_position`](windows.md#zg_window_set_position)
+- [`zg_window_set_resizable`](windows.md#zg_window_set_resizable)
+- [`zg_window_set_size`](windows.md#zg_window_set_size)
 - [`zg_window_set_title`](windows.md#zg_window_set_title)
+- [`zg_window_show`](windows.md#zg_window_show)
 - [`zg_window_view`](windows.md#zg_window_view)

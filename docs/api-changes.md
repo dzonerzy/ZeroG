@@ -6,6 +6,45 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## 0.5.0
+
+What desktop applications need of their windows:
+
+- **Window control:** `zg_window_set_size`/`get_size` (logical pixels),
+  `set_min_size`/`set_max_size`, `set_resizable`, `set_position`/`get_position`
+  and `center` (desktop coordinates; `ZG_ERROR_UNSUPPORTED` on Wayland),
+  `minimize`, `maximize`, `restore`, `show`, `hide`, `focus`,
+  `set_always_on_top`, and `zg_window_get_state` with `zg_window_state`.
+  `zg_window_config.hidden` creates a window hidden until `zg_window_show`.
+- **Window events:** `zg_window_callbacks` with `zg_window_set_callbacks`:
+  `close_requested` (return 0 to keep the window open), `resized`, `moved`,
+  `focus_changed`, `state_changed`, `menu_item`, `screen_changed`.
+- **Screens:** `zg_screen_count`, `zg_screen_get` (`zg_screen`: bounds, work
+  area, scale, refresh rate, primary, name) and `zg_window_screen`.
+- **Dialogs:** `zg_window_file_dialog` (open files, open a folder, save; title,
+  accept label, location, filters, several files) and `zg_window_message_box`
+  (info, warning, error; custom buttons with Enter and Escape defaults). The
+  answers come to a callback, always once, never during the call.
+- **Native menus** (Windows; `ZG_ERROR_UNSUPPORTED` elsewhere): `zg_menu`
+  descriptions with items (ids, `&` access keys, accelerators such as
+  `"Ctrl+S"`, checkbox, checked, disabled), separators and submenus;
+  `zg_window_set_menu` for the menu bar, `zg_window_menu_set_checked` and
+  `_set_enabled`, `zg_window_popup_menu`.
+
+Changes in behavior, for every window:
+
+- `zg_window_config.width` and `height` are logical pixels as documented: on a
+  screen scaled to 150%, a 400x300 window now has 600x450 device pixels
+  (before, the size was taken as device pixels on Windows and X11).
+- A window the user closes is hidden at once (before, it stayed on screen until
+  the application destroyed it), and closing the last window no longer ends
+  `zg_runtime_run` through SDL's quit event before the application could see
+  the request.
+- `zg_window_destroy` may be called from callbacks, also for the window whose
+  event or page is running: the window goes once the loop is out of its work.
+
+Nothing else changed for 0.4 programs.
+
 ## 0.4.0
 
 A page's objects read and changed from native code, through references:

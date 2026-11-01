@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/dzonerzy/ZeroG/actions/workflows/checks.yml"><img alt="checks" src="https://github.com/dzonerzy/ZeroG/actions/workflows/checks.yml/badge.svg"></a>
   <a href="https://dzonerzy.github.io/ZeroG/"><img alt="docs" src="https://img.shields.io/badge/docs-dzonerzy.github.io%2FZeroG-7B5CFF"></a>
-  <img alt="C API 0.4" src="https://img.shields.io/badge/C%20API-0.4-29D3F4">
+  <img alt="C API 0.5" src="https://img.shields.io/badge/C%20API-0.5-29D3F4">
   <img alt="platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-1B1F3B">
 </p>
 
@@ -80,8 +80,9 @@ through it.
   (`document.getElementById("title").textContent = "Hello"` as three typed
   calls). An empty synchronous call costs about 0.03 µs.
 - **Window mode**: frameless and transparent windows, `--zg-app-region: drag`
-  regions, click-through, native context menus, file dialogs, drag and drop,
-  the system clipboard, screen readers (UI Automation, AT-SPI).
+  regions, click-through; window control and events, screens, the system's file
+  dialogs and message boxes, native menu bars and popup menus on Windows; drag
+  and drop, the system clipboard, screen readers (UI Automation, AT-SPI).
 - **Texture mode**: frames for your renderer on any thread, input from your
   window, animations paced by your frame clock, GPU compositing on the engine's
   own thread.
@@ -137,8 +138,9 @@ testing and measurements. The sources are in [`docs/`](docs/).
 
 ## Status
 
-The C API is at **0.4** (0.3 frozen, 0.4 adding access to the page's objects
-from native code): within 0.x versions add functions, enum
+The C API is at **0.5** (0.3 frozen, 0.4 adding access to the page's objects
+from native code, 0.5 what desktop applications need of their windows): within
+0.x versions add functions, enum
 values and fields at the end of config structs, and never rename, remove or
 change meaning without a new minor version
 ([changes](docs/api-changes.md)). Windows and Linux are complete; a Zig

@@ -558,6 +558,113 @@ private:
     HashMap<ZeroG::Download*, std::unique_ptr<zg_download>> m_downloads;
 };
 
+static zg_window_state windowState(Window::State state)
+{
+    switch (state) {
+    case Window::State::Normal: return ZG_WINDOW_NORMAL;
+    case Window::State::Minimized: return ZG_WINDOW_MINIMIZED;
+    case Window::State::Maximized: return ZG_WINDOW_MAXIMIZED;
+    case Window::State::Fullscreen: return ZG_WINDOW_FULLSCREEN;
+    case Window::State::Hidden: return ZG_WINDOW_HIDDEN;
+    }
+    return ZG_WINDOW_NORMAL;
+}
+
+// The window's events, as zg_window_callbacks.
+class WindowClientAPI final : public Window::Client {
+public:
+    explicit WindowClientAPI(zg_window& window)
+        : m_window(window)
+    {
+    }
+
+private:
+    const zg_window_callbacks& callbacks() const { return m_window.callbacks; }
+
+    bool closeRequested() final
+    {
+        return !callbacks().close_requested || callbacks().close_requested(&m_window, callbacks().user);
+    }
+
+    void resized(const IntSize& size) final
+    {
+        if (callbacks().resized)
+            callbacks().resized(&m_window, size.width(), size.height(), callbacks().user);
+    }
+
+    void moved(const IntPoint& position) final
+    {
+        if (callbacks().moved)
+            callbacks().moved(&m_window, position.x(), position.y(), callbacks().user);
+    }
+
+    void focusChanged(bool focused) final
+    {
+        if (callbacks().focus_changed)
+            callbacks().focus_changed(&m_window, focused, callbacks().user);
+    }
+
+    void stateChanged(Window::State state) final
+    {
+        if (callbacks().state_changed)
+            callbacks().state_changed(&m_window, windowState(state), callbacks().user);
+    }
+
+    void menuItemChosen(unsigned id) final
+    {
+        if (callbacks().menu_item)
+            callbacks().menu_item(&m_window, id, callbacks().user);
+    }
+
+    void screenChanged() final
+    {
+        if (callbacks().screen_changed)
+            callbacks().screen_changed(&m_window, callbacks().user);
+    }
+
+    zg_window& m_window;
+};
+
+// The window if it still exists: `window` is compared before it is read, and
+// the ID (never reused) tells a new window at the same address apart.
+static zg_window* liveWindow(zg_window* window, uint32_t id)
+{
+    auto* rt = runtime();
+    if (!rt)
+        return nullptr;
+    for (auto* candidate : rt->windows) {
+        if (candidate == window && candidate->window->id() == id)
+            return candidate;
+    }
+    return nullptr;
+}
+
+static void destroyDeferredWindows(zg_runtime& rt)
+{
+    for (auto* window : std::exchange(rt.destroyedWindows, { }))
+        delete window;
+}
+
+// The loop inside windows' work: zg_window_destroy from a callback waits for
+// the end of it, as the window may be the one whose work is running.
+class DispatchScope {
+public:
+    explicit DispatchScope(zg_runtime& rt)
+        : m_runtime(rt)
+    {
+        ++m_runtime.dispatching;
+    }
+
+    ~DispatchScope()
+    {
+        if (!--m_runtime.dispatching)
+            destroyDeferredWindows(m_runtime);
+    }
+
+private:
+    zg_runtime& m_runtime;
+};
+
 extern "C" {
 
 // ---- Errors and version ----
@@ -665,6 +772,7 @@ void zg_runtime_destroy(zg_runtime* rt)
     rt->inspectorWindows.clear();
     while (!rt->windows.empty())
         zg_window_destroy(rt->windows.back());
+    destroyDeferredWindows(*rt);
     while (!rt->contexts.empty())
         zg_context_destroy(rt->contexts.back());
     // The wake-up observers outlive the runtime: the handle stays open, as the
@@ -717,6 +825,7 @@ zg_result zg_runtime_run(zg_runtime* rt)
     // A quit asked for before the loop started ends it at once.
     bool hadWindows = !rt->windows.empty();
     while (!rt->quit) {
+        DispatchScope dispatching { *rt };
         std::vector<zg_window*> open;
         for (auto* window : rt->windows) {
             if (!window->window->isClosed())
@@ -1947,7 +2056,7 @@ zg_window* zg_window_create(zg_context* context, const zg_window_config* configu
         return nullptr;
     auto config = copyConfig(configuration);
     IntSize size { static_cast<int>(config.width ? config.width : 1024), static_cast<int>(config.height ? config.height : 768) };
-    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, true, context->session, !!config.transparent, !!config.click_through });
+    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, !config.hidden, context->session, !!config.transparent, !!config.click_through });
     if (!window) {
         fail(ZG_ERROR_GPU, makeString("cannot create the window: "_s, Window::lastError()));
         return nullptr;
@@ -1956,6 +2065,8 @@ zg_window* zg_window_create(zg_context* context, const zg_window_config* configu
         window->setFullscreen(true);
     auto* result = new zg_window;
     result->context = context;
+    result->client = std::make_unique<WindowClientAPI>(*result);
+    window->setClient(result->client.get());
     result->window = WTF::move(window);
     result->view.context = context;
     result->view.window = result;
@@ -1969,12 +2080,22 @@ void zg_window_destroy(zg_window* window)
 {
     if (!window || !checkThread())
         return;
-    auto& windows = window->context->runtime->windows;
+    auto* rt = window->context->runtime;
+    auto& windows = rt->windows;
     windows.erase(std::remove(windows.begin(), windows.end(), window), windows.end());
     if (auto* inspector = window->view.view->inspector())
         inspector->close();
     window->view.view->setClient(nullptr);
+    window->window->setClient(nullptr);
     detachBindings(window->view);
+    if (rt->dispatching) {
+        // From a callback: the loop may be inside this window's work. It
+        // leaves the screen now and goes when the loop is out of it.
+        window->window->hide();
+        window->window->quit();
+        rt->destroyedWindows.push_back(window);
+        return;
+    }
     delete window;
 }
 
@@ -1998,6 +2119,417 @@ void zg_window_set_fullscreen(zg_window* window, int fullscreen)
 void* zg_window_native_handle(zg_window* window)
 {
     return window ? window->window->nativeHandle() : nullptr;
+}
+
+// ---- Window control (0.5) ----
+
+static zg_result checkWindow(zg_window* window)
+{
+    clearError();
+    if (!window)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no window"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    return ZG_OK;
+}
+
+static IntSize logicalSize(unsigned width, unsigned height)
+{
+    constexpr unsigned largest = 1 << 16;
+    return { static_cast<int>(std::min(width, largest)), static_cast<int>(std::min(height, largest)) };
+}
+
+static zg_result placementUnsupported()
+{
+    return fail(ZG_ERROR_UNSUPPORTED, "the window system does not let applications place windows (Wayland)"_s);
+}
+
+zg_result zg_window_set_size(zg_window* window, unsigned width, unsigned height)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!width || !height)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "a window's size cannot be 0"_s);
+    window->window->setSize(logicalSize(width, height));
+    return ZG_OK;
+}
+
+zg_result zg_window_get_size(zg_window* window, unsigned* width, unsigned* height)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    auto size = window->window->size();
+    if (width)
+        *width = size.width();
+    if (height)
+        *height = size.height();
+    return ZG_OK;
+}
+
+zg_result zg_window_set_min_size(zg_window* window, unsigned width, unsigned height)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->setMinimumSize(logicalSize(width, height));
+    return ZG_OK;
+}
+
+zg_result zg_window_set_max_size(zg_window* window, unsigned width, unsigned height)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->setMaximumSize(logicalSize(width, height));
+    return ZG_OK;
+}
+
+zg_result zg_window_set_resizable(zg_window* window, int resizable)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->setResizable(resizable);
+    return ZG_OK;
+}
+
+zg_result zg_window_set_position(zg_window* window, int x, int y)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    return window->window->setPosition({ x, y }) ? ZG_OK : placementUnsupported();
+}
+
+zg_result zg_window_get_position(zg_window* window, int* x, int* y)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    auto position = window->window->position();
+    if (!position)
+        return placementUnsupported();
+    if (x)
+        *x = position->x();
+    if (y)
+        *y = position->y();
+    return ZG_OK;
+}
+
+zg_result zg_window_center(zg_window* window)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    return window->window->center() ? ZG_OK : placementUnsupported();
+}
+
+zg_result zg_window_minimize(zg_window* window)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->minimize();
+    return ZG_OK;
+}
+
+zg_result zg_window_maximize(zg_window* window)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->maximize();
+    return ZG_OK;
+}
+
+zg_result zg_window_restore(zg_window* window)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->restore();
+    return ZG_OK;
+}
+
+zg_result zg_window_show(zg_window* window)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->show();
+    return ZG_OK;
+}
+
+zg_result zg_window_hide(zg_window* window)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->hide();
+    return ZG_OK;
+}
+
+zg_result zg_window_focus(zg_window* window)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->raise();
+    return ZG_OK;
+}
+
+zg_result zg_window_set_always_on_top(zg_window* window, int onTop)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->window->setAlwaysOnTop(onTop);
+    return ZG_OK;
+}
+
+zg_window_state zg_window_get_state(zg_window* window)
+{
+    if (checkWindow(window))
+        return ZG_WINDOW_HIDDEN;
+    return windowState(window->window->state());
+}
+
+zg_result zg_window_set_callbacks(zg_window* window, const zg_window_callbacks* callbacks)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    window->callbacks = copyConfig(callbacks);
+    return ZG_OK;
+}
+
+// ---- Screens (0.5) ----
+
+size_t zg_screen_count(zg_runtime* rt)
+{
+    clearError();
+    if (!rt || !checkThread())
+        return 0;
+    return Window::screens().size();
+}
+
+zg_result zg_screen_get(zg_runtime* rt, size_t index, zg_screen* out)
+{
+    clearError();
+    if (!rt || !out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no runtime or screen"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    auto screens = Window::screens();
+    if (index >= screens.size())
+        return fail(ZG_ERROR_NOT_FOUND, makeString("no screen "_s, index, " ("_s, screens.size(), " connected)"_s));
+    auto& screen = screens[index];
+    zg_screen info { };
+    info.size = sizeof(info);
+    info.x = screen.bounds.x();
+    info.y = screen.bounds.y();
+    info.width = screen.bounds.width();
+    info.height = screen.bounds.height();
+    info.work_x = screen.workArea.x();
+    info.work_y = screen.workArea.y();
+    info.work_width = screen.workArea.width();
+    info.work_height = screen.workArea.height();
+    info.scale = screen.scale;
+    info.refresh_rate = screen.refreshRate;
+    info.primary = screen.primary;
+    // Truncated on a character boundary.
+    auto name = screen.name.utf8();
+    size_t length = std::min(name.length(), sizeof(info.name) - 1);
+    while (length && length < name.length() && (static_cast<uint8_t>(name.data()[length]) & 0xC0) == 0x80)
+        --length;
+    std::memcpy(info.name, name.data(), length);
+    info.name[length] = '\0';
+    std::memcpy(out, &info, std::min<size_t>(out->size ? out->size : sizeof(info), sizeof(info)));
+    return ZG_OK;
+}
+
+zg_result zg_window_screen(zg_window* window, size_t* index)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!index)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no index"_s);
+    auto screen = window->window->screen();
+    if (!screen)
+        return fail(ZG_ERROR_NOT_FOUND, "the window is on no known screen"_s);
+    *index = *screen;
+    return ZG_OK;
+}
+
+// ---- Dialogs (0.5) ----
+
+zg_result zg_window_file_dialog(zg_window* window, const zg_file_dialog* dialog, zg_file_dialog_fn done, void* user)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!dialog || !done)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no dialog or callback"_s);
+    auto config = copyConfig(dialog);
+    if (config.kind > ZG_FILE_DIALOG_SAVE)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "unknown file dialog kind"_s);
+    if (config.filter_count && !config.filters)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "filter_count without filters"_s);
+    Window::FileDialog request;
+    request.kind = config.kind == ZG_FILE_DIALOG_OPEN_FOLDER ? Window::FileDialog::Kind::OpenFolder
+        : config.kind == ZG_FILE_DIALOG_SAVE ? Window::FileDialog::Kind::Save : Window::FileDialog::Kind::Open;
+    request.title = stringFromUTF8(config.title);
+    request.acceptLabel = stringFromUTF8(config.accept_label);
+    request.location = stringFromUTF8(config.location);
+    request.multiple = config.multiple;
+    for (size_t i = 0; i < config.filter_count; ++i) {
+        auto& filter = config.filters[i];
+        if (!filter.pattern || !*filter.pattern)
+            return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("filter "_s, i, " has no pattern"_s));
+        request.filters.append({ stringFromUTF8(filter.name), stringFromUTF8(filter.pattern) });
+    }
+    window->window->showFileDialog(WTF::move(request), [window, id = window->window->id(), done, user](std::expected<Vector<String>, String>&& answer) {
+        auto* live = liveWindow(window, id);
+        if (!live) {
+            fail(ZG_ERROR_NOT_FOUND, "the window was destroyed"_s);
+            done(nullptr, ZG_ERROR_NOT_FOUND, nullptr, 0, user);
+            return;
+        }
+        if (!answer) {
+            fail(ZG_ERROR_UNSUPPORTED, makeString("cannot show the file dialog: "_s, answer.error()));
+            done(live, ZG_ERROR_UNSUPPORTED, nullptr, 0, user);
+            return;
+        }
+        clearError();
+        std::vector<std::string> paths;
+        for (auto& path : *answer)
+            paths.push_back(utf8String(path));
+        std::vector<const char*> pointers;
+        for (auto& path : paths)
+            pointers.push_back(path.c_str());
+        done(live, ZG_OK, pointers.empty() ? nullptr : pointers.data(), pointers.size(), user);
+    });
+    return ZG_OK;
+}
+
+zg_result zg_window_message_box(zg_window* window, const zg_message_box* box, zg_message_box_fn done, void* user)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!box || !done)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no message box or callback"_s);
+    auto config = copyConfig(box);
+    if (config.kind > ZG_MESSAGE_ERROR)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "unknown message kind"_s);
+    if (config.button_count && !config.buttons)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "button_count without buttons"_s);
+    Window::MessageDialog request;
+    request.kind = config.kind == ZG_MESSAGE_WARNING ? Window::MessageDialog::Kind::Warning
+        : config.kind == ZG_MESSAGE_ERROR ? Window::MessageDialog::Kind::Error : Window::MessageDialog::Kind::Info;
+    request.title = stringFromUTF8(config.title);
+    request.message = stringFromUTF8(config.message);
+    for (size_t i = 0; i < config.button_count; ++i) {
+        auto& button = config.buttons[i];
+        request.buttons.append({ button.id, stringFromUTF8(button.label), !!(button.flags & ZG_MESSAGE_BUTTON_DEFAULT), !!(button.flags & ZG_MESSAGE_BUTTON_CANCEL) });
+    }
+    window->window->showMessageDialog(WTF::move(request), [window, id = window->window->id(), done, user](std::expected<int, String>&& answer) {
+        auto* live = liveWindow(window, id);
+        if (!live) {
+            fail(ZG_ERROR_NOT_FOUND, "the window was destroyed"_s);
+            done(nullptr, ZG_ERROR_NOT_FOUND, -1, user);
+            return;
+        }
+        if (!answer) {
+            fail(ZG_ERROR_UNSUPPORTED, makeString("cannot show the message box: "_s, answer.error()));
+            done(live, ZG_ERROR_UNSUPPORTED, -1, user);
+            return;
+        }
+        clearError();
+        done(live, ZG_OK, *answer, user);
+    });
+    return ZG_OK;
+}
+
+// ---- Native menus (0.5) ----
+
+zg_menu* zg_menu_create(void)
+{
+    return new zg_menu;
+}
+
+void zg_menu_destroy(zg_menu* menu)
+{
+    delete menu;
+}
+
+zg_result zg_menu_add_item(zg_menu* menu, unsigned id, const char* label, const char* accelerator, unsigned flags)
+{
+    clearError();
+    if (!menu || !label)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no menu or label"_s);
+    if (!id || id > 0xFFFF)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("menu item ids are from 1 to 65535, not "_s, id));
+    ZeroG::Menu::Item item;
+    item.id = id;
+    item.label = stringFromUTF8(label);
+    item.accelerator = stringFromUTF8(accelerator);
+    if (!item.accelerator.isEmpty() && !parseAccelerator(item.accelerator))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("not an accelerator: "_s, item.accelerator));
+    item.checkbox = flags & (ZG_MENU_ITEM_CHECKBOX | ZG_MENU_ITEM_CHECKED);
+    item.checked = flags & ZG_MENU_ITEM_CHECKED;
+    item.enabled = !(flags & ZG_MENU_ITEM_DISABLED);
+    menu->menu.items.append(WTF::move(item));
+    return ZG_OK;
+}
+
+zg_result zg_menu_add_separator(zg_menu* menu)
+{
+    clearError();
+    if (!menu)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no menu"_s);
+    ZeroG::Menu::Item item;
+    item.kind = ZeroG::Menu::Item::Kind::Separator;
+    menu->menu.items.append(WTF::move(item));
+    return ZG_OK;
+}
+
+zg_result zg_menu_add_submenu(zg_menu* menu, const char* label, const zg_menu* submenu)
+{
+    clearError();
+    if (!menu || !label || !submenu)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no menu, label or submenu"_s);
+    ZeroG::Menu::Item item;
+    item.kind = ZeroG::Menu::Item::Kind::Submenu;
+    item.label = stringFromUTF8(label);
+    item.submenu = submenu->menu.items;
+    menu->menu.items.append(WTF::move(item));
+    return ZG_OK;
+}
+
+static zg_result menusUnsupported()
+{
+    return fail(ZG_ERROR_UNSUPPORTED, "native menus are on Windows only: draw menus in the page here"_s);
+}
+
+zg_result zg_window_set_menu(zg_window* window, const zg_menu* menu)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    return window->window->setMenu(menu ? &menu->menu : nullptr) ? ZG_OK : menusUnsupported();
+}
+
+zg_result zg_window_menu_set_checked(zg_window* window, unsigned id, int checked)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!Window::hasNativeMenus())
+        return menusUnsupported();
+    window->window->setMenuItemChecked(id, checked);
+    return ZG_OK;
+}
+
+zg_result zg_window_menu_set_enabled(zg_window* window, unsigned id, int enabled)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!Window::hasNativeMenus())
+        return menusUnsupported();
+    window->window->setMenuItemEnabled(id, enabled);
+    return ZG_OK;
+}
+
+zg_result zg_window_popup_menu(zg_window* window, const zg_menu* menu, float x, float y)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!menu)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no menu"_s);
+    return window->window->popupMenu(menu->menu, { x, y }) ? ZG_OK : menusUnsupported();
 }
 
 } // extern "C"

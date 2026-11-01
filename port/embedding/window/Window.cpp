@@ -42,13 +42,19 @@ String s_lastError;
 // Engine work posted from other threads wakes the window's event wait.
 Uint32 s_wakeUpEvent;
 std::atomic<bool> s_wakeUpPending;
+// A native menu's item was chosen (code: its id).
+Uint32 s_menuEvent;
 
 bool initializeVideo()
 {
     static bool initialized = [] {
+        // Closing the last window is a close request like any other, which
+        // the application may refuse; SDL would also make it a quit.
+        SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
         if (!SDL_Init(SDL_INIT_VIDEO))
             return false;
-        s_wakeUpEvent = SDL_RegisterEvents(1);
+        s_wakeUpEvent = SDL_RegisterEvents(2);
+        s_menuEvent = s_wakeUpEvent + 1;
         addWakeUpObserver([] {
             if (s_wakeUpPending.exchange(true))
                 return;
@@ -194,6 +200,12 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     if (!window)
         return fail("cannot create the window"_s, SDL_GetError());
     auto destroyWindow = makeScopeExit([&] { SDL_DestroyWindow(window); });
+    // The size asked for is logical: SDL's units are pixels on Windows and X11.
+    if (float scale = SDL_GetWindowDisplayScale(window), density = SDL_GetWindowPixelDensity(window); scale > 0 && density > 0 && scale != density) {
+        float units = scale / density;
+        SDL_SetWindowSize(window, std::lround(configuration.size.width() * units), std::lround(configuration.size.height() * units));
+        SDL_SyncWindow(window);
+    }
 
     auto native = nativeWindow(window);
     if (!native)
@@ -244,6 +256,7 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     result->m_layered = clickThrough;
 #endif
     result->updateSize();
+    result->m_state = result->state();
     // Text input events (typed characters, input method commits).
     SDL_StartTextInput(window);
     return std::unique_ptr<Window> { result.release() };
@@ -353,6 +366,10 @@ Window::HitTest Window::hitTest(float x, float y)
 
 Window::~Window()
 {
+#if OS(WINDOWS)
+    // Its window procedure was installed after the accessibility bridge's.
+    m_menus = nullptr;
+#endif
     // Assistive technologies let go of the page before it goes.
     m_accessibility = nullptr;
     windows().remove(m_window);
@@ -462,10 +479,407 @@ void Window::raise()
     SDL_RaiseWindow(m_window);
 }
 
+uint32_t Window::id() const
+{
+    return SDL_GetWindowID(m_window);
+}
+
+float Window::unitsPerLogicalPixel() const
+{
+    float scale = SDL_GetWindowDisplayScale(m_window);
+    float density = SDL_GetWindowPixelDensity(m_window);
+    return scale > 0 && density > 0 ? scale / density : 1;
+}
+
+static int toUnits(int logical, float unitsPerLogicalPixel)
+{
+    return logical ? std::max(1, static_cast<int>(std::lround(logical * unitsPerLogicalPixel))) : 0;
+}
+
 void Window::setSize(const IntSize& size)
 {
-    SDL_SetWindowSize(m_window, size.width(), size.height());
+    float units = unitsPerLogicalPixel();
+    SDL_SetWindowSize(m_window, toUnits(size.width(), units), toUnits(size.height(), units));
     SDL_SyncWindow(m_window);
+}
+
+IntSize Window::size() const
+{
+    int width, height;
+    SDL_GetWindowSize(m_window, &width, &height);
+    float units = unitsPerLogicalPixel();
+    return { static_cast<int>(std::lround(width / units)), static_cast<int>(std::lround(height / units)) };
+}
+
+void Window::setMinimumSize(const IntSize& size)
+{
+    float units = unitsPerLogicalPixel();
+    SDL_SetWindowMinimumSize(m_window, toUnits(size.width(), units), toUnits(size.height(), units));
+}
+
+void Window::setMaximumSize(const IntSize& size)
+{
+    float units = unitsPerLogicalPixel();
+    SDL_SetWindowMaximumSize(m_window, toUnits(size.width(), units), toUnits(size.height(), units));
+}
+
+void Window::setResizable(bool resizable)
+{
+    SDL_SetWindowResizable(m_window, resizable);
+}
+
+// Wayland gives applications no say in where their windows are.
+static bool canPlaceWindows()
+{
+#if OS(WINDOWS)
+    return true;
+#else
+    return !isWayland();
+#endif
+}
+
+bool Window::setPosition(const IntPoint& position)
+{
+    if (!canPlaceWindows())
+        return false;
+    SDL_SetWindowPosition(m_window, position.x(), position.y());
+    SDL_SyncWindow(m_window);
+    return true;
+}
+
+std::optional<IntPoint> Window::position() const
+{
+    int x, y;
+    if (!canPlaceWindows() || !SDL_GetWindowPosition(m_window, &x, &y))
+        return std::nullopt;
+    return IntPoint { x, y };
+}
+
+bool Window::center()
+{
+    if (!canPlaceWindows())
+        return false;
+    auto display = SDL_GetDisplayForWindow(m_window);
+    SDL_SetWindowPosition(m_window, SDL_WINDOWPOS_CENTERED_DISPLAY(display), SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+    SDL_SyncWindow(m_window);
+    return true;
+}
+
+void Window::minimize()
+{
+    SDL_MinimizeWindow(m_window);
+}
+
+void Window::maximize()
+{
+    SDL_MaximizeWindow(m_window);
+}
+
+void Window::restore()
+{
+    SDL_RestoreWindow(m_window);
+}
+
+void Window::show()
+{
+    // Shown now if it has a frame to show, else with its first one.
+    m_showWhenPresented = true;
+    if (m_presentedFrames && !m_shown) {
+        SDL_ShowWindow(m_window);
+        m_shown = true;
+    }
+}
+
+void Window::hide()
+{
+    m_showWhenPresented = false;
+    m_shown = false;
+    SDL_HideWindow(m_window);
+}
+
+void Window::setAlwaysOnTop(bool onTop)
+{
+    SDL_SetWindowAlwaysOnTop(m_window, onTop);
+}
+
+Window::State Window::state() const
+{
+    auto flags = SDL_GetWindowFlags(m_window);
+    // A window waiting for its first frame to appear is not hidden.
+    if ((flags & SDL_WINDOW_HIDDEN) && !(m_showWhenPresented && !m_shown))
+        return State::Hidden;
+    if (flags & SDL_WINDOW_MINIMIZED)
+        return State::Minimized;
+    if (flags & SDL_WINDOW_FULLSCREEN)
+        return State::Fullscreen;
+    if (flags & SDL_WINDOW_MAXIMIZED)
+        return State::Maximized;
+    return State::Normal;
+}
+
+void Window::stateMayHaveChanged()
+{
+    auto state = this->state();
+    if (state == m_state)
+        return;
+    m_state = state;
+    if (m_client)
+        m_client->stateChanged(state);
+}
+
+Vector<Window::Screen> Window::screens()
+{
+    Vector<Screen> result;
+    if (!initializeVideo())
+        return result;
+    int count = 0;
+    SDL_DisplayID* displays = SDL_GetDisplays(&count);
+    if (!displays)
+        return result;
+    auto primary = SDL_GetPrimaryDisplay();
+    for (int i = 0; i < count; ++i) {
+        Screen screen;
+        SDL_Rect rect;
+        if (SDL_GetDisplayBounds(displays[i], &rect))
+            screen.bounds = { rect.x, rect.y, rect.w, rect.h };
+        screen.workArea = SDL_GetDisplayUsableBounds(displays[i], &rect) ? IntRect { rect.x, rect.y, rect.w, rect.h } : screen.bounds;
+        if (float scale = SDL_GetDisplayContentScale(displays[i]); scale > 0)
+            screen.scale = scale;
+        if (auto* mode = SDL_GetCurrentDisplayMode(displays[i]))
+            screen.refreshRate = mode->refresh_rate;
+        screen.primary = displays[i] == primary;
+        screen.name = String::fromUTF8(SDL_GetDisplayName(displays[i]));
+        result.append(WTF::move(screen));
+    }
+    SDL_free(displays);
+    return result;
+}
+
+std::optional<size_t> Window::screen() const
+{
+    auto display = SDL_GetDisplayForWindow(m_window);
+    int count = 0;
+    SDL_DisplayID* displays = SDL_GetDisplays(&count);
+    std::optional<size_t> result;
+    for (int i = 0; displays && i < count; ++i) {
+        if (displays[i] == display)
+            result = i;
+    }
+    SDL_free(displays);
+    return result;
+}
+
+namespace {
+
+// A file dialog until SDL answers: its filters and properties stay valid.
+struct FileDialogRequest {
+    Window::FileDialogHandler handler;
+    Vector<UTF8CString> strings;
+    Vector<SDL_DialogFileFilter> filters;
+    SDL_PropertiesID properties { 0 };
+
+    static void SDLCALL done(void* user, const char* const* files, int)
+    {
+        // SDL may answer on another thread. The strings are new: they move.
+        std::expected<Vector<String>, String> result;
+        if (!files)
+            result = makeUnexpected(String::fromUTF8(SDL_GetError()));
+        else {
+            Vector<String> paths;
+            for (auto* file = files; *file; ++file)
+                paths.append(String::fromUTF8(*file));
+            result = WTF::move(paths);
+        }
+        callOnMainThread([request = std::unique_ptr<FileDialogRequest>(static_cast<FileDialogRequest*>(user)), result = WTF::move(result)] mutable {
+            SDL_DestroyProperties(request->properties);
+            request->handler(WTF::move(result));
+        });
+    }
+};
+
+} // namespace
+
+void Window::showFileDialog(FileDialog&& dialog, FileDialogHandler&& handler)
+{
+    auto request = std::make_unique<FileDialogRequest>();
+    request->handler = WTF::move(handler);
+    // The strings first: the filters point into them.
+    request->strings.reserveInitialCapacity(dialog.filters.size() * 2);
+    for (auto& [name, pattern] : dialog.filters) {
+        request->strings.append(name.utf8());
+        request->strings.append(pattern.utf8());
+    }
+    for (size_t i = 0; i < dialog.filters.size(); ++i)
+        request->filters.append({ byteCast<char>(request->strings[i * 2].data()), byteCast<char>(request->strings[i * 2 + 1].data()) });
+
+    auto properties = SDL_CreateProperties();
+    request->properties = properties;
+    SDL_SetPointerProperty(properties, SDL_PROP_FILE_DIALOG_WINDOW_POINTER, m_window);
+    if (!request->filters.isEmpty() && dialog.kind != FileDialog::Kind::OpenFolder) {
+        SDL_SetPointerProperty(properties, SDL_PROP_FILE_DIALOG_FILTERS_POINTER, request->filters.mutableSpan().data());
+        SDL_SetNumberProperty(properties, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, request->filters.size());
+    }
+    auto setString = [&](const char* name, const String& value) {
+        if (!value.isEmpty())
+            SDL_SetStringProperty(properties, name, byteCast<char>(value.utf8().data()));
+    };
+    setString(SDL_PROP_FILE_DIALOG_TITLE_STRING, dialog.title);
+    setString(SDL_PROP_FILE_DIALOG_ACCEPT_STRING, dialog.acceptLabel);
+    setString(SDL_PROP_FILE_DIALOG_LOCATION_STRING, dialog.location);
+    SDL_SetBooleanProperty(properties, SDL_PROP_FILE_DIALOG_MANY_BOOLEAN, dialog.multiple && dialog.kind != FileDialog::Kind::Save);
+
+    SDL_FileDialogType type = SDL_FILEDIALOG_OPENFILE;
+    if (dialog.kind == FileDialog::Kind::OpenFolder)
+        type = SDL_FILEDIALOG_OPENFOLDER;
+    else if (dialog.kind == FileDialog::Kind::Save)
+        type = SDL_FILEDIALOG_SAVEFILE;
+    SDL_ShowFileDialogWithProperties(type, FileDialogRequest::done, request.release(), properties);
+}
+
+void Window::showMessageDialog(MessageDialog&& dialog, MessageDialogHandler&& handler)
+{
+    // SDL's message box returns once answered: not during this call. The
+    // window's page waits meanwhile.
+    callOnMainThread([sdlWindow = m_window, windowID = id(), dialog = WTF::move(dialog), handler = WTF::move(handler)] mutable {
+        if (SDL_GetWindowFromID(windowID) != sdlWindow || !windows().contains(sdlWindow)) {
+            handler(makeUnexpected("the window was destroyed"_s));
+            return;
+        }
+        if (dialog.buttons.isEmpty())
+            dialog.buttons.append({ 0, "OK"_s, true, true });
+        Vector<UTF8CString> labels;
+        for (auto& button : dialog.buttons)
+            labels.append(button.label.utf8());
+        Vector<SDL_MessageBoxButtonData> buttons;
+        std::optional<int> cancel;
+        for (size_t i = 0; i < dialog.buttons.size(); ++i) {
+            auto& button = dialog.buttons[i];
+            SDL_MessageBoxButtonFlags flags = 0;
+            if (button.isDefault)
+                flags |= SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT;
+            if (button.isCancel) {
+                flags |= SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
+                cancel = button.id;
+            }
+            buttons.append({ flags, button.id, byteCast<char>(labels[i].data()) });
+        }
+        SDL_MessageBoxFlags flags = SDL_MESSAGEBOX_BUTTONS_LEFT_TO_RIGHT;
+        switch (dialog.kind) {
+        case MessageDialog::Kind::Info: flags |= SDL_MESSAGEBOX_INFORMATION; break;
+        case MessageDialog::Kind::Warning: flags |= SDL_MESSAGEBOX_WARNING; break;
+        case MessageDialog::Kind::Error: flags |= SDL_MESSAGEBOX_ERROR; break;
+        }
+        auto title = dialog.title.utf8();
+        auto message = dialog.message.utf8();
+        SDL_MessageBoxData data { flags, sdlWindow, byteCast<char>(title.data()), byteCast<char>(message.data()),static_cast<int>(buttons.size()), buttons.span().data(), nullptr };
+        int chosen = -1;
+        if (!SDL_ShowMessageBox(&data, &chosen)) {
+            handler(makeUnexpected(String::fromUTF8(SDL_GetError())));
+            return;
+        }
+        // Closed without a button: the cancel one's.
+        if (chosen == -1 && cancel)
+            chosen = *cancel;
+        handler(chosen);
+    });
+}
+
+bool Window::hasNativeMenus()
+{
+#if OS(WINDOWS)
+    return true;
+#else
+    return false;
+#endif
+}
+
+void Window::collectAccelerators(const Vector<Menu::Item>& items)
+{
+    for (auto& item : items) {
+        if (item.kind == Menu::Item::Kind::Submenu)
+            collectAccelerators(item.submenu);
+        else if (item.kind == Menu::Item::Kind::Action) {
+            if (auto accelerator = parseAccelerator(item.accelerator))
+                m_accelerators.append({ *accelerator, item.id, item.enabled });
+        }
+    }
+}
+
+bool Window::setMenu(const Menu* menu)
+{
+#if OS(WINDOWS)
+    m_accelerators.clear();
+    if (!m_menus) {
+        if (!menu)
+            return true;
+        m_menus = std::make_unique<NativeMenus>(nativeHandle(), id(), s_menuEvent);
+    }
+    // Alt and the items' access keys open the menu bar (SDL keeps them from
+    // Windows by default).
+    if (menu)
+        SDL_SetHint(SDL_HINT_WINDOWS_ENABLE_MENU_MNEMONICS, "1");
+    m_menus->setMenuBar(menu);
+    if (menu)
+        collectAccelerators(menu->items);
+    return true;
+#else
+    UNUSED_PARAM(menu);
+    return false;
+#endif
+}
+
+void Window::setMenuItemChecked(unsigned id, bool checked)
+{
+#if OS(WINDOWS)
+    if (m_menus)
+        m_menus->setChecked(id, checked);
+#else
+    UNUSED_PARAM(id);
+    UNUSED_PARAM(checked);
+#endif
+}
+
+void Window::setMenuItemEnabled(unsigned id, bool enabled)
+{
+    for (auto& accelerator : m_accelerators) {
+        if (accelerator.id == id)
+            accelerator.enabled = enabled;
+    }
+#if OS(WINDOWS)
+    if (m_menus)
+        m_menus->setEnabled(id, enabled);
+#endif
+}
+
+bool Window::popupMenu(const Menu& menu, const FloatPoint& point)
+{
+#if OS(WINDOWS)
+    if (!m_menus)
+        m_menus = std::make_unique<NativeMenus>(nativeHandle(), id(), s_menuEvent);
+    // The view's logical pixels to the client area's.
+    float scale = m_view->scale();
+    m_menus->popup(menu, std::lround(point.x() * scale), std::lround(point.y() * scale));
+    return true;
+#else
+    UNUSED_PARAM(menu);
+    UNUSED_PARAM(point);
+    return false;
+#endif
+}
+
+bool Window::handleAccelerator(const SDL_Event& event)
+{
+    if (m_accelerators.isEmpty())
+        return false;
+    auto pressed = acceleratorForKey(event.key.scancode, event.key.mod);
+    for (auto& accelerator : m_accelerators) {
+        if (accelerator.accelerator != pressed)
+            continue;
+        if (accelerator.enabled && !event.key.repeat && m_client)
+            m_client->menuItemChosen(accelerator.id);
+        return true;
+    }
+    return false;
 }
 
 void Window::updateSize()
@@ -634,11 +1048,46 @@ void Window::handleEvent(const SDL_Event& event)
     {
         switch (event.type) {
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+            if (m_client && !m_client->closeRequested())
+                break;
+            // Gone from the screen at once; the application destroys it.
             m_closed = true;
+            SDL_HideWindow(m_window);
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            updateSize();
+            break;
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
             updateSize();
+            if (m_client)
+                m_client->screenChanged();
+            break;
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+            // Animations follow the new screen's refresh rate.
+            if (auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window)); mode && mode->refresh_rate > 0) {
+                m_refreshInterval = 1_s / mode->refresh_rate;
+                if (auto* compositor = m_view->compositor())
+                    compositor->setFrameInterval(m_refreshInterval);
+            }
+            if (m_client)
+                m_client->screenChanged();
+            break;
+        case SDL_EVENT_WINDOW_RESIZED:
+            if (m_client)
+                m_client->resized(size());
+            break;
+        case SDL_EVENT_WINDOW_MOVED:
+            if (m_client)
+                m_client->moved({ event.window.data1, event.window.data2 });
+            break;
+        case SDL_EVENT_WINDOW_SHOWN:
+        case SDL_EVENT_WINDOW_HIDDEN:
+        case SDL_EVENT_WINDOW_MINIMIZED:
+        case SDL_EVENT_WINDOW_MAXIMIZED:
+        case SDL_EVENT_WINDOW_RESTORED:
+        case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+        case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+            stateMayHaveChanged();
             break;
         case SDL_EVENT_WINDOW_EXPOSED:
             m_view->invalidate({ { }, m_view->size() });
@@ -646,6 +1095,8 @@ void Window::handleEvent(const SDL_Event& event)
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             m_view->setFocused(event.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
+            if (m_client)
+                m_client->focusChanged(event.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
             break;
         case SDL_EVENT_WINDOW_MOUSE_LEAVE:
             m_view->mouseLeave();
@@ -672,6 +1123,9 @@ void Window::handleEvent(const SDL_Event& event)
             break;
         }
         case SDL_EVENT_KEY_DOWN:
+            // The menu bar's accelerators first, as in any application.
+            if (handleAccelerator(event))
+                break;
             // Ahead of the page, as in a browser; with no inspector the page gets the key.
             if (isInspectorShortcut(event.key) && !event.key.repeat && m_view->showInspector())
                 break;
@@ -707,6 +1161,8 @@ void Window::handleEvent(const SDL_Event& event)
             m_drop = { };
             break;
         default:
+            if (event.type == s_menuEvent && m_client)
+                m_client->menuItemChosen(static_cast<unsigned>(event.user.code));
             break;
         }
     }
@@ -757,7 +1213,8 @@ bool Window::runOnce(std::optional<Seconds> maxWait)
     if (hasWork && (m_view->hasPendingRenderingUpdate() || m_view->hasDamage()))
         wakeUp = std::min(wakeUp, m_nextFrameTime);
     if (auto engineWork = RunLoop::mainSingleton().nextWakeUpTime())
-        wakeUp = std::min(wakeUp, *engineWork);    Sint32 timeout = wakeUp.isInfinity() ? -1 : static_cast<Sint32>(std::max<double>(0, std::ceil((wakeUp - now).milliseconds())));
+        wakeUp = std::min(wakeUp, *engineWork);
+    Sint32 timeout = wakeUp.isInfinity() ? -1 : static_cast<Sint32>(std::max<double>(0, std::ceil((wakeUp - now).milliseconds())));
     // Without an event to fill in, the event stays queued for the next iteration.
     SDL_WaitEventTimeout(nullptr, timeout);
     return !m_closed;
