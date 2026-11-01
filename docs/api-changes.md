@@ -6,6 +6,27 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## 0.4.0
+
+A page's objects read and changed from native code, through references:
+
+- `zg_view_global` gives the main frame's global object (`window`) as a
+  `zg_ref`.
+- `zg_ref_get` (a reference), `zg_ref_get_bool`, `zg_ref_get_number`,
+  `zg_ref_get_string` and `zg_ref_get_json` read a property or a dotted path of
+  them (`"document.title"`, `"style.color"`, `"items.0"`); `zg_ref_set` sets one
+  to a value made with a NULL call (bytes and references too);
+  `zg_ref_call_method` calls a method with `this` its object and returns the
+  result as a reference; `zg_ref_to_bool`, `_number`, `_string` and `_json` read
+  a reference's own value.
+- Typed reads are strict: another type fails with the new `ZG_ERROR_TYPE` and
+  both types in `zg_last_error()`. A missing step on a path, a reference whose
+  page is gone, and a method that does not exist give `ZG_ERROR_NOT_FOUND`;
+  getters, setters and methods that throw `ZG_ERROR_JS_EXCEPTION`.
+- `zg_free` frees the strings these functions return.
+
+Nothing changed for 0.3 programs: every addition is new.
+
 ## 0.3.0
 
 Frozen. The engine features of roadmap phases 3 and 4:

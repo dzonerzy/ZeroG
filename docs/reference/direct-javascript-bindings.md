@@ -296,6 +296,124 @@ ZG_API void      zg_ref_release(zg_ref *ref);
 
 Any thread.
 
+## A page's objects from native code (0.4)
+
+The page's objects, read and changed as JavaScript would, through references:
+start from the global object (window) and go to any value from there, e.g.
+document.getElementById("title").textContent = "Hello" is
+zg_ref *window = zg_view_global(view), *title;
+zg_value *id = zg_value_string(NULL, "title");
+zg_ref_call_method(window, "document.getElementById", 1, &id, &title);
+zg_value *text = zg_value_string(NULL, "Hello");
+zg_ref_set(title, "textContent", text);
+(then zg_value_release and zg_ref_release what was made).
+`name` is a property name or a dotted path of them ("document.title",
+"style.color", "items.0"); every step before the last must be an object.
+Typed reads are strict: a value of another type fails with ZG_ERROR_TYPE
+(zg_ref_get_json converts any). Getters, setters and methods that throw
+give ZG_ERROR_JS_EXCEPTION with the message, a missing step on a path
+ZG_ERROR_NOT_FOUND, and a reference whose page is gone ZG_ERROR_NOT_FOUND.
+Strings returned are UTF-8 copies the caller frees with zg_free. Runtime
+thread.
+
+### `zg_view_global`
+
+```c
+ZG_API zg_ref   *zg_view_global(zg_view *view);
+```
+
+The main frame's global object (window), or NULL when the view has no
+document. Owned by the caller (zg_ref_release); a new document has a new one.
+
+### `zg_ref_get`
+
+```c
+ZG_API zg_result zg_ref_get(zg_ref *object, const char *name, zg_ref **out);
+```
+
+The value at `name` as a new reference (undefined if the last step is
+missing).
+
+### `zg_ref_get_bool`
+
+```c
+ZG_API zg_result zg_ref_get_bool(zg_ref *object, const char *name, int *out);
+```
+
+### `zg_ref_get_number`
+
+```c
+ZG_API zg_result zg_ref_get_number(zg_ref *object, const char *name, double *out);
+```
+
+### `zg_ref_get_string`
+
+```c
+ZG_API zg_result zg_ref_get_string(zg_ref *object, const char *name, char **out, size_t *len);
+```
+
+### `zg_ref_get_json`
+
+```c
+ZG_API zg_result zg_ref_get_json(zg_ref *object, const char *name, char **out, size_t *len);
+```
+
+JSON.stringify of the value ("null" for what JSON cannot hold).
+
+### `zg_ref_set`
+
+```c
+ZG_API zg_result zg_ref_set(zg_ref *object, const char *name, const zg_value *value);
+```
+
+Sets `name` to `value`, made with a NULL call (or zg_value_ref for another
+reference); NULL sets undefined. The value is not consumed.
+
+### `zg_ref_call_method`
+
+```c
+ZG_API zg_result zg_ref_call_method(zg_ref *object, const char *name, size_t argc,
+                                    zg_value *const *argv, zg_ref **result);
+```
+
+Calls the method at `name` with `this` its object (for "a.b.c", a.b); the
+result as a new reference, `result` may be NULL. Arguments as for
+zg_ref_call.
+
+### `zg_ref_to_bool`
+
+```c
+ZG_API zg_result zg_ref_to_bool(const zg_ref *ref, int *out);
+```
+
+The referenced value itself, typed as the getters above.
+
+### `zg_ref_to_number`
+
+```c
+ZG_API zg_result zg_ref_to_number(const zg_ref *ref, double *out);
+```
+
+### `zg_ref_to_string`
+
+```c
+ZG_API zg_result zg_ref_to_string(const zg_ref *ref, char **out, size_t *len);
+```
+
+### `zg_ref_to_json`
+
+```c
+ZG_API zg_result zg_ref_to_json(const zg_ref *ref, char **out, size_t *len);
+```
+
+### `zg_free`
+
+```c
+ZG_API void      zg_free(void *pointer);
+```
+
+Frees a string the API returned (zg_ref_get_string and the like).
+
 ## Classes (0.2)
 
 A JavaScript class whose instances carry a native pointer. Installed with the

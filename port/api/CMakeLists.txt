@@ -78,6 +78,14 @@ set(ZeroGBindingsTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
 WEBKIT_EXECUTABLE_DECLARE(ZeroGBindingsTest)
 WEBKIT_EXECUTABLE(ZeroGBindingsTest)
 
+# A page's objects read and changed from C through references (API 0.4).
+set(ZeroGObjectsTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/objects_test.c)
+set(ZeroGObjectsTest_LIBRARIES ZeroGAPI)
+set(ZeroGObjectsTest_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGObjectsTest_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGObjectsTest)
+WEBKIT_EXECUTABLE(ZeroGObjectsTest)
+
 # localStorage, sessionStorage and IndexedDB in the data directory.
 set(ZeroGStorageTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/storage_test.c)
 set(ZeroGStorageTest_LIBRARIES ZeroGAPI)

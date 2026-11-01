@@ -1169,6 +1169,334 @@ void zg_ref_release(zg_ref* ref)
     });
 }
 
+// ---- A page's objects from native code ----
+
+static const char* typeName(zg_value_type type)
+{
+    switch (type) {
+    case ZG_TYPE_UNDEFINED: return "undefined";
+    case ZG_TYPE_NULL: return "null";
+    case ZG_TYPE_BOOLEAN: return "a boolean";
+    case ZG_TYPE_NUMBER: return "a number";
+    case ZG_TYPE_BIGINT: return "a BigInt";
+    case ZG_TYPE_STRING: return "a string";
+    case ZG_TYPE_ARRAY: return "an array";
+    case ZG_TYPE_OBJECT: return "an object";
+    case ZG_TYPE_FUNCTION: return "a function";
+    case ZG_TYPE_BYTES: return "bytes";
+    }
+    return "a value";
+}
+
+// The reference's context, if its page is still there to run script.
+static zg_result referenceContext(const zg_ref* ref, JSContextRef& context)
+{
+    if (!ref)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no reference"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    context = ref->held->context;
+    auto* globalObject = toJS(ref->held->context);
+    JSC::JSLockHolder lock(globalObject);
+    auto* window = dynamicDowncast<JSDOMWindowBase>(globalObject);
+    if (!window || !window->wrapped().frame())
+        return fail(ZG_ERROR_NOT_FOUND, "the page of this reference is gone"_s);
+    return ZG_OK;
+}
+
+// Walks `name`, a property or a dotted path of them, from the reference's value
+// to the object that holds its last step, and gives that step.
+static zg_result resolvePath(const zg_ref* ref, const char* name, JSContextRef& context, JSObjectRef& holder, std::string& last)
+{
+    if (!name || !*name)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no property name"_s);
+    if (auto result = referenceContext(ref, context); result != ZG_OK)
+        return result;
+    std::string_view path = name;
+    JSValueRef current = ref->held->value;
+    for (size_t start = 0;;) {
+        size_t dot = path.find('.', start);
+        std::string step { path.substr(start, dot == std::string_view::npos ? std::string_view::npos : dot - start) };
+        if (step.empty())
+            return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("empty step in the path \""_s, String::fromUTF8(name), '"'));
+        std::string walked { path.substr(0, start ? start - 1 : 0) };
+        if (!JSValueIsObject(context, current)) {
+            auto type = typeOf(context, current);
+            if (type == ZG_TYPE_UNDEFINED || type == ZG_TYPE_NULL)
+                return fail(ZG_ERROR_NOT_FOUND, makeString(String::fromUTF8(walked.c_str()), " is "_s, String::fromLatin1(typeName(type))));
+            return fail(ZG_ERROR_TYPE, makeString(walked.empty() ? "the reference"_s : String::fromUTF8(walked.c_str()), " is "_s, String::fromLatin1(typeName(type)), ", not an object"_s));
+        }
+        JSObjectRef object = JSValueToObject(context, current, nullptr);
+        if (dot == std::string_view::npos) {
+            holder = object;
+            last = WTF::move(step);
+            return ZG_OK;
+        }
+        JSStringHolder key(step);
+        JSValueRef exception = nullptr;
+        current = JSObjectGetProperty(context, object, key.string, &exception);
+        if (exception)
+            return fail(ZG_ERROR_JS_EXCEPTION, String::fromUTF8(toUTF8(context, exception).c_str()));
+        start = dot + 1;
+    }
+}
+
+// The value at `name`.
+static zg_result getValue(zg_ref* object, const char* name, JSContextRef& context, JSValueRef& value)
+{
+    JSObjectRef holder;
+    std::string last;
+    if (auto result = resolvePath(object, name, context, holder, last); result != ZG_OK)
+        return result;
+    JSStringHolder key(last);
+    JSValueRef exception = nullptr;
+    value = JSObjectGetProperty(context, holder, key.string, &exception);
+    if (exception)
+        return fail(ZG_ERROR_JS_EXCEPTION, String::fromUTF8(toUTF8(context, exception).c_str()));
+    return ZG_OK;
+}
+
+static char* copyString(const std::string& text, size_t* length)
+{
+    auto* copy = static_cast<char*>(malloc(text.size() + 1));
+    memcpy(copy, text.data(), text.size());
+    copy[text.size()] = 0;
+    if (length)
+        *length = text.size();
+    return copy;
+}
+
+static zg_result expectType(JSContextRef context, JSValueRef value, zg_value_type expected)
+{
+    auto type = typeOf(context, value);
+    if (type == expected)
+        return ZG_OK;
+    return fail(ZG_ERROR_TYPE, makeString("expected "_s, String::fromLatin1(typeName(expected)), ", got "_s, String::fromLatin1(typeName(type))));
+}
+
+// Typed reads of a value: strict for booleans, numbers and strings.
+static zg_result readBool(JSContextRef context, JSValueRef value, int* out)
+{
+    if (auto result = expectType(context, value, ZG_TYPE_BOOLEAN); result != ZG_OK)
+        return result;
+    *out = JSValueToBoolean(context, value);
+    return ZG_OK;
+}
+
+static zg_result readNumber(JSContextRef context, JSValueRef value, double* out)
+{
+    if (auto result = expectType(context, value, ZG_TYPE_NUMBER); result != ZG_OK)
+        return result;
+    *out = JSValueToNumber(context, value, nullptr);
+    return ZG_OK;
+}
+
+static zg_result readString(JSContextRef context, JSValueRef value, char** out, size_t* length)
+{
+    if (auto result = expectType(context, value, ZG_TYPE_STRING); result != ZG_OK)
+        return result;
+    *out = copyString(toUTF8(context, value), length);
+    return ZG_OK;
+}
+
+static zg_result readJSON(JSContextRef context, JSValueRef value, char** out, size_t* length)
+{
+    *out = copyString(toJSON(context, value), length);
+    return ZG_OK;
+}
+
+zg_ref* zg_view_global(zg_view* view)
+{
+    clearError();
+    if (!checkedView(view))
+        return nullptr;
+    RefPtr frame = view->view->page().localMainFrame();
+    if (!frame) {
+        fail(ZG_ERROR_NOT_FOUND, "no document"_s);
+        return nullptr;
+    }
+    auto context = globalContext(*frame);
+    return new zg_ref { std::make_shared<HeldValue>(context, JSContextGetGlobalObject(context)) };
+}
+
+zg_result zg_ref_get(zg_ref* object, const char* name, zg_ref** out)
+{
+    clearError();
+    if (!out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no output"_s);
+    *out = nullptr;
+    JSContextRef context;
+    JSValueRef value;
+    if (auto result = getValue(object, name, context, value); result != ZG_OK)
+        return result;
+    *out = new zg_ref { std::make_shared<HeldValue>(context, value) };
+    return ZG_OK;
+}
+
+// zg_ref_get_<type>: the value at `name`, read by `read` (templates need C++
+// linkage inside this block).
+extern "C++" {
+template<typename Read, typename... Out>
+static zg_result getTyped(zg_ref* object, const char* name, Read read, Out*... out)
+{
+    clearError();
+    if (((!out) || ...))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no output"_s);
+    JSContextRef context;
+    JSValueRef value;
+    if (auto result = getValue(object, name, context, value); result != ZG_OK)
+        return result;
+    return read(context, value, out...);
+}
+}
+
+zg_result zg_ref_get_bool(zg_ref* object, const char* name, int* out)
+{
+    return getTyped(object, name, readBool, out);
+}
+
+zg_result zg_ref_get_number(zg_ref* object, const char* name, double* out)
+{
+    return getTyped(object, name, readNumber, out);
+}
+
+zg_result zg_ref_get_string(zg_ref* object, const char* name, char** out, size_t* length)
+{
+    clearError();
+    if (!out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no output"_s);
+    *out = nullptr;
+    JSContextRef context;
+    JSValueRef value;
+    if (auto result = getValue(object, name, context, value); result != ZG_OK)
+        return result;
+    return readString(context, value, out, length);
+}
+
+zg_result zg_ref_get_json(zg_ref* object, const char* name, char** out, size_t* length)
+{
+    clearError();
+    if (!out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no output"_s);
+    *out = nullptr;
+    JSContextRef context;
+    JSValueRef value;
+    if (auto result = getValue(object, name, context, value); result != ZG_OK)
+        return result;
+    return readJSON(context, value, out, length);
+}
+
+zg_result zg_ref_set(zg_ref* object, const char* name, const zg_value* value)
+{
+    clearError();
+    JSContextRef context;
+    JSObjectRef holder;
+    std::string last;
+    if (auto result = resolvePath(object, name, context, holder, last); result != ZG_OK)
+        return result;
+    JSValueRef exception = nullptr;
+    JSValueRef converted = valueToJS(context, const_cast<zg_value*>(value), &exception);
+    if (exception)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("value: "_s, String::fromUTF8(toUTF8(context, exception).c_str())));
+    JSStringHolder key(last);
+    JSObjectSetProperty(context, holder, key.string, converted, kJSPropertyAttributeNone, &exception);
+    if (exception)
+        return fail(ZG_ERROR_JS_EXCEPTION, String::fromUTF8(toUTF8(context, exception).c_str()));
+    return ZG_OK;
+}
+
+zg_result zg_ref_call_method(zg_ref* object, const char* name, size_t argc, zg_value* const* argv, zg_ref** result)
+{
+    clearError();
+    if (result)
+        *result = nullptr;
+    JSContextRef context;
+    JSObjectRef holder;
+    std::string last;
+    if (auto status = resolvePath(object, name, context, holder, last); status != ZG_OK)
+        return status;
+    JSStringHolder key(last);
+    JSValueRef exception = nullptr;
+    JSValueRef method = JSObjectGetProperty(context, holder, key.string, &exception);
+    if (exception)
+        return fail(ZG_ERROR_JS_EXCEPTION, String::fromUTF8(toUTF8(context, exception).c_str()));
+    JSObjectRef function = JSValueIsObject(context, method) ? JSValueToObject(context, method, nullptr) : nullptr;
+    if (!function || !JSObjectIsFunction(context, function)) {
+        auto type = typeOf(context, method);
+        if (type == ZG_TYPE_UNDEFINED)
+            return fail(ZG_ERROR_NOT_FOUND, makeString(String::fromUTF8(name), " is undefined"_s));
+        return fail(ZG_ERROR_TYPE, makeString(String::fromUTF8(name), " is "_s, String::fromLatin1(typeName(type)), ", not a function"_s));
+    }
+    Vector<JSValueRef, 8> arguments;
+    for (size_t i = 0; i < argc; ++i) {
+        arguments.append(valueToJS(context, argv ? argv[i] : nullptr, &exception));
+        if (exception)
+            return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("argument "_s, i, ": "_s, String::fromUTF8(toUTF8(context, exception).c_str())));
+    }
+    JSValueRef value = JSObjectCallAsFunction(context, function, holder, arguments.size(), arguments.span().data(), &exception);
+    if (exception)
+        return fail(ZG_ERROR_JS_EXCEPTION, String::fromUTF8(toUTF8(context, exception).c_str()));
+    if (result)
+        *result = new zg_ref { std::make_shared<HeldValue>(context, value) };
+    return ZG_OK;
+}
+
+// zg_ref_to_<type>: the referenced value itself.
+extern "C++" {
+template<typename Read, typename... Out>
+static zg_result toTyped(const zg_ref* ref, Read read, Out*... out)
+{
+    clearError();
+    if (((!out) || ...))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no output"_s);
+    JSContextRef context;
+    if (auto result = referenceContext(ref, context); result != ZG_OK)
+        return result;
+    return read(context, ref->held->value, out...);
+}
+}
+
+zg_result zg_ref_to_bool(const zg_ref* ref, int* out)
+{
+    return toTyped(ref, readBool, out);
+}
+
+zg_result zg_ref_to_number(const zg_ref* ref, double* out)
+{
+    return toTyped(ref, readNumber, out);
+}
+
+zg_result zg_ref_to_string(const zg_ref* ref, char** out, size_t* length)
+{
+    if (out)
+        *out = nullptr;
+    clearError();
+    if (!out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no output"_s);
+    JSContextRef context;
+    if (auto result = referenceContext(ref, context); result != ZG_OK)
+        return result;
+    return readString(context, ref->held->value, out, length);
+}
+
+zg_result zg_ref_to_json(const zg_ref* ref, char** out, size_t* length)
+{
+    if (out)
+        *out = nullptr;
+    clearError();
+    if (!out)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no output"_s);
+    JSContextRef context;
+    if (auto result = referenceContext(ref, context); result != ZG_OK)
+        return result;
+    return readJSON(context, ref->held->value, out, length);
+}
+
+void zg_free(void* pointer)
+{
+    free(pointer);
+}
+
 // ---- Classes ----
 
 zg_class* zg_view_define_class(zg_view* view, const char* path, zg_bind_fn constructor, zg_finalize_fn finalize, void* user)

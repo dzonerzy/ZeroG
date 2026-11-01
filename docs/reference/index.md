@@ -9,12 +9,13 @@ Everything public is in one header, [`include/zerog.h`](https://github.com/dzone
 ```text
 ZeroG — public C API.
 
-Version 0.3, frozen: the API of docs/design/c-api.md as frozen at the
-end of roadmap phase 2 (0.1), with binary values, references to JavaScript
-values, classes and page scripts (0.2), and the engine features of phases 3
-and 4 (0.3): storage, clipboard, file chooser, drag and drop, context menus,
+Version 0.4: the API of docs/design/c-api.md as frozen at the end of
+roadmap phase 2 (0.1), with binary values, references to JavaScript values,
+classes and page scripts (0.2), the engine features of phases 3 and 4 (0.3,
+frozen): storage, clipboard, file chooser, drag and drop, context menus,
 windows (transparent, frameless, click-through), the Web Inspector, and
-texture mode for every graphics API games use. Within 0.x a minor version
+texture mode for every graphics API games use; and a page's objects read and
+changed from native code through references (0.4). Within 0.x a minor version
 may add functions, enum values and fields at the end of config structs;
 nothing is renamed or removed and no meaning changes without a new minor
 version and a note in docs/api-changes.md.
@@ -118,12 +119,24 @@ Rules that hold for every function below:
 - [`zg_file_chooser_allows_multiple`](views.md#zg_file_chooser_allows_multiple)
 - [`zg_file_chooser_cancel`](views.md#zg_file_chooser_cancel)
 - [`zg_file_chooser_choose`](views.md#zg_file_chooser_choose)
+- [`zg_free`](direct-javascript-bindings.md#zg_free)
 - [`zg_last_error`](errors.md#zg_last_error)
 - [`zg_promise_reject`](direct-javascript-bindings.md#zg_promise_reject)
 - [`zg_promise_resolve`](direct-javascript-bindings.md#zg_promise_resolve)
 - [`zg_promise_resolve_bytes`](direct-javascript-bindings.md#zg_promise_resolve_bytes)
 - [`zg_ref_call`](direct-javascript-bindings.md#zg_ref_call)
+- [`zg_ref_call_method`](direct-javascript-bindings.md#zg_ref_call_method)
+- [`zg_ref_get`](direct-javascript-bindings.md#zg_ref_get)
+- [`zg_ref_get_bool`](direct-javascript-bindings.md#zg_ref_get_bool)
+- [`zg_ref_get_json`](direct-javascript-bindings.md#zg_ref_get_json)
+- [`zg_ref_get_number`](direct-javascript-bindings.md#zg_ref_get_number)
+- [`zg_ref_get_string`](direct-javascript-bindings.md#zg_ref_get_string)
 - [`zg_ref_release`](direct-javascript-bindings.md#zg_ref_release)
+- [`zg_ref_set`](direct-javascript-bindings.md#zg_ref_set)
+- [`zg_ref_to_bool`](direct-javascript-bindings.md#zg_ref_to_bool)
+- [`zg_ref_to_json`](direct-javascript-bindings.md#zg_ref_to_json)
+- [`zg_ref_to_number`](direct-javascript-bindings.md#zg_ref_to_number)
+- [`zg_ref_to_string`](direct-javascript-bindings.md#zg_ref_to_string)
 - [`zg_ref_type`](direct-javascript-bindings.md#zg_ref_type)
 - [`zg_runtime_add_ca_certificates`](runtime.md#zg_runtime_add_ca_certificates)
 - [`zg_runtime_collect_garbage`](runtime.md#zg_runtime_collect_garbage)
@@ -173,6 +186,7 @@ Rules that hold for every function below:
 - [`zg_view_drag`](views.md#zg_view_drag)
 - [`zg_view_emit`](direct-javascript-bindings.md#zg_view_emit)
 - [`zg_view_evaluate`](views.md#zg_view_evaluate)
+- [`zg_view_global`](direct-javascript-bindings.md#zg_view_global)
 - [`zg_view_ime_cancel`](views.md#zg_view_ime_cancel)
 - [`zg_view_ime_commit`](views.md#zg_view_ime_commit)
 - [`zg_view_ime_set_composition`](views.md#zg_view_ime_set_composition)

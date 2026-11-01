@@ -15,6 +15,10 @@ if (WIN32)
     # so calls alternating between threads must re-apply their context's state
     # (angle_force_context_check_every_call; it replaces the per-context mutex).
     list(APPEND ANGLE_DEFINITIONS ANGLE_ENABLE_SHARE_CONTEXT_LOCK=1 ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1)
+    # Static too: platform/PlatformMethods.h would otherwise mark ANGLE's platform
+    # functions dllimport where they are used, and MSVC's linker warns about it
+    # (LNK4217) in every application that links the engine.
+    list(APPEND ANGLE_DEFINITIONS ANGLE_PLATFORM_EXPORT=)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Only for WebGL (docs/design/graphics-presentation.md, "GPU backend per platform"): the GL backend over
     # the system's EGL, loaded at run time, as PlatformWPE.cmake builds it.

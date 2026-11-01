@@ -106,7 +106,7 @@ option(ZEROG_MIMALLOC_SECURE "mimalloc hardened mode: guard pages, randomized al
 add_definitions(-DJS_NO_EXPORT)
 
 set(PROJECT_VERSION_MAJOR 0)
-set(PROJECT_VERSION_MINOR 3) # include/zerog.h
+set(PROJECT_VERSION_MINOR 4) # include/zerog.h
 set(PROJECT_VERSION_MICRO 0)
 set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_MICRO})
 

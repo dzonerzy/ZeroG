@@ -70,6 +70,52 @@ objects alive, even after the view is gone.
 - `zg_view_add_script` runs a script in every page that gets the bindings,
   before the page's own: a framework's JavaScript runtime, for instance.
 
+## Reading and changing the page from native code
+
+Since 0.4 native code reaches the page's objects directly, through references,
+as JavaScript would: start from the global object and follow properties.
+
+```c
+/* document.getElementById("title").textContent = "Hello" */
+zg_ref *window = zg_view_global(view), *title;
+zg_value *id = zg_value_string(NULL, "title");
+zg_value *hello = zg_value_string(NULL, "Hello");
+zg_value *crimson = zg_value_string(NULL, "crimson");
+if (zg_ref_call_method(window, "document.getElementById", 1, &id, &title) == ZG_OK) {
+    zg_ref_set(title, "textContent", hello);
+    zg_ref_set(title, "style.color", crimson);
+    zg_ref_release(title);
+}
+zg_value_release(id);        /* values made with a NULL call are the caller's */
+zg_value_release(hello);
+zg_value_release(crimson);
+
+/* Reading: strict types, errors as results */
+double count;
+if (zg_ref_get_number(window, "app.count", &count) == ZG_ERROR_TYPE)
+    fprintf(stderr, "%s\n", zg_last_error());   /* "expected a number, got a string" */
+zg_ref_release(window);
+```
+
+- Names are a property or a dotted path of them (`"document.title"`,
+  `"style.color"`, `"items.0"`).
+- Typed reads (`zg_ref_get_bool`, `_number`, `_string`) are strict: a value of
+  another type fails with `ZG_ERROR_TYPE`, both types in the message.
+  `zg_ref_get_json` converts anything.
+- `zg_ref_set` takes any value made with a NULL call: numbers, strings, JSON,
+  bytes (as a `Uint8Array`), or another reference (`zg_value_ref`), which sets
+  the object itself, not a copy.
+- `zg_ref_call_method` calls with `this` set to the method's object and returns
+  the result as a reference: DOM methods return the nodes themselves.
+- Errors are results, never crashes: a missing step on a path, a method that
+  does not exist, or a reference into a page that has navigated away give
+  `ZG_ERROR_NOT_FOUND`; something that throws gives `ZG_ERROR_JS_EXCEPTION`
+  with its message.
+
+This is the base for friendlier layers: a Zig or C++ wrapper turns it into
+`window.get("document").call("getElementById", .{"title"})` with errors checked
+by the language.
+
 ## Keeping JavaScript values
 
 `zg_call_arg_ref` keeps an argument past the call: a callback to call later

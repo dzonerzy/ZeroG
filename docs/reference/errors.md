@@ -16,7 +16,8 @@ typedef enum zg_result {
     ZG_ERROR_OUT_OF_MEMORY,
     ZG_ERROR_GPU,
     ZG_ERROR_JS_EXCEPTION,
-    ZG_ERROR_INTERNAL
+    ZG_ERROR_INTERNAL,
+    ZG_ERROR_TYPE               /* (0.4) a value of another type than asked for */
 } zg_result;
 ```
 
