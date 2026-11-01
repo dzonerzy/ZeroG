@@ -143,6 +143,10 @@ WEBKIT_OPTION_DEFINE(USE_SYSTEM_UNIFDEF "Whether to use a system-provided unifde
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA PRIVATE ON)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE ON) # toDataURL, toBlob
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_WOFF2 PRIVATE ON)
+# Variable fonts (font-variation-settings, format("woff2-variations")), as GTK,
+# WPE and Win build them: FreeType's multiple masters under Skia. Without it a
+# @font-face declared with a "-variations" format is skipped altogether.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_VARIATION_FONTS PRIVATE ON)
 # prefers-color-scheme and the color-scheme property (light or dark pages, form
 # controls and scrollbars), every profile: zg_view_set_color_scheme.
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_DARK_MODE_CSS PRIVATE ON)

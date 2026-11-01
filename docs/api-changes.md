@@ -6,6 +6,19 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## Unreleased
+
+Fixes, no API change:
+
+- Variable fonts: `font-variation-settings` and web fonts declared with a
+  `-variations` format (`woff2-variations`, as Google Fonts and fontsource
+  serve them), which the engine skipped altogether. Built as GTK, WPE and Win
+  build them, on FreeType under Skia.
+- Window mode: Enter submitted no form and started no new line in a textarea,
+  and Tab inserted no tab in editable content: SDL gives no text for those
+  keys, which Windows sends as `WM_CHAR`. The window now sends their keypress
+  after an unhandled key-down.
+
 ## 0.5.1
 
 Fixes, no API change:

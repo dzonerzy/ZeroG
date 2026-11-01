@@ -1447,7 +1447,14 @@ void Window::handleEvent(const SDL_Event& event)
             // Ahead of the page, as in a browser; with no inspector the page gets the key.
             if (isInspectorShortcut(event.key) && !event.key.repeat && m_view->showInspector())
                 break;
-            m_view->keyDown(keyEventFromSDL(event.key.scancode, event.key.mod, event.key.repeat));
+            if (!m_view->keyDown(keyEventFromSDL(event.key.scancode, event.key.mod, event.key.repeat))) {
+                // SDL gives no text for Enter and Tab, which Windows sends as
+                // WM_CHAR '\r' and '\t': the keypress that submits a form or
+                // inserts a newline or a tab.
+                auto scancode = event.key.scancode;
+                if (scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_KP_ENTER || scancode == SDL_SCANCODE_TAB)
+                    m_view->insertText(scancode == SDL_SCANCODE_TAB ? "\t"_s : "\r"_s, modifiersFromSDL(event.key.mod));
+            }
             break;
         case SDL_EVENT_KEY_UP:
             m_view->keyUp(keyEventFromSDL(event.key.scancode, event.key.mod, false));

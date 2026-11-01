@@ -183,6 +183,16 @@ static int selectChanged(void)
     return !strcmp(evaluate(zg_window_view(mainWindow), "window.changed || ''"), "\"a\"") || !strcmp(evaluate(zg_window_view(mainWindow), "window.changed || ''"), "\"c\"");
 }
 
+static int formSubmitted(void)
+{
+    return !strcmp(evaluate(zg_window_view(mainWindow), "window.submitted || 0"), "1");
+}
+
+static int newlineTyped(void)
+{
+    return !strcmp(evaluate(zg_window_view(mainWindow), "document.getElementById('t').value"), "\"\\n\"");
+}
+
 static const char *evaluate(zg_view *view, const char *script)
 {
     static char text[256];
@@ -540,6 +550,28 @@ int main(void)
 #endif
         zg_view_evaluate(view, "s.remove()", 10, NULL);
     }
+
+#ifdef _WIN32
+    /* Enter, for which SDL gives no text: the keypress that submits a form
+       and starts a new line in a textarea. */
+    {
+        HWND hwnd = (HWND)zg_window_native_handle(mainWindow);
+        zg_view *view = zg_window_view(mainWindow);
+        const char *setup = "window.submitted = 0;"
+            "document.body.insertAdjacentHTML('beforeend', '<form id=f><input id=i></form><textarea id=t></textarea>');"
+            "f.addEventListener('submit', (e) => { e.preventDefault(); window.submitted++; });"
+            "i.focus();";
+        zg_view_evaluate(view, setup, strlen(setup), NULL);
+        postKey(hwnd, WM_KEYDOWN, VK_RETURN);
+        postKey(hwnd, WM_KEYUP, VK_RETURN);
+        CHECK(runUntil(formSubmitted, 3000), "Enter in a text field submits its form (%s)", evaluate(view, "window.submitted"));
+        zg_view_evaluate(view, "t.focus()", 9, NULL);
+        postKey(hwnd, WM_KEYDOWN, VK_RETURN);
+        postKey(hwnd, WM_KEYUP, VK_RETURN);
+        CHECK(runUntil(newlineTyped, 3000), "Enter in a textarea starts a new line (%s)", evaluate(view, "t.value"));
+        zg_view_evaluate(view, "f.remove(); t.remove()", 22, NULL);
+    }
+#endif
 
     /* The clipboard from native code. */
     {
