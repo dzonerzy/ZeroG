@@ -195,6 +195,18 @@ ZG_API zg_result zg_window_set_always_on_top(zg_window *win, int on_top);
 ZG_API zg_window_state zg_window_get_state(zg_window *win);
 ```
 
+### `zg_window_set_icon`
+
+```c
+ZG_API zg_result zg_window_set_icon(zg_window *win, const void *rgba, unsigned width, unsigned height);
+```
+
+The window's icon (title bar, taskbar, task switcher): RGBA8 pixels, rows
+top to bottom, copied. On Windows a window has the executable's icon
+until then. Wayland compositors without the toplevel icon protocol give
+ZG_ERROR_UNSUPPORTED: the icon of the .desktop file matching the
+context's app_id shows there.
+
 ## Window events (0.5)
 
 Delivered on the runtime thread while it runs the loop. Without callbacks
@@ -223,6 +235,11 @@ typedef struct zg_window_callbacks {
     /* The window moved to another screen (zg_window_screen gives which), or
        its screen's scale changed. */
     void (*screen_changed)(zg_window *win, void *user);
+    /* Files dropped on the window from outside: their paths, and where (the
+       view's logical pixels). Return nonzero to keep the drop from the page;
+       0 lets the page get it as well (a drop event, without the paths). */
+    int  (*files_dropped)(zg_window *win, const char *const *paths, size_t count,
+                          float x, float y, void *user);
 } zg_window_callbacks;
 ```
 
@@ -231,6 +248,38 @@ typedef struct zg_window_callbacks {
 ```c
 ZG_API zg_result zg_window_set_callbacks(zg_window *win, const zg_window_callbacks *callbacks);
 ```
+
+## Light and dark (0.5)
+
+What the CSS media feature prefers-color-scheme says to a view's pages, and
+the look of their form controls and scrollbars (with `color-scheme: light
+dark` in the page). SYSTEM, the default, is the desktop's setting, followed
+as it changes, once a window exists; light before. A window's frame follows
+its view (a dark title bar on Windows 10 2004 and later).
+
+### `zg_color_scheme`
+
+```c
+typedef enum zg_color_scheme {
+    ZG_COLOR_SCHEME_SYSTEM = 0,
+    ZG_COLOR_SCHEME_LIGHT,
+    ZG_COLOR_SCHEME_DARK
+} zg_color_scheme;
+```
+
+### `zg_view_set_color_scheme`
+
+```c
+ZG_API zg_result zg_view_set_color_scheme(zg_view *view, zg_color_scheme scheme);
+```
+
+### `zg_system_color_scheme`
+
+```c
+ZG_API zg_color_scheme zg_system_color_scheme(zg_runtime *rt);
+```
+
+The desktop's setting: ZG_COLOR_SCHEME_LIGHT or ZG_COLOR_SCHEME_DARK.
 
 ## Screens (0.5)
 
@@ -486,4 +535,5 @@ ZG_API zg_result zg_window_popup_menu(zg_window *win, const zg_menu *menu, float
 ```
 
 A popup menu at (x, y), the view's logical pixels (a zg_context_menu's
-position). The chosen item, if any, comes to menu_item after the call.
+position). After the call menu_item comes with the chosen item's id, or
+with 0 if the menu was dismissed (to answer a zg_context_menu either way).

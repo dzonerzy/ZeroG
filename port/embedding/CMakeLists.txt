@@ -68,7 +68,7 @@ if (WIN32)
         graphics/SurfaceD3D9.cpp
         window/MenuWin.cpp
     )
-    list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dxgi ole32 oleaut32 uiautomationcore)
+    list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dwmapi dxgi ole32 oleaut32 shell32 uiautomationcore)
 else ()
     # AT-SPI over libdbus, which is loaded at run time.
     list(APPEND ZeroGEmbedding_SOURCES

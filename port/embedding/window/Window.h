@@ -52,6 +52,13 @@ public:
         // X11 the frame's alpha is the window's input shape. Wayland: no
         // effect (no input region through SDL).
         bool clickThrough { false };
+        // The application's reverse-DNS name: on Linux the window's Wayland
+        // app_id and X11 class, which desktops match to its .desktop file.
+        String appID;
+        // A popup menu of `parent`'s (select dropdowns): at `position`, the
+        // parent view's logical pixels; no frame, no taskbar entry.
+        Window* parent { nullptr };
+        WebCore::IntPoint position;
     };
     // Null if no window or no GPU is available. The first window decides the GPU
     // display on Linux (X11 or Wayland); it has to be created before any GPU view.
@@ -86,6 +93,8 @@ public:
         virtual void stateChanged(State) { }
         virtual void menuItemChosen(unsigned) { }
         virtual void screenChanged() { }
+        // True keeps the drop from the page.
+        virtual bool filesDropped(const Vector<String>&, const WebCore::FloatPoint&) { return false; }
     };
     void setClient(Client* client) { m_client = client; }
 
@@ -115,6 +124,11 @@ public:
     void* nativeHandle() const; // HWND, X11 Window, wl_surface*
     // SDL's window ID: never reused in the process.
     uint32_t id() const;
+    // RGBA8, rows top to bottom. Windows: the executable's icon by default.
+    bool setIcon(std::span<const uint8_t> rgba, const WebCore::IntSize&);
+    // The view's color scheme or the desktop's changed: the frame follows
+    // (a dark title bar on Windows).
+    void colorSchemeChanged();
 
     // The connected screens; empty without a window system.
     struct Screen {
@@ -166,6 +180,12 @@ public:
     using MessageDialogHandler = CompletionHandler<void(std::expected<int, String>&&)>;
     void showMessageDialog(MessageDialog&&, MessageDialogHandler&&);
 
+    // A <select> dropdown under its element: a popup window of the engine's,
+    // drawn as HTML like the page (light or dark). Closed by a choice, Escape,
+    // a click elsewhere or the window losing the focus.
+    void showSelectPopup(SelectMenu&&, CompletionHandler<void(std::optional<unsigned>)>&&);
+    void hideSelectPopup();
+
     // Native menus (Windows; false elsewhere). The menu bar's accelerators
     // choose their items ahead of the page.
     static bool hasNativeMenus();
@@ -173,7 +193,7 @@ public:
     void setMenuItemChecked(unsigned id, bool);
     void setMenuItemEnabled(unsigned id, bool);
     // At a point of the view (logical pixels); returns once the menu closed,
-    // the chosen item comes to the client afterwards.
+    // the chosen item (0: none) comes to the client afterwards.
     bool popupMenu(const Menu&, const WebCore::FloatPoint&);
 
     // What a point of a frameless window is to the window system (window
@@ -204,6 +224,11 @@ private:
     void stateMayHaveChanged();
     // True if the key chose a menu bar item.
     bool handleAccelerator(const SDL_Event&);
+    // The select popup's events from the parent's side; true if used.
+    bool handleSelectPopupEvent(const SDL_Event&);
+    // Its answer, given and the popup destroyed here, in the loop: never
+    // during the popup's own events.
+    void finishSelectPopup();
     void collectAccelerators(const Vector<Menu::Item>&);
     // Presents the surface's newest frame with the window's context: on the
     // compositor thread for a composited view (the swap's vsync wait is there),
@@ -243,6 +268,9 @@ private:
     std::unique_ptr<Accessibility::Bridge> m_accessibility;
     Client* m_client { nullptr };
     State m_state { State::Hidden };
+    struct SelectPopup;
+    std::unique_ptr<SelectPopup> m_selectPopup;
+    bool m_isPopup { false };
     // The menu bar's items with accelerators, and which are disabled.
     struct MenuAccelerator {
         Accelerator accelerator;
@@ -252,6 +280,8 @@ private:
     Vector<MenuAccelerator> m_accelerators;
 #if OS(WINDOWS)
     std::unique_ptr<NativeMenus> m_menus;
+    // The executable's icons (HICON), destroyed with the window.
+    std::array<void*, 2> m_executableIcons { };
 #endif
 };
 

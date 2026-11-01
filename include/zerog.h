@@ -267,6 +267,14 @@ typedef struct zg_clipboard {
 /* NULL goes back to the default. Copied. */
 ZG_API zg_result zg_runtime_set_clipboard(zg_runtime *rt, const zg_clipboard *clipboard);
 
+/* (0.5) The application's own access to that clipboard. Reading gives the data
+   of `type` in a buffer freed with zg_free (NUL-terminated, the NUL not
+   counted in `len`), ZG_ERROR_NOT_FOUND if it holds none. Writing replaces its
+   contents with `count` items, as zg_clipboard.write. */
+ZG_API zg_result zg_clipboard_read(zg_runtime *rt, const char *type, char **data, size_t *len);
+ZG_API zg_result zg_clipboard_write(zg_runtime *rt, size_t count, const char *const *types,
+                                    const void *const *data, const size_t *lens);
+
 /* ------------------------------------------------------------------------ */
 /* Context: session state (data dir, schemes, network, fonts)                */
 
@@ -282,7 +290,10 @@ typedef int (*zg_trust_fn)(const char *origin, zg_trust_request request, int mai
 
 typedef struct zg_context_config {
     size_t size;
-    const char *app_id;     /* reverse-DNS id, used for the per-app data directory */
+    const char *app_id;     /* reverse-DNS id, used for the per-app data directory;
+                               (0.5) on Linux also the Wayland app_id and X11 class of
+                               the context's windows, which desktops match to the
+                               application's .desktop file */
     /* Where the context keeps cookies (Cookies.sqlite), localStorage
        (LocalStorage/) and IndexedDB (IndexedDB/). NULL = OS default from app_id
        (%LOCALAPPDATA%\<app_id>, $XDG_DATA_HOME/<app_id>); with neither, all of it
@@ -782,6 +793,39 @@ ZG_API const zg_context_menu_item *zg_context_menu_item_at(const zg_context_menu
 ZG_API void zg_context_menu_select(zg_context_menu *menu, unsigned id);
 ZG_API void zg_context_menu_cancel(zg_context_menu *menu);
 
+/* A <select> element's dropdown (0.5), opened by a click or the keyboard. In
+   window mode the engine shows its own (a popup window drawn like the page);
+   with a select_menu callback the application shows its own instead, as it
+   likes (texture mode has no other). Valid until answered, which must happen
+   exactly once, from any thread; if the page takes the dropdown back first
+   (the element removed or blurred), the answer is ignored. */
+typedef struct zg_select_menu zg_select_menu;
+
+typedef enum zg_select_item_kind {
+    ZG_SELECT_ITEM_OPTION,
+    ZG_SELECT_ITEM_GROUP,     /* an <optgroup>'s label: not choosable */
+    ZG_SELECT_ITEM_SEPARATOR  /* an <hr> */
+} zg_select_item_kind;
+
+typedef struct zg_select_item {
+    zg_select_item_kind kind;
+    const char *label;        /* UTF-8 */
+    int enabled;
+    int selected;
+} zg_select_item;
+
+/* The element's box, the view's logical pixels: show the list under it. */
+ZG_API void zg_select_menu_bounds(const zg_select_menu *menu, float *x, float *y, float *width, float *height);
+/* The page's font size for it, CSS pixels; nonzero for right to left. */
+ZG_API float zg_select_menu_font_size(const zg_select_menu *menu);
+ZG_API int zg_select_menu_is_rtl(const zg_select_menu *menu);
+ZG_API size_t zg_select_menu_item_count(const zg_select_menu *menu);
+ZG_API const zg_select_item *zg_select_menu_item_at(const zg_select_menu *menu, size_t index);
+/* Chooses the option at `index` (an enabled ZG_SELECT_ITEM_OPTION): the
+   element's value changes and its input and change events fire. */
+ZG_API void zg_select_menu_choose(zg_select_menu *menu, size_t index);
+ZG_API void zg_select_menu_cancel(zg_select_menu *menu);
+
 typedef struct zg_view_callbacks {
     size_t size;
     void *user;
@@ -812,6 +856,9 @@ typedef struct zg_view_callbacks {
     void (*file_chooser)(zg_view *view, zg_file_chooser *chooser, void *user);
     /* Context menus (0.3); see zg_context_menu. */
     void (*context_menu)(zg_view *view, zg_context_menu *menu, void *user);
+    /* <select> dropdowns (0.5); see zg_select_menu. NULL: window mode shows
+       its own, other views none. */
+    void (*select_menu)(zg_view *view, zg_select_menu *menu, void *user);
 } zg_view_callbacks;
 
 ZG_API void zg_view_set_callbacks(zg_view *view, const zg_view_callbacks *callbacks);
@@ -1092,6 +1139,12 @@ ZG_API zg_result zg_window_hide(zg_window *win);
 ZG_API zg_result zg_window_focus(zg_window *win);
 ZG_API zg_result zg_window_set_always_on_top(zg_window *win, int on_top);
 ZG_API zg_window_state zg_window_get_state(zg_window *win);
+/* The window's icon (title bar, taskbar, task switcher): RGBA8 pixels, rows
+   top to bottom, copied. On Windows a window has the executable's icon
+   until then. Wayland compositors without the toplevel icon protocol give
+   ZG_ERROR_UNSUPPORTED: the icon of the .desktop file matching the
+   context's app_id shows there. */
+ZG_API zg_result zg_window_set_icon(zg_window *win, const void *rgba, unsigned width, unsigned height);
 
 /* ---- Window events (0.5) ----
 
@@ -1117,9 +1170,31 @@ typedef struct zg_window_callbacks {
     /* The window moved to another screen (zg_window_screen gives which), or
        its screen's scale changed. */
     void (*screen_changed)(zg_window *win, void *user);
+    /* Files dropped on the window from outside: their paths, and where (the
+       view's logical pixels). Return nonzero to keep the drop from the page;
+       0 lets the page get it as well (a drop event, without the paths). */
+    int  (*files_dropped)(zg_window *win, const char *const *paths, size_t count,
+                          float x, float y, void *user);
 } zg_window_callbacks;
 
 ZG_API zg_result zg_window_set_callbacks(zg_window *win, const zg_window_callbacks *callbacks);
+
+/* ---- Light and dark (0.5) ----
+
+   What the CSS media feature prefers-color-scheme says to a view's pages, and
+   the look of their form controls and scrollbars (with `color-scheme: light
+   dark` in the page). SYSTEM, the default, is the desktop's setting, followed
+   as it changes, once a window exists; light before. A window's frame follows
+   its view (a dark title bar on Windows 10 2004 and later). */
+typedef enum zg_color_scheme {
+    ZG_COLOR_SCHEME_SYSTEM = 0,
+    ZG_COLOR_SCHEME_LIGHT,
+    ZG_COLOR_SCHEME_DARK
+} zg_color_scheme;
+
+ZG_API zg_result zg_view_set_color_scheme(zg_view *view, zg_color_scheme scheme);
+/* The desktop's setting: ZG_COLOR_SCHEME_LIGHT or ZG_COLOR_SCHEME_DARK. */
+ZG_API zg_color_scheme zg_system_color_scheme(zg_runtime *rt);
 
 /* ---- Screens (0.5) ----
 
@@ -1249,7 +1324,8 @@ ZG_API zg_result zg_window_set_menu(zg_window *win, const zg_menu *menu);
 ZG_API zg_result zg_window_menu_set_checked(zg_window *win, unsigned id, int checked);
 ZG_API zg_result zg_window_menu_set_enabled(zg_window *win, unsigned id, int enabled);
 /* A popup menu at (x, y), the view's logical pixels (a zg_context_menu's
-   position). The chosen item, if any, comes to menu_item after the call. */
+   position). After the call menu_item comes with the chosen item's id, or
+   with 0 if the menu was dismissed (to answer a zg_context_menu either way). */
 ZG_API zg_result zg_window_popup_menu(zg_window *win, const zg_menu *menu, float x, float y);
 
 #ifdef __cplusplus

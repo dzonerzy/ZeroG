@@ -39,7 +39,11 @@
 #include <WebCore/FileChooser.h>
 #include <WebCore/HitTestResult.h>
 #include <WebCore/LocalFrame.h>
+#include <WebCore/FontCascade.h>
+#include <WebCore/LocalFrameView.h>
 #include <WebCore/PopupMenu.h>
+#include <WebCore/PopupMenuClient.h>
+#include <WebCore/PopupMenuStyle.h>
 #include <WebCore/SearchPopupMenu.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -51,18 +55,82 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ChromeClientZeroG);
 
 namespace {
 
-// Select popups come with the platform layer's form controls.
+// A <select> dropdown: shown by the view's client (ViewClient::showSelectMenu:
+// the application's own, or window mode's popup), its answer given to the
+// element.
 class PopupMenuZeroG final : public PopupMenu {
-    void show(const IntRect&, LocalFrameView&, int) final { }
-    void hide() final { }
+public:
+    PopupMenuZeroG(View* view, PopupMenuClient* client)
+        : m_view(view)
+        , m_client(client)
+    {
+    }
+
+private:
+    void show(const IntRect& rect, LocalFrameView& frameView, int) final
+    {
+        RefPtr client = m_client.get();
+        if (!m_view || !client)
+            return;
+        SelectMenu menu;
+        // The element's box in its frame's document, to the view's pixels.
+        menu.bounds = frameView.contentsToRootView(rect);
+        auto style = client->menuStyle();
+        menu.fontSize = style.font().size();
+        menu.rightToLeft = style.textDirection() == TextDirection::RTL;
+        for (int i = 0; i < client->listSize(); ++i) {
+            SelectMenu::Item item;
+            item.kind = client->itemIsSeparator(i) ? SelectMenu::ItemKind::Separator
+                : client->itemIsLabel(i) ? SelectMenu::ItemKind::Group : SelectMenu::ItemKind::Option;
+            item.label = client->itemText(i);
+            item.enabled = client->itemIsEnabled(i);
+            item.selected = client->itemIsSelected(i);
+            menu.items.append(WTF::move(item));
+        }
+        m_shown = true;
+        m_view->client().showSelectMenu(WTF::move(menu), [protectedThis = Ref { *this }, generation = ++m_generation](std::optional<unsigned> index) {
+            // Taken back by the page meanwhile, or shown again since.
+            if (!protectedThis->m_shown || protectedThis->m_generation != generation)
+                return;
+            protectedThis->m_shown = false;
+            RefPtr client = protectedThis->m_client.get();
+            if (!client)
+                return;
+            if (index && static_cast<int>(*index) < client->listSize() && client->itemIsEnabled(*index))
+                client->valueChanged(*index, true);
+            client->popupDidHide();
+        });
+    }
+
+    void hide() final
+    {
+        if (!std::exchange(m_shown, false))
+            return;
+        if (m_view)
+            m_view->client().hideSelectMenu();
+        if (RefPtr client = m_client.get())
+            client->popupDidHide();
+    }
+
     void updateFromElement() final { }
-    void disconnectClient() final { }
+
+    void disconnectClient() final
+    {
+        m_client = nullptr;
+        if (std::exchange(m_shown, false) && m_view)
+            m_view->client().hideSelectMenu();
+    }
+
+    View* m_view { nullptr };
+    WeakPtr<PopupMenuClient> m_client;
+    bool m_shown { false };
+    unsigned m_generation { 0 };
 };
 
 class SearchPopupMenuZeroG final : public SearchPopupMenu {
 public:
-    SearchPopupMenuZeroG()
-        : m_popup(adoptRef(*new PopupMenuZeroG))
+    SearchPopupMenuZeroG(View* view, PopupMenuClient& client)
+        : m_popup(adoptRef(*new PopupMenuZeroG(view, &client)))
     {
     }
 
@@ -117,14 +185,14 @@ void ChromeClientZeroG::scroll(const IntSize&, const IntRect& rectToScroll, cons
         m_view->invalidate(intersection(rectToScroll, clipRect));
 }
 
-RefPtr<PopupMenu> ChromeClientZeroG::createPopupMenu(PopupMenuClient&) const
+RefPtr<PopupMenu> ChromeClientZeroG::createPopupMenu(PopupMenuClient& client) const
 {
-    return adoptRef(*new PopupMenuZeroG);
+    return adoptRef(*new PopupMenuZeroG(m_view, &client));
 }
 
-RefPtr<SearchPopupMenu> ChromeClientZeroG::createSearchPopupMenu(PopupMenuClient&) const
+RefPtr<SearchPopupMenu> ChromeClientZeroG::createSearchPopupMenu(PopupMenuClient& client) const
 {
-    return adoptRef(*new SearchPopupMenuZeroG);
+    return adoptRef(*new SearchPopupMenuZeroG(m_view, client));
 }
 
 void ChromeClientZeroG::addMessageToConsole(JSC::MessageSource source, JSC::MessageLevel level, const String& message, unsigned line, unsigned column, const String& sourceURL)

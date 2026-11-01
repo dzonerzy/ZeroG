@@ -27,7 +27,10 @@ allow. `main_frame` is zero for iframes. Called on the runtime thread.
 ```c
 typedef struct zg_context_config {
     size_t size;
-    const char *app_id;     /* reverse-DNS id, used for the per-app data directory */
+    const char *app_id;     /* reverse-DNS id, used for the per-app data directory;
+                               (0.5) on Linux also the Wayland app_id and X11 class of
+                               the context's windows, which desktops match to the
+                               application's .desktop file */
     /* Where the context keeps cookies (Cookies.sqlite), localStorage
        (LocalStorage/) and IndexedDB (IndexedDB/). NULL = OS default from app_id
        (%LOCALAPPDATA%\<app_id>, $XDG_DATA_HOME/<app_id>); with neither, all of it

@@ -143,6 +143,9 @@ WEBKIT_OPTION_DEFINE(USE_SYSTEM_UNIFDEF "Whether to use a system-provided unifde
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA PRIVATE ON)
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE ON) # toDataURL, toBlob
 WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_WOFF2 PRIVATE ON)
+# prefers-color-scheme and the color-scheme property (light or dark pages, form
+# controls and scrollbars), every profile: zg_view_set_color_scheme.
+WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_DARK_MODE_CSS PRIVATE ON)
 
 # Functions per profile (docs/design/dependencies.md, "Features to turn off").
 # WebGL over ANGLE, composited as layers (GraphicsContextGLZeroG.cpp): ANGLE is

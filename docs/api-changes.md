@@ -18,7 +18,27 @@ What desktop applications need of their windows:
   `zg_window_config.hidden` creates a window hidden until `zg_window_show`.
 - **Window events:** `zg_window_callbacks` with `zg_window_set_callbacks`:
   `close_requested` (return 0 to keep the window open), `resized`, `moved`,
-  `focus_changed`, `state_changed`, `menu_item`, `screen_changed`.
+  `focus_changed`, `state_changed`, `menu_item`, `screen_changed`, and
+  `files_dropped` (the paths of files dropped on the window; the application
+  may keep the drop from the page).
+- **Icons:** `zg_window_set_icon` (RGBA pixels). On Windows windows have the
+  executable's icon by default. On Linux the context's `app_id` is its windows'
+  Wayland app_id and X11 class, so desktops match them to the application's
+  `.desktop` file (and its icon).
+- **Light and dark:** `zg_view_set_color_scheme` (`zg_color_scheme`: system,
+  light, dark) for `prefers-color-scheme`, `color-scheme` and the look of form
+  controls and scrollbars; by default views follow the desktop's setting live
+  once a window exists, and a window's frame follows its view (a dark title bar
+  on Windows). `zg_system_color_scheme` gives the desktop's setting.
+- **The clipboard from native code:** `zg_clipboard_read` and
+  `zg_clipboard_write`, on the clipboard pages use.
+- **Select dropdowns:** `<select>` elements open a dropdown. In window mode the
+  engine shows its own (a popup window drawn like the page, keyboard and
+  mouse); a `select_menu` view callback (`zg_select_menu`: the element's box,
+  font size, direction, items with optgroup labels and separators;
+  `zg_select_menu_choose`, `_cancel`) lets the application show its own, and
+  is texture mode's only one.
+- `zg_window_popup_menu` reports a dismissed popup as `menu_item` with id 0.
 - **Screens:** `zg_screen_count`, `zg_screen_get` (`zg_screen`: bounds, work
   area, scale, refresh rate, primary, name) and `zg_window_screen`.
 - **Dialogs:** `zg_window_file_dialog` (open files, open a folder, save; title,
@@ -42,6 +62,18 @@ Changes in behavior, for every window:
   the request.
 - `zg_window_destroy` may be called from callbacks, also for the window whose
   event or page is running: the window goes once the loop is out of its work.
+- Pages see the desktop's dark setting through `prefers-color-scheme` (before,
+  always light).
+- On Windows the clipboard is used directly, in the system's formats: text,
+  "HTML Format" (what browsers and Office read and write), PNG, bitmaps, and
+  other types under their names. Before, through SDL, `text/html` read back as
+  the plain text, a page's copy could put its HTML in the plain text, and a
+  read right after another application's change could find nothing.
+- `<select>` elements open (before, nothing happened).
+- A window shown or uncovered draws again: before, a window whose first frame
+  came while it was still hidden (every window but the first, with a page that
+  does not change) stayed white.
+- Checkboxes draw an inset check mark, readable at small sizes.
 
 Nothing else changed for 0.4 programs.
 

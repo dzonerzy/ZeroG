@@ -64,6 +64,31 @@ A closed window is hidden at once and stays valid until `zg_window_destroy`.
 Callbacks, bindings included, may destroy any window, the one they run for
 too.
 
+`files_dropped` gets the paths of files dropped on the window, which pages
+never see (their `File` objects have names, not paths). Return nonzero to keep
+the drop from the page.
+
+## Icon
+
+On Windows a window has the executable's icon (its first icon resource). Set
+another, or one at all on Linux, with RGBA pixels:
+
+```c
+zg_window_set_icon(win, rgba, 256, 256);
+```
+
+## Light and dark
+
+Pages see the desktop's dark or light setting through `prefers-color-scheme`,
+and follow it when it changes; a page with `color-scheme: light dark` also gets
+dark form controls and scrollbars. A window's frame follows its view (a dark
+title bar on Windows). An application with its own theme setting overrides it:
+
+```c
+zg_view_set_color_scheme(view, ZG_COLOR_SCHEME_DARK);   /* or LIGHT, SYSTEM */
+zg_color_scheme desktop = zg_system_color_scheme(rt);
+```
+
 ## Screens
 
 ```c
@@ -146,7 +171,9 @@ zg_window_menu_set_checked(win, 3, 0);     /* check marks change only this way *
 ```
 
 Ids go from 1 to 65535. `zg_window_popup_menu(win, menu, x, y)` shows a popup
-menu at a point of the view, for instance at a `zg_context_menu`'s position.
+menu at a point of the view, for instance at a `zg_context_menu`'s position;
+`menu_item` then comes with the chosen id, or 0 if it was dismissed.
+`examples/desktop` shows the page's context menu natively this way.
 
 On Linux there are no native menus (`ZG_ERROR_UNSUPPORTED`): applications draw
 them in the page there, where they look the same on every desktop.
@@ -204,6 +231,15 @@ static void on_context_menu(zg_view *view, zg_context_menu *menu, void *user)
 Without the callback no menu appears. A page that cancels its `contextmenu`
 event (to show its own HTML menu) gets no host menu.
 
+## Select dropdowns
+
+A `<select>` opens a dropdown under it, drawn by the engine in a popup window
+like the page (light or dark), chosen with the mouse or the keyboard (arrows,
+Home, End, Page Up and Down, Enter, Escape, typing an option's first letters).
+To show your own instead, set the `select_menu` view callback: it gets the
+element's box, the font size and the items (options, optgroup labels,
+separators), and answers with `zg_select_menu_choose` or `_cancel`.
+
 ## File dialogs, drops and the clipboard
 
 - `<input type=file>` shows the system's file dialog, unless you set a
@@ -211,7 +247,9 @@ event (to show its own HTML menu) gets no host menu.
 - Files, text and URLs dropped on the window reach the page as `drop` events,
   with the files in `DataTransfer.files`.
 - The clipboard is the system's once a window exists: copy, cut, paste and
-  `navigator.clipboard` work.
+  `navigator.clipboard` work, and the application reads and writes it with
+  `zg_clipboard_read` and `zg_clipboard_write` (text, HTML, images by MIME
+  type).
 
 ## The Web Inspector
 

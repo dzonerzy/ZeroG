@@ -575,6 +575,89 @@ Runs the item (copy, paste, open the link, download the image...).
 ZG_API void zg_context_menu_cancel(zg_context_menu *menu);
 ```
 
+### `zg_select_menu`
+
+```c
+typedef struct zg_select_menu zg_select_menu;
+```
+
+A <select> element's dropdown (0.5), opened by a click or the keyboard. In
+window mode the engine shows its own (a popup window drawn like the page);
+with a select_menu callback the application shows its own instead, as it
+likes (texture mode has no other). Valid until answered, which must happen
+exactly once, from any thread; if the page takes the dropdown back first
+(the element removed or blurred), the answer is ignored.
+
+### `zg_select_item_kind`
+
+```c
+typedef enum zg_select_item_kind {
+    ZG_SELECT_ITEM_OPTION,
+    ZG_SELECT_ITEM_GROUP,     /* an <optgroup>'s label: not choosable */
+    ZG_SELECT_ITEM_SEPARATOR  /* an <hr> */
+} zg_select_item_kind;
+```
+
+### `zg_select_item`
+
+```c
+typedef struct zg_select_item {
+    zg_select_item_kind kind;
+    const char *label;        /* UTF-8 */
+    int enabled;
+    int selected;
+} zg_select_item;
+```
+
+### `zg_select_menu_bounds`
+
+```c
+ZG_API void zg_select_menu_bounds(const zg_select_menu *menu, float *x, float *y, float *width, float *height);
+```
+
+The element's box, the view's logical pixels: show the list under it.
+
+### `zg_select_menu_font_size`
+
+```c
+ZG_API float zg_select_menu_font_size(const zg_select_menu *menu);
+```
+
+The page's font size for it, CSS pixels; nonzero for right to left.
+
+### `zg_select_menu_is_rtl`
+
+```c
+ZG_API int zg_select_menu_is_rtl(const zg_select_menu *menu);
+```
+
+### `zg_select_menu_item_count`
+
+```c
+ZG_API size_t zg_select_menu_item_count(const zg_select_menu *menu);
+```
+
+### `zg_select_menu_item_at`
+
+```c
+ZG_API const zg_select_item *zg_select_menu_item_at(const zg_select_menu *menu, size_t index);
+```
+
+### `zg_select_menu_choose`
+
+```c
+ZG_API void zg_select_menu_choose(zg_select_menu *menu, size_t index);
+```
+
+Chooses the option at `index` (an enabled ZG_SELECT_ITEM_OPTION): the
+element's value changes and its input and change events fire.
+
+### `zg_select_menu_cancel`
+
+```c
+ZG_API void zg_select_menu_cancel(zg_select_menu *menu);
+```
+
 ### `zg_view_callbacks`
 
 ```c
@@ -608,6 +691,9 @@ typedef struct zg_view_callbacks {
     void (*file_chooser)(zg_view *view, zg_file_chooser *chooser, void *user);
     /* Context menus (0.3); see zg_context_menu. */
     void (*context_menu)(zg_view *view, zg_context_menu *menu, void *user);
+    /* <select> dropdowns (0.5); see zg_select_menu. NULL: window mode shows
+       its own, other views none. */
+    void (*select_menu)(zg_view *view, zg_select_menu *menu, void *user);
 } zg_view_callbacks;
 ```
 

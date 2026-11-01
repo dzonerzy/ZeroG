@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Another window</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f6f9; --panel: #ffffff; --text: #17202b; --muted: #5d6b7a; --line: #dde3ea; --accent: #29d3f4;
+    font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11161c; --panel: #1a2129; --text: #e6edf3; --muted: #8b98a5; --line: #2b3540; }
+  }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--panel); color: var(--text); }
+  .content { box-sizing: border-box; height: 100%; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+  header { font-weight: 600; font-size: 16px; }
+  .hint { color: var(--muted); }
+  button {
+    font: inherit; padding: 5px 12px; border-radius: 6px; align-self: flex-start;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+
+  /* Frameless windows: the page draws the window's shape and its title bar,
+     which moves the window (--zg-app-region: drag); its buttons stay buttons. */
+  body.frameless { background: transparent; }
+  body.frameless .content {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  body.frameless header { --zg-app-region: drag; cursor: grab; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  body.frameless button { --zg-app-region: no-drag; }
+  /* Transparent: the desktop shows around the rounded card. */
+  body.transparent { padding: 12px; box-sizing: border-box; }
+  body.transparent .content { box-shadow: 0 8px 30px #0006; }
+</style>
+</head>
+<body>
+<div class="content">
+  <header>Another window: <span id="kind"></span></header>
+  <div class="hint" id="hint"></div>
+  <button id="close">Close (from this page's binding)</button>
+</div>
+<script>
+  const kind = new URLSearchParams(location.search).get("kind") || "normal";
+  document.getElementById("kind").textContent = kind;
+  if (kind !== "normal")
+    document.body.classList.add("frameless");
+  if (kind === "transparent")
+    document.body.classList.add("transparent");
+  document.getElementById("hint").textContent = kind === "normal"
+    ? "A second window with its own view. Close it with its close button or the button below."
+    : kind === "frameless"
+      ? "No frame: drag the header (--zg-app-region: drag) to move it, its edges resize it."
+      : "Transparent and frameless: the desktop shows around the card. Drag the header to move it.";
+  document.getElementById("close").addEventListener("click", () => Second.close());
+</script>
+</body>
+</html>

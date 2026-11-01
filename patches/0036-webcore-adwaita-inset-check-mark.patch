@@ -1,0 +1,41 @@
+diff --git a/Source/WebCore/platform/graphics/adwaita/ToggleButtonAdwaita.cpp b/Source/WebCore/platform/graphics/adwaita/ToggleButtonAdwaita.cpp
+index 44e75200a6..2e30fbf61f 100644
+--- a/Source/WebCore/platform/graphics/adwaita/ToggleButtonAdwaita.cpp
++++ b/Source/WebCore/platform/graphics/adwaita/ToggleButtonAdwaita.cpp
+@@ -105,6 +105,20 @@ void ToggleButtonAdwaita::drawCheckbox(GraphicsContext& graphicsContext, const F
+         if (style.states.contains(ControlStyle::State::Indeterminate))
+             path.addRoundedRect(FloatRect(2, 5, 10, 4), FloatSize(2, 2));
+         else {
++#if PLATFORM(ZEROG)
++            // An inset check mark, stroked, with even margins: the filled
++            // Adwaita mark reaches the box's edge and crowds the small boxes
++            // desktop pages use (13px and less).
++            path.moveTo({ 3.6, 7.3 });
++            path.addLineTo({ 6.1, 9.8 });
++            path.addLineTo({ 10.6, 4.6 });
++            graphicsContext.setStrokeColor(foregroundColor);
++            graphicsContext.setStrokeThickness(1.8);
++            graphicsContext.setLineCap(LineCap::Round);
++            graphicsContext.setLineJoin(LineJoin::Round);
++            graphicsContext.strokePath(path);
++            path.clear();
++#else
+             path.moveTo({ 2.43, 6.57 });
+             path.addLineTo({ 7.5, 11.63 });
+             path.addLineTo({ 14, 5 });
+@@ -112,10 +126,13 @@ void ToggleButtonAdwaita::drawCheckbox(GraphicsContext& graphicsContext, const F
+             path.addLineTo({ 7.5, 7.38 });
+             path.addLineTo({ 4.56, 4.44 });
+             path.closeSubpath();
++#endif
+         }
+ 
+-        graphicsContext.setFillColor(foregroundColor);
+-        graphicsContext.fillPath(path);
++        if (!path.isEmpty()) {
++            graphicsContext.setFillColor(foregroundColor);
++            graphicsContext.fillPath(path);
++        }
+     } else {
+         path.addRoundedRect(fieldRect, corner);
+         if (style.states.contains(ControlStyle::State::Hovered) && style.states.contains(ControlStyle::State::Enabled))

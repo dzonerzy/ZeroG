@@ -119,8 +119,8 @@ void NativeMenus::popup(const Menu& menu, int x, int y)
     SetForegroundWindow(hwnd);
     UINT id = TrackPopupMenuEx(popupMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, point.x, point.y, hwnd, nullptr);
     DestroyMenu(popupMenu);
-    if (id)
-        chosen(id);
+    // 0: dismissed.
+    chosen(id);
 }
 
 // To the engine thread's loop, with the window's other events.

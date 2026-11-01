@@ -1,8 +1,9 @@
 #pragma once
 
-// The system clipboard through SDL3, for window mode (SDL's video subsystem is
-// running): text, HTML, URLs and images by MIME type. Installed when a window is
-// created, unless the application provides its own clipboard.
+// The system clipboard in window mode: text, HTML, URLs and images by MIME
+// type, through SDL3 on Linux and directly in the system's formats on Windows
+// (ClipboardSDL.cpp). Installed when a window is created, unless the
+// application provides its own clipboard.
 
 #include <WebCore/PasteboardItemsZeroG.h>
 

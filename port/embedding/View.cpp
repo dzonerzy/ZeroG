@@ -140,6 +140,9 @@ View* View::fromPage(const Page& page)
     return viewsByPage().get(&page);
 }
 
+// The desktop's dark setting, as window mode knows it.
+static bool s_systemDarkAppearance;
+
 View::View(Configuration&& configuration)
     : m_session(configuration.session ? configuration.session.releaseNonNull() : Ref { Session::defaultSession() })
     , m_page(createPage(*this))
@@ -175,6 +178,8 @@ View::View(Configuration&& configuration)
     // reading it asks the editor client, which grants it during a user gesture.
     settings.setAsyncClipboardAPIEnabled(true);
     settings.setDOMPasteAccessRequestsEnabled(true);
+    if (s_systemDarkAppearance)
+        page->setUseColorAppearance(true, false);
     if (processOptions().synchronousImageDecoding) {
         settings.setLargeImageAsyncDecodingEnabled(false);
         settings.setAnimatedImageAsyncDecodingEnabled(false);
@@ -842,6 +847,31 @@ void View::setFocused(bool focused)
     auto& focusController = m_page->focusController();
     focusController.setActive(focused);
     focusController.setFocused(focused);
+}
+
+void View::setColorScheme(ColorScheme scheme)
+{
+    m_colorScheme = scheme;
+    bool dark = scheme == ColorScheme::Dark || (scheme == ColorScheme::System && s_systemDarkAppearance);
+    // Styles are resolved again, and prefers-color-scheme listeners told.
+    if (m_page->useDarkAppearance() != dark)
+        m_page->setUseColorAppearance(dark, false);
+}
+
+void View::setSystemDarkAppearance(bool dark)
+{
+    if (s_systemDarkAppearance == dark)
+        return;
+    s_systemDarkAppearance = dark;
+    for (auto* view : viewsByPage().values()) {
+        if (view->m_colorScheme == ColorScheme::System)
+            view->setColorScheme(ColorScheme::System);
+    }
+}
+
+bool View::systemDarkAppearance()
+{
+    return s_systemDarkAppearance;
 }
 
 } // namespace ZeroG

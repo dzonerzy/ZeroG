@@ -81,8 +81,9 @@ through it.
   calls). An empty synchronous call costs about 0.03 µs.
 - **Window mode**: frameless and transparent windows, `--zg-app-region: drag`
   regions, click-through; window control and events, screens, the system's file
-  dialogs and message boxes, native menu bars and popup menus on Windows; drag
-  and drop, the system clipboard, screen readers (UI Automation, AT-SPI).
+  dialogs and message boxes, native menu bars and popup menus on Windows, the
+  desktop's light or dark setting; drag and drop, the system clipboard, screen
+  readers (UI Automation, AT-SPI).
 - **Texture mode**: frames for your renderer on any thread, input from your
   window, animations paced by your frame clock, GPU compositing on the engine's
   own thread.

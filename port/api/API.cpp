@@ -275,6 +275,16 @@ struct zg_context_menu {
     std::vector<zg_context_menu_item> items;
 };
 
+// A select dropdown waiting for the application; its strings live with it.
+struct zg_select_menu {
+    CompletionHandler<void(std::optional<unsigned>)> completionHandler;
+    FloatRect bounds;
+    float fontSize { 13 };
+    bool rightToLeft { false };
+    std::vector<std::string> labels;
+    std::vector<zg_select_item> items;
+};
+
 struct zg_clipboard_reply {
     RefPtr<SharedBuffer> data;
 };
@@ -512,6 +522,42 @@ private:
         callbacks().context_menu(&m_view, menu, callbacks().user);
     }
 
+    void showSelectMenu(ZeroG::SelectMenu&& request, CompletionHandler<void(std::optional<unsigned>)>&& completionHandler) final
+    {
+        if (callbacks().select_menu) {
+            auto* menu = new zg_select_menu;
+            menu->completionHandler = WTF::move(completionHandler);
+            menu->bounds = request.bounds;
+            menu->fontSize = request.fontSize;
+            menu->rightToLeft = request.rightToLeft;
+            // The labels first: the items point into them.
+            menu->labels.reserve(request.items.size());
+            for (auto& item : request.items)
+                menu->labels.push_back(toUTF8(item.label));
+            for (size_t i = 0; i < request.items.size(); ++i) {
+                auto& item = request.items[i];
+                zg_select_item_kind kind = item.kind == ZeroG::SelectMenu::ItemKind::Group ? ZG_SELECT_ITEM_GROUP
+                    : item.kind == ZeroG::SelectMenu::ItemKind::Separator ? ZG_SELECT_ITEM_SEPARATOR : ZG_SELECT_ITEM_OPTION;
+                menu->items.push_back({ kind, menu->labels[i].c_str(), item.enabled, item.selected });
+            }
+            callbacks().select_menu(&m_view, menu, callbacks().user);
+            return;
+        }
+        // Window mode: the engine's own popup.
+        if (m_view.window) {
+            m_view.window->window->showSelectPopup(WTF::move(request), WTF::move(completionHandler));
+            return;
+        }
+        completionHandler(std::nullopt);
+    }
+
+    void hideSelectMenu() final
+    {
+        // The application's own menu: its answer will be ignored.
+        if (!callbacks().select_menu && m_view.window)
+            m_view.window->window->hideSelectPopup();
+    }
+
     // The Web Inspector's frontend: a window of the runtime's, whatever the
     // inspected view's mode.
     View* createInspectorView(Session& session) final
@@ -620,6 +666,19 @@ private:
     {
         if (callbacks().screen_changed)
             callbacks().screen_changed(&m_window, callbacks().user);
+    }
+
+    bool filesDropped(const Vector<String>& files, const FloatPoint& point) final
+    {
+        if (!callbacks().files_dropped)
+            return false;
+        std::vector<std::string> paths;
+        for (auto& file : files)
+            paths.push_back(utf8String(file));
+        std::vector<const char*> pointers;
+        for (auto& path : paths)
+            pointers.push_back(path.c_str());
+        return callbacks().files_dropped(&m_window, pointers.data(), pointers.size(), point.x(), point.y(), callbacks().user);
     }
 
     zg_window& m_window;
@@ -1421,6 +1480,62 @@ void zg_context_menu_cancel(zg_context_menu* menu)
     zg_context_menu_select(menu, 0);
 }
 
+// ---- Select menus (0.5) ----
+
+void zg_select_menu_bounds(const zg_select_menu* menu, float* x, float* y, float* width, float* height)
+{
+    FloatRect bounds = menu ? menu->bounds : FloatRect { };
+    if (x)
+        *x = bounds.x();
+    if (y)
+        *y = bounds.y();
+    if (width)
+        *width = bounds.width();
+    if (height)
+        *height = bounds.height();
+}
+
+float zg_select_menu_font_size(const zg_select_menu* menu)
+{
+    return menu ? menu->fontSize : 0;
+}
+
+int zg_select_menu_is_rtl(const zg_select_menu* menu)
+{
+    return menu && menu->rightToLeft;
+}
+
+size_t zg_select_menu_item_count(const zg_select_menu* menu)
+{
+    return menu ? menu->items.size() : 0;
+}
+
+const zg_select_item* zg_select_menu_item_at(const zg_select_menu* menu, size_t index)
+{
+    return menu && index < menu->items.size() ? &menu->items[index] : nullptr;
+}
+
+static void answerSelectMenu(zg_select_menu* menu, std::optional<unsigned> index)
+{
+    if (!menu)
+        return;
+    ensureOnMainThread([menu, index] {
+        menu->completionHandler(index);
+        delete menu;
+    });
+}
+
+void zg_select_menu_choose(zg_select_menu* menu, size_t index)
+{
+    bool choosable = menu && index < menu->items.size() && menu->items[index].kind == ZG_SELECT_ITEM_OPTION && menu->items[index].enabled;
+    answerSelectMenu(menu, choosable ? std::optional<unsigned> { static_cast<unsigned>(index) } : std::nullopt);
+}
+
+void zg_select_menu_cancel(zg_select_menu* menu)
+{
+    answerSelectMenu(menu, std::nullopt);
+}
+
 // ---- Clipboard ----
 
 namespace {
@@ -2056,7 +2171,8 @@ zg_window* zg_window_create(zg_context* context, const zg_window_config* configu
         return nullptr;
     auto config = copyConfig(configuration);
     IntSize size { static_cast<int>(config.width ? config.width : 1024), static_cast<int>(config.height ? config.height : 768) };
-    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, !config.hidden, context->session, !!config.transparent, !!config.click_through });
+    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, !config.hidden, context->session, !!config.transparent, !!config.click_through,
+        String::fromUTF8(context->appID.c_str()) });
     if (!window) {
         fail(ZG_ERROR_GPU, makeString("cannot create the window: "_s, Window::lastError()));
         return nullptr;
@@ -2279,6 +2395,88 @@ zg_window_state zg_window_get_state(zg_window* window)
     if (checkWindow(window))
         return ZG_WINDOW_HIDDEN;
     return windowState(window->window->state());
+}
+
+zg_result zg_window_set_icon(zg_window* window, const void* rgba, unsigned width, unsigned height)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!rgba || !width || !height || width > 1024 || height > 1024)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "an icon needs pixels, from 1x1 to 1024x1024"_s);
+    std::span pixels { static_cast<const uint8_t*>(rgba), static_cast<size_t>(width) * height * 4 };
+    // Wayland compositors without the toplevel icon protocol take no icon:
+    // the desktop file's (matched by app_id) shows.
+    if (!window->window->setIcon(pixels, { static_cast<int>(width), static_cast<int>(height) }))
+        return fail(ZG_ERROR_UNSUPPORTED, "the window system takes no icon from the application (Wayland: the .desktop file's icon shows)"_s);
+    return ZG_OK;
+}
+
+// ---- Light and dark (0.5) ----
+
+zg_result zg_view_set_color_scheme(zg_view* view, zg_color_scheme scheme)
+{
+    clearError();
+    if (!view)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no view"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    if (scheme > ZG_COLOR_SCHEME_DARK)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "unknown color scheme"_s);
+    view->view->setColorScheme(scheme == ZG_COLOR_SCHEME_DARK ? View::ColorScheme::Dark
+        : scheme == ZG_COLOR_SCHEME_LIGHT ? View::ColorScheme::Light : View::ColorScheme::System);
+    if (view->window)
+        view->window->window->colorSchemeChanged();
+    return ZG_OK;
+}
+
+zg_color_scheme zg_system_color_scheme(zg_runtime*)
+{
+    return View::systemDarkAppearance() ? ZG_COLOR_SCHEME_DARK : ZG_COLOR_SCHEME_LIGHT;
+}
+
+// ---- The clipboard from native code (0.5) ----
+
+zg_result zg_clipboard_read(zg_runtime* rt, const char* type, char** data, size_t* length)
+{
+    clearError();
+    if (!rt || !type || !data)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no runtime, type or output"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    *data = nullptr;
+    if (length)
+        *length = 0;
+    auto buffer = systemClipboardZeroG().read(stringFromUTF8(type));
+    if (!buffer)
+        return fail(ZG_ERROR_NOT_FOUND, makeString("the clipboard holds no "_s, stringFromUTF8(type)));
+    auto bytes = buffer->span();
+    auto* copy = static_cast<char*>(std::malloc(bytes.size() + 1));
+    if (!copy)
+        return fail(ZG_ERROR_OUT_OF_MEMORY, "out of memory"_s);
+    if (!bytes.empty())
+        std::memcpy(copy, bytes.data(), bytes.size());
+    copy[bytes.size()] = '\0';
+    *data = copy;
+    if (length)
+        *length = bytes.size();
+    return ZG_OK;
+}
+
+zg_result zg_clipboard_write(zg_runtime* rt, size_t count, const char* const* types, const void* const* data, const size_t* lengths)
+{
+    clearError();
+    if (!rt || (count && (!types || !data || !lengths)))
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no runtime, types, data or lengths"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    Vector<PasteboardItemsZeroG::Item> items;
+    for (size_t i = 0; i < count; ++i) {
+        if (!types[i] || !*types[i] || (!data[i] && lengths[i]))
+            return fail(ZG_ERROR_INVALID_ARGUMENT, makeString("item "_s, i, " has no type or data"_s));
+        items.append({ stringFromUTF8(types[i]), SharedBuffer::create(std::span { static_cast<const uint8_t*>(data[i]), lengths[i] }) });
+    }
+    systemClipboardZeroG().write(WTF::move(items));
+    return ZG_OK;
 }
 
 zg_result zg_window_set_callbacks(zg_window* window, const zg_window_callbacks* callbacks)

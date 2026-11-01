@@ -62,6 +62,21 @@ if (WIN32)
     target_link_options(ZeroGHello PRIVATE "/MAP:$<TARGET_FILE_DIR:ZeroGHello>/ZeroGHello.map")
 endif ()
 
+# Every window feature of API 0.5 to try by hand (examples/desktop).
+file(GLOB_RECURSE _zerog_desktop_web "${ZEROG_SOURCE_DIR}/examples/desktop/web/*")
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/desktop_assets.c
+    COMMAND ${Python_EXECUTABLE} ${ZEROG_SOURCE_DIR}/tools/assets.py ${ZEROG_SOURCE_DIR}/examples/desktop/web
+        -o ${CMAKE_CURRENT_BINARY_DIR}/desktop_assets.c --c-symbol desktop_assets
+    DEPENDS ${ZEROG_SOURCE_DIR}/tools/assets.py ${_zerog_desktop_web}
+    VERBATIM)
+set(ZeroGDesktop_SOURCES ${ZEROG_SOURCE_DIR}/examples/desktop/main.c ${CMAKE_CURRENT_BINARY_DIR}/desktop_assets.c)
+set(ZeroGDesktop_LIBRARIES ZeroGAPI)
+set(ZeroGDesktop_FRAMEWORKS ${ZeroGAPI_FRAMEWORKS})
+set(ZeroGDesktop_PRIVATE_INCLUDE_DIRECTORIES ${ZEROG_SOURCE_DIR}/include)
+WEBKIT_EXECUTABLE_DECLARE(ZeroGDesktop)
+WEBKIT_EXECUTABLE(ZeroGDesktop)
+
 # Value conversions, every type, both ways.
 set(ZeroGValuesTest_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/values_test.c)
 set(ZeroGValuesTest_LIBRARIES ZeroGAPI)

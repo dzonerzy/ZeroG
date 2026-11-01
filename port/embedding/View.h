@@ -68,6 +68,22 @@ struct ContextMenu {
     Vector<Item> items;
 };
 
+// A <select> element's dropdown: the element's box and its items, by WebCore's
+// list index (options, optgroup labels, separators).
+struct SelectMenu {
+    enum class ItemKind : uint8_t { Option, Group, Separator };
+    struct Item {
+        ItemKind kind { ItemKind::Option };
+        String label;
+        bool enabled { true };
+        bool selected { false };
+    };
+    WebCore::FloatRect bounds; // the view's logical pixels
+    float fontSize { 13 };
+    bool rightToLeft { false };
+    Vector<Item> items;
+};
+
 class ViewClient {
 public:
     virtual ~ViewClient() = default;
@@ -103,6 +119,11 @@ public:
     // A context menu (ContextMenu): answer with the chosen item's id, or nullopt
     // to dismiss it; the answer may come later. The default shows nothing.
     virtual void showContextMenu(ContextMenu&&, CompletionHandler<void(std::optional<unsigned>)>&& completionHandler) { completionHandler(std::nullopt); }
+    // A <select> dropdown (SelectMenu): answer with the chosen item's index, or
+    // nullopt to dismiss it; the answer may come later. The page may take it
+    // back first (hideSelectMenu): a later answer is then ignored.
+    virtual void showSelectMenu(SelectMenu&&, CompletionHandler<void(std::optional<unsigned>)>&& completionHandler) { completionHandler(std::nullopt); }
+    virtual void hideSelectMenu() { }
     // The Web Inspector (dev and debug profiles, inspector/InspectorZeroG.h).
     // Opening it: create a view of `session` for its frontend, owned and shown by
     // the embedder, and return it; null opens nothing. The frontend closing
@@ -192,6 +213,15 @@ public:
 
     void setFocused(bool);
 
+    // What prefers-color-scheme says to the pages, and the look of form
+    // controls and scrollbars. System: the desktop's setting, as window mode
+    // learns it and follows it (setSystemDarkAppearance); light until then.
+    enum class ColorScheme : uint8_t { System, Light, Dark };
+    void setColorScheme(ColorScheme);
+    ColorScheme colorScheme() const { return m_colorScheme; }
+    static void setSystemDarkAppearance(bool);
+    static bool systemDarkAppearance();
+
     // A drag from outside the page (files from the desktop, text from another
     // application), in logical pixels: entering, moving over, leaving, or dropped
     // on the view. Returns whether the page would accept a drop there.
@@ -269,6 +299,7 @@ private:
     WebCore::IntSize m_size;
     float m_scale { 1 };
     bool m_transparent { false };
+    ColorScheme m_colorScheme { ColorScheme::System };
     bool m_needsRenderingUpdate { true };
     unsigned m_renderingUpdates { 0 };
     bool m_forceRepaint { false };

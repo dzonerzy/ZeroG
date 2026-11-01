@@ -53,6 +53,11 @@ and `code` strings, then `ZG_KEY_CHAR` with the text), the IME calls for
 composition, `zg_view_drag` for drops, and `zg_view_set_focus`.
 `cursor_changed` and `ime_caret_rect` tell you what to show.
 
+Menus are yours to draw too: the `context_menu` callback for right clicks, and
+`select_menu` for `<select>` dropdowns (the element's box and its items; answer
+with `zg_select_menu_choose`). Without it a `<select>` does not open in texture
+mode.
+
 ## Surface kinds
 
 | Kind | Platform | `device` | A frame is |

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ZeroG desktop demo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark"></span><span>Zero<span class="accent">G</span> desktop demo</span></div>
+  <div class="status" id="status">…</div>
+</header>
+
+<main>
+  <section>
+    <h2>Window</h2>
+    <p class="hint">Sizes are logical pixels; positions are desktop coordinates.</p>
+    <div class="row">
+      <button data-call="minimize">Minimize</button>
+      <button data-call="maximize">Maximize</button>
+      <button data-call="restore">Restore</button>
+      <button data-call="center">Center</button>
+      <button id="hide">Hide for 2 s</button>
+    </div>
+    <div class="row">
+      <label>Size <input id="width" type="number" value="1000"> × <input id="height" type="number" value="700"></label>
+      <button id="setSize">Set size</button>
+    </div>
+    <div class="row">
+      <label>Position <input id="x" type="number" value="100"> , <input id="y" type="number" value="80"></label>
+      <button id="setPosition">Move</button>
+    </div>
+    <div class="row">
+      <button id="minSize">Min size 800×600</button>
+      <button id="maxSize">Max size 1200×800</button>
+      <button id="noLimits">No limits</button>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="resizable" checked> Resizable</label>
+      <label><input type="checkbox" id="onTop"> Always on top</label>
+      <label><input type="checkbox" id="fullscreen"> Full screen</label>
+    </div>
+    <div class="row">
+      <label>Title <input id="title" type="text" value="ZeroG desktop demo"></label>
+      <button id="setTitle">Set title</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Screens</h2>
+    <div class="row"><button id="refreshScreens">Refresh</button></div>
+    <div id="screens" class="cards"></div>
+  </section>
+
+  <section>
+    <h2>Dialogs</h2>
+    <div class="row">
+      <button data-call="openFile" data-arg="false">Open a file</button>
+      <button data-call="openFile" data-arg="true">Open several files</button>
+      <button data-call="openFolder">Choose a folder</button>
+      <button data-call="saveFile">Save as…</button>
+    </div>
+    <div class="row">
+      <button data-message="0">Information</button>
+      <button data-message="1">Question (3 buttons)</button>
+      <button data-message="2">Error</button>
+    </div>
+    <ul id="paths" class="paths"></ul>
+  </section>
+
+  <section>
+    <h2>Menus</h2>
+    <p class="hint">The menu bar: File, View, Help, with accelerators (Ctrl+N, Ctrl+O,
+      Ctrl+Q, Ctrl+T, F11, F1), check marks, a disabled item. Right-click anywhere for the
+      page's context menu as a native popup.</p>
+    <div class="row">
+      <label><input type="checkbox" id="enableSave"> Enable File › Save as… (Ctrl+Shift+S)</label>
+    </div>
+    <div class="row">
+      <button id="popup">Show a popup menu here</button>
+      <input type="text" placeholder="Right-click in this field: Cut, Copy, Paste" class="wide">
+    </div>
+  </section>
+
+  <section>
+    <h2>Clipboard (native)</h2>
+    <div class="row">
+      <input id="clipText" type="text" class="wide" value="Copied by ZeroG ✓">
+    </div>
+    <div class="row">
+      <button id="copyText">Copy text</button>
+      <button id="copyHTML">Copy text + HTML</button>
+      <button id="paste">Read the clipboard</button>
+    </div>
+    <pre id="clipboard" class="output">Copy something here or in another application, then read it.</pre>
+  </section>
+
+  <section>
+    <h2>Light and dark</h2>
+    <p class="hint">The page follows <code>prefers-color-scheme</code>; form controls and
+      the title bar follow too.</p>
+    <div class="row">
+      <button data-scheme="0">System</button>
+      <button data-scheme="1">Light</button>
+      <button data-scheme="2">Dark</button>
+      <span id="scheme" class="pill"></span>
+    </div>
+    <div class="row">
+      <select><option>A select</option><option>Second</option></select>
+      <input type="range">
+      <input type="date">
+      <progress value="60" max="100"></progress>
+    </div>
+  </section>
+
+  <section>
+    <h2>Icon, drops, windows</h2>
+    <div class="row">
+      Icon:
+      <button data-icon="0" class="swatch" style="--c:#29d3f4"></button>
+      <button data-icon="1" class="swatch" style="--c:#f45b29"></button>
+      <button data-icon="2" class="swatch" style="--c:#5bd329"></button>
+      <button data-icon="3" class="swatch" style="--c:#b029f4"></button>
+    </div>
+    <div id="dropZone" class="drop">Drop files on the window. <span class="hint">The native
+      callback gets their paths; the page gets File objects (names only).</span></div>
+    <div class="row">
+      <label><input type="checkbox" id="keepDrops"> Keep drops from the page</label>
+    </div>
+    <div class="row">
+      <button data-window="normal">New window</button>
+      <button data-window="frameless">Frameless window</button>
+      <button data-window="transparent">Transparent window</button>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="confirmClose" checked> Confirm before closing</label>
+    </div>
+  </section>
+
+  <section class="log-section">
+    <h2>Events <button id="clearLog" class="small">Clear</button></h2>
+    <ol id="log" class="log"></ol>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

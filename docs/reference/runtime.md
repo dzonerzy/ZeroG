@@ -217,3 +217,21 @@ ZG_API zg_result zg_runtime_set_clipboard(zg_runtime *rt, const zg_clipboard *cl
 ```
 
 NULL goes back to the default. Copied.
+
+### `zg_clipboard_read`
+
+```c
+ZG_API zg_result zg_clipboard_read(zg_runtime *rt, const char *type, char **data, size_t *len);
+```
+
+(0.5) The application's own access to that clipboard. Reading gives the data
+of `type` in a buffer freed with zg_free (NUL-terminated, the NUL not
+counted in `len`), ZG_ERROR_NOT_FOUND if it holds none. Writing replaces its
+contents with `count` items, as zg_clipboard.write.
+
+### `zg_clipboard_write`
+
+```c
+ZG_API zg_result zg_clipboard_write(zg_runtime *rt, size_t count, const char *const *types,
+                                    const void *const *data, const size_t *lens);
+```

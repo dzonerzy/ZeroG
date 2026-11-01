@@ -9,6 +9,7 @@
 #include "KeyboardSDL.h"
 #include <WebCore/FileChooser.h>
 #include <WebCore/MIMETypeRegistry.h>
+#include <WebCore/Page.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
@@ -26,8 +27,12 @@
 #include <wtf/RunLoop.h>
 #include <wtf/Scope.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
-#if !OS(WINDOWS)
+#if OS(WINDOWS)
+#include <dwmapi.h>
+#include <shellapi.h>
+#else
 #include <dlfcn.h>
 #endif
 
@@ -53,6 +58,9 @@ bool initializeVideo()
         SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
         if (!SDL_Init(SDL_INIT_VIDEO))
             return false;
+        // Pages see the desktop's dark or light setting (and follow it:
+        // SDL_EVENT_SYSTEM_THEME_CHANGED).
+        View::setSystemDarkAppearance(SDL_GetSystemTheme() == SDL_SYSTEM_THEME_DARK);
         s_wakeUpEvent = SDL_RegisterEvents(2);
         s_menuEvent = s_wakeUpEvent + 1;
         addWakeUpObserver([] {
@@ -195,13 +203,25 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
         flags |= SDL_WINDOW_BORDERLESS;
     if (configuration.transparent)
         flags |= SDL_WINDOW_TRANSPARENT;
+    // Read by SDL as each window is created.
+    if (!configuration.appID.isEmpty())
+        SDL_SetHint(SDL_HINT_APP_ID, byteCast<char>(configuration.appID.utf8().data()));
     auto title = configuration.title.utf8();
-    auto* window = SDL_CreateWindow(byteCast<char>(title.data()), configuration.size.width(), configuration.size.height(), flags);
+    SDL_Window* window = nullptr;
+    if (auto* parent = configuration.parent) {
+        // A popup menu: placed relative to the parent's client area, in its
+        // window units (Wayland places it with xdg_popup).
+        float units = parent->unitsPerLogicalPixel();
+        auto scaled = [&](int logical) { return static_cast<int>(std::lround(logical * units)); };
+        window = SDL_CreatePopupWindow(parent->m_window, scaled(configuration.position.x()), scaled(configuration.position.y()),
+            std::max(1, scaled(configuration.size.width())), std::max(1, scaled(configuration.size.height())), SDL_WINDOW_POPUP_MENU | SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    } else
+        window = SDL_CreateWindow(byteCast<char>(title.data()), configuration.size.width(), configuration.size.height(), flags);
     if (!window)
         return fail("cannot create the window"_s, SDL_GetError());
     auto destroyWindow = makeScopeExit([&] { SDL_DestroyWindow(window); });
     // The size asked for is logical: SDL's units are pixels on Windows and X11.
-    if (float scale = SDL_GetWindowDisplayScale(window), density = SDL_GetWindowPixelDensity(window); scale > 0 && density > 0 && scale != density) {
+    if (float scale = SDL_GetWindowDisplayScale(window), density = SDL_GetWindowPixelDensity(window); !configuration.parent && scale > 0 && density > 0 && scale != density) {
         float units = scale / density;
         SDL_SetWindowSize(window, std::lround(configuration.size.width() * units), std::lround(configuration.size.height() * units));
         SDL_SyncWindow(window);
@@ -257,6 +277,24 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
 #endif
     result->updateSize();
     result->m_state = result->state();
+    result->m_isPopup = configuration.parent;
+    if (result->m_isPopup)
+        return std::unique_ptr<Window> { result.release() };
+    result->colorSchemeChanged();
+#if OS(WINDOWS)
+    // The executable's own icon (its first icon resource), as Explorer shows
+    // it, rather than SDL's default.
+    wchar_t executable[MAX_PATH];
+    HICON bigIcon = nullptr, smallIcon = nullptr;
+    if (GetModuleFileNameW(nullptr, executable, MAX_PATH) && ExtractIconExW(executable, 0, &bigIcon, &smallIcon, 1) > 0) {
+        auto hwnd = static_cast<HWND>(native->window);
+        if (bigIcon)
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(bigIcon));
+        if (smallIcon)
+            SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallIcon));
+        result->m_executableIcons = { bigIcon, smallIcon };
+    }
+#endif
     // Text input events (typed characters, input method commits).
     SDL_StartTextInput(window);
     return std::unique_ptr<Window> { result.release() };
@@ -268,6 +306,15 @@ static HashMap<SDL_Window*, Window*>& windows()
     static NeverDestroyed<HashMap<SDL_Window*, Window*>> windows;
     return windows;
 }
+
+// A <select> dropdown being shown (showSelectPopup).
+struct Window::SelectPopup {
+    std::unique_ptr<Window> window;
+    std::unique_ptr<ViewClient> client;
+    CompletionHandler<void(std::optional<unsigned>)> handler;
+    // Set: closed with this answer at the parent's next turn of the loop.
+    std::optional<std::optional<unsigned>> answer;
+};
 
 Window::Window(SDL_Window* window, std::unique_ptr<View>&& view, std::unique_ptr<GLContext>&& presentContext, void* nativeWindow)
     : m_window(window)
@@ -366,6 +413,11 @@ Window::HitTest Window::hitTest(float x, float y)
 
 Window::~Window()
 {
+    // An open dropdown goes first, dismissed.
+    if (auto popup = std::exchange(m_selectPopup, nullptr)) {
+        popup->window = nullptr;
+        popup->handler(std::nullopt);
+    }
 #if OS(WINDOWS)
     // Its window procedure was installed after the accessibility bridge's.
     m_menus = nullptr;
@@ -389,6 +441,12 @@ Window::~Window()
         WaylandEGL::singleton().destroy(m_nativeWindow);
 #endif
     SDL_DestroyWindow(m_window);
+#if OS(WINDOWS)
+    for (auto* icon : m_executableIcons) {
+        if (icon)
+            DestroyIcon(static_cast<HICON>(icon));
+    }
+#endif
 }
 
 const String& Window::lastError()
@@ -482,6 +540,29 @@ void Window::raise()
 uint32_t Window::id() const
 {
     return SDL_GetWindowID(m_window);
+}
+
+bool Window::setIcon(std::span<const uint8_t> rgba, const IntSize& size)
+{
+    if (size.isEmpty() || rgba.size() < static_cast<size_t>(size.width()) * size.height() * 4)
+        return false;
+    auto* surface = SDL_CreateSurfaceFrom(size.width(), size.height(), SDL_PIXELFORMAT_RGBA32, const_cast<uint8_t*>(rgba.data()), size.width() * 4);
+    if (!surface)
+        return false;
+    bool set = SDL_SetWindowIcon(m_window, surface);
+    SDL_DestroySurface(surface);
+    return set;
+}
+
+void Window::colorSchemeChanged()
+{
+#if OS(WINDOWS)
+    // The title bar and frame, dark with a dark page (Windows 10 2004 and later;
+    // earlier versions ignore the attribute).
+    constexpr DWORD useImmersiveDarkMode = 20; // DWMWA_USE_IMMERSIVE_DARK_MODE
+    BOOL dark = m_view->page().useDarkAppearance();
+    DwmSetWindowAttribute(static_cast<HWND>(nativeHandle()), useImmersiveDarkMode, &dark, sizeof dark);
+#endif
 }
 
 float Window::unitsPerLogicalPixel() const
@@ -867,6 +948,217 @@ bool Window::popupMenu(const Menu& menu, const FloatPoint& point)
 #endif
 }
 
+namespace {
+
+// The popup's page tells its choice by its title: "zg-select:<index>" or
+// "zg-select:cancel".
+class SelectPopupClient final : public ViewClient {
+public:
+    explicit SelectPopupClient(std::optional<std::optional<unsigned>>& answer)
+        : m_answer(answer)
+    {
+    }
+
+private:
+    void titleChanged(const String& title) final
+    {
+        if (!title.startsWith("zg-select:"_s) || m_answer)
+            return;
+        auto value = title.substring(10);
+        if (value == "cancel"_s)
+            m_answer = std::optional<unsigned> { };
+        else if (auto index = parseInteger<unsigned>(value))
+            m_answer = std::optional<unsigned> { *index };
+    }
+
+    std::optional<std::optional<unsigned>>& m_answer;
+};
+
+String escapedHTML(const String& text)
+{
+    StringBuilder builder;
+    for (auto character : StringView(text).codeUnits()) {
+        switch (character) {
+        case '&': builder.append("&amp;"_s); break;
+        case '<': builder.append("&lt;"_s); break;
+        case '>': builder.append("&gt;"_s); break;
+        case '"': builder.append("&quot;"_s); break;
+        default: builder.append(character);
+        }
+    }
+    return builder.toString();
+}
+
+// A list like the system's: the selected option active, keyboard (arrows,
+// Home, End, Page Up/Down, Enter, Escape, typing the start of an option) and
+// mouse; system colors, so it follows the color scheme.
+String selectPopupHTML(const SelectMenu& menu)
+{
+    StringBuilder html;
+    html.append("<!DOCTYPE html><html dir="_s, menu.rightToLeft ? "rtl"_s : "ltr"_s, "><head><style>"
+        ":root{color-scheme:light dark;font:"_s, menu.fontSize, "px system-ui,'Segoe UI',sans-serif}"
+        "html,body{margin:0;height:100%;overflow:hidden}"
+        "body{background:Canvas;color:CanvasText;border:1px solid color-mix(in srgb,CanvasText 22%,transparent);box-sizing:border-box}"
+        "#list{height:100%;overflow-y:auto;padding:3px 0;box-sizing:border-box}"
+        ".item{padding:3px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;user-select:none}"
+        ".option.active{background:Highlight;color:HighlightText}"
+        ".group{font-weight:600}.ingroup{padding-inline-start:22px}.disabled{color:GrayText}"
+        ".separator{height:1px;margin:3px 0;background:color-mix(in srgb,CanvasText 18%,transparent)}"
+        "</style></head><body><div id=list>"_s);
+    bool inGroup = false;
+    for (size_t i = 0; i < menu.items.size(); ++i) {
+        auto& item = menu.items[i];
+        if (item.kind == SelectMenu::ItemKind::Separator) {
+            html.append("<div class=separator></div>"_s);
+            inGroup = false;
+            continue;
+        }
+        if (item.kind == SelectMenu::ItemKind::Group) {
+            html.append("<div class='item group'>"_s, escapedHTML(item.label), "</div>"_s);
+            inGroup = true;
+            continue;
+        }
+        html.append("<div class='item option"_s, inGroup ? " ingroup"_s : ""_s, item.enabled ? ""_s : " disabled"_s, item.selected ? " selected"_s : ""_s,
+            "' data-i="_s, i, " title=\""_s, escapedHTML(item.label), "\">"_s, item.label.isEmpty() ? "&nbsp;"_s : escapedHTML(item.label), "</div>"_s);
+    }
+    html.append("</div><script>"
+        "const items=[...document.querySelectorAll('.option:not(.disabled)')];"
+        "let active=null;"
+        "function setActive(e){if(active)active.classList.remove('active');active=e;if(e){e.classList.add('active');e.scrollIntoView({block:'nearest'});}}"
+        "setActive(items.find(e=>e.classList.contains('selected'))||items[0]||null);"
+        "function answer(a){document.title='zg-select:'+a;}"
+        "document.addEventListener('mousemove',ev=>{const e=ev.target.closest('.option:not(.disabled)');if(e&&e!==active)setActive(e);});"
+        "document.addEventListener('mouseup',ev=>{const e=ev.target.closest('.option:not(.disabled)');if(e)answer(e.dataset.i);});"
+        "let typed='',typedAt=0;"
+        "document.addEventListener('keydown',ev=>{const i=items.indexOf(active),last=items.length-1;"
+        "switch(ev.key){"
+        "case 'ArrowDown':setActive(items[Math.min(last,i+1)]);break;"
+        "case 'ArrowUp':setActive(items[Math.max(0,i-1)]);break;"
+        "case 'Home':setActive(items[0]);break;"
+        "case 'End':setActive(items[last]);break;"
+        "case 'PageDown':setActive(items[Math.min(last,i+10)]);break;"
+        "case 'PageUp':setActive(items[Math.max(0,i-10)]);break;"
+        "case 'Enter':answer(active?active.dataset.i:'cancel');break;"
+        "case 'Escape':case 'Tab':answer('cancel');break;"
+        "default:if(ev.key.length!==1)return;"
+        "{const now=Date.now();typed=(now-typedAt<800?typed:'')+ev.key.toLowerCase();typedAt=now;"
+        "const m=items.find(e=>e.textContent.trim().toLowerCase().startsWith(typed));if(m)setActive(m);}}"
+        "ev.preventDefault();});"
+        "</script></body></html>"_s);
+    return html.toString();
+}
+
+} // namespace
+
+void Window::showSelectPopup(SelectMenu&& menu, CompletionHandler<void(std::optional<unsigned>)>&& handler)
+{
+    // One at a time: another page's request replaces it.
+    if (m_selectPopup) {
+        if (!m_selectPopup->answer)
+            m_selectPopup->answer = std::optional<unsigned> { };
+        finishSelectPopup();
+    }
+
+    // Its size: a row per item (at the menu's font size), as wide as the
+    // element or its longest label, at most 20 rows tall (then it scrolls).
+    float row = std::ceil(menu.fontSize * 1.25f) + 6;
+    float height = 8;
+    size_t longest = 0;
+    for (auto& item : menu.items) {
+        height += item.kind == SelectMenu::ItemKind::Separator ? 7 : row;
+        longest = std::max<size_t>(longest, item.label.length());
+    }
+    height = std::min(height, row * 20 + 8);
+    float width = std::clamp(longest * menu.fontSize * 0.55f + 36, menu.bounds.width(), std::max(menu.bounds.width(), 600.f));
+    auto bounds = enclosingIntRect(menu.bounds);
+    IntPoint position { bounds.x(), bounds.maxY() };
+    // Above the element when the screen has more room there.
+    if (auto origin = this->position(); origin && screen()) {
+        auto screens = Window::screens();
+        auto work = screens[*screen()].workArea;
+        float units = unitsPerLogicalPixel();
+        float below = (work.maxY() - (origin->y() + bounds.maxY() * units)) / units;
+        float above = (origin->y() + bounds.y() * units - work.y()) / units;
+        if (below < height && above > below)
+            position.setY(bounds.y() - static_cast<int>(height));
+    }
+
+    auto popup = std::make_unique<SelectPopup>();
+    popup->handler = WTF::move(handler);
+    Configuration configuration;
+    configuration.size = { static_cast<int>(std::ceil(width)), static_cast<int>(std::ceil(height)) };
+    configuration.resizable = false;
+    configuration.frameless = true;
+    configuration.parent = this;
+    configuration.position = position;
+    popup->window = Window::create(WTF::move(configuration));
+    if (!popup->window) {
+        popup->handler(std::nullopt);
+        return;
+    }
+    popup->client = std::make_unique<SelectPopupClient>(popup->answer);
+    auto& view = popup->window->view();
+    view.setClient(popup->client.get());
+    view.setColorScheme(m_view->colorScheme());
+    view.loadHTML(selectPopupHTML(menu));
+    view.setFocused(true);
+    m_selectPopup = WTF::move(popup);
+}
+
+void Window::hideSelectPopup()
+{
+    if (m_selectPopup && !m_selectPopup->answer)
+        m_selectPopup->answer = std::optional<unsigned> { };
+}
+
+void Window::finishSelectPopup()
+{
+    auto popup = std::exchange(m_selectPopup, nullptr);
+    if (!popup)
+        return;
+    auto answer = popup->answer.value_or(std::nullopt);
+    popup->window = nullptr;
+    popup->handler(answer);
+}
+
+bool Window::handleSelectPopupEvent(const SDL_Event& event)
+{
+    if (!m_selectPopup || m_selectPopup->answer)
+        return false;
+    auto dismiss = [&] {
+        m_selectPopup->answer = std::optional<unsigned> { };
+    };
+    switch (event.type) {
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_WHEEL:
+        // A click or a scroll elsewhere closes it, and does nothing else.
+        dismiss();
+        return true;
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        return true;
+    case SDL_EVENT_KEY_DOWN:
+        // Keys go to the list, whichever window has the keyboard.
+        m_selectPopup->window->view().keyDown(keyEventFromSDL(event.key.scancode, event.key.mod, event.key.repeat));
+        return true;
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_TEXT_INPUT:
+        return true;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+        // To another application, not to the popup.
+        if (SDL_GetKeyboardFocus() != m_selectPopup->window->m_window)
+            dismiss();
+        return false;
+    case SDL_EVENT_WINDOW_MOVED:
+    case SDL_EVENT_WINDOW_RESIZED:
+    case SDL_EVENT_WINDOW_MINIMIZED:
+    case SDL_EVENT_WINDOW_HIDDEN:
+        dismiss();
+        return false;
+    default:
+        return false;
+    }
+}
+
 bool Window::handleAccelerator(const SDL_Event& event)
 {
     if (m_accelerators.isEmpty())
@@ -1021,15 +1313,31 @@ void Window::handleEvents()
         case SDL_EVENT_CLIPBOARD_UPDATE:
             sdlClipboardChanged();
             break;
+        case SDL_EVENT_SYSTEM_THEME_CHANGED:
+            View::setSystemDarkAppearance(SDL_GetSystemTheme() == SDL_SYSTEM_THEME_DARK);
+            for (auto* window : windows().values())
+                window->colorSchemeChanged();
+            break;
         default:
             if (event.type == s_wakeUpEvent)
                 s_wakeUpPending = false;
             else if (auto* window = windows().get(SDL_GetWindowFromEvent(&event)))
                 window->handleEvent(event);
-            // Events pushed without a window (SDL_PushEvent with no windowID) go
-            // to the only one, if there is one.
-            else if (windows().size() == 1 && !SDL_GetWindowFromEvent(&event))
-                windows().begin()->value->handleEvent(event);
+            // Events without a window (pushed with no windowID, keys while no
+            // window has the keyboard) go to the only one, if there is one;
+            // dropdowns do not count, their parent passes keys on to them.
+            else if (!SDL_GetWindowFromEvent(&event)) {
+                Window* only = nullptr;
+                unsigned count = 0;
+                for (auto* window : windows().values()) {
+                    if (!window->m_isPopup) {
+                        only = window;
+                        ++count;
+                    }
+                }
+                if (count == 1)
+                    only->handleEvent(event);
+            }
             break;
         }
     }
@@ -1045,6 +1353,8 @@ static bool isInspectorShortcut(const SDL_KeyboardEvent& key)
 
 void Window::handleEvent(const SDL_Event& event)
 {
+    if (handleSelectPopupEvent(event))
+        return;
     {
         switch (event.type) {
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -1081,6 +1391,12 @@ void Window::handleEvent(const SDL_Event& event)
                 m_client->moved({ event.window.data1, event.window.data2 });
             break;
         case SDL_EVENT_WINDOW_SHOWN:
+            // What was presented while the window was hidden (its first frame,
+            // before it appears) may be gone: a new frame, also for a page
+            // that would otherwise not paint again.
+            m_view->repaint();
+            stateMayHaveChanged();
+            break;
         case SDL_EVENT_WINDOW_HIDDEN:
         case SDL_EVENT_WINDOW_MINIMIZED:
         case SDL_EVENT_WINDOW_MAXIMIZED:
@@ -1090,7 +1406,9 @@ void Window::handleEvent(const SDL_Event& event)
             stateMayHaveChanged();
             break;
         case SDL_EVENT_WINDOW_EXPOSED:
-            m_view->invalidate({ { }, m_view->size() });
+            // A whole new frame: invalidate() alone gives a composited view
+            // none (its layers keep their own damage).
+            m_view->repaint();
             break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
         case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -1154,6 +1472,11 @@ void Window::handleEvent(const SDL_Event& event)
                 m_drop.text = String::fromUTF8(event.drop.data);
             break;
         case SDL_EVENT_DROP_COMPLETE:
+            // Files are the application's first: it may keep them from the page.
+            if (!m_drop.files.isEmpty() && m_client && m_client->filesDropped(m_drop.files, m_dropPoint)) {
+                m_drop = { };
+                break;
+            }
             // SDL tells what was dropped only at the drop: the page sees the drag
             // arrive there, then the drop.
             m_view->drag(View::DragEvent::Enter, m_dropPoint, m_drop);
@@ -1176,6 +1499,11 @@ bool Window::runOnce(std::optional<Seconds> maxWait)
     // Engine work: expired timers and tasks posted to the main run loop.
     RunLoop::cycle();
     handleEvents();
+    // An open dropdown: its frames, then its answer once it has one.
+    if (m_selectPopup && !m_selectPopup->answer)
+        m_selectPopup->window->runOnce(0_s);
+    if (m_selectPopup && m_selectPopup->answer)
+        finishSelectPopup();
     if (m_closed)
         return false;
 
@@ -1214,6 +1542,9 @@ bool Window::runOnce(std::optional<Seconds> maxWait)
         wakeUp = std::min(wakeUp, m_nextFrameTime);
     if (auto engineWork = RunLoop::mainSingleton().nextWakeUpTime())
         wakeUp = std::min(wakeUp, *engineWork);
+    // The dropdown's frames are its own window's: drawn from this loop.
+    if (m_selectPopup)
+        wakeUp = std::min(wakeUp, now + 8_ms);
     Sint32 timeout = wakeUp.isInfinity() ? -1 : static_cast<Sint32>(std::max<double>(0, std::ceil((wakeUp - now).milliseconds())));
     // Without an event to fill in, the event stays queued for the next iteration.
     SDL_WaitEventTimeout(nullptr, timeout);
