@@ -6,7 +6,7 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
-## Unreleased
+## 0.5.2
 
 Fixes, no API change:
 
