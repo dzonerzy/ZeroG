@@ -64,6 +64,7 @@ Rules that hold for every function below:
 - [Windows (optional native window hosting one view)](windows.md)
 - [Work for the runtime thread (0.5.3)](work-for-the-runtime-thread.md)
 - [The desktop around the windows (0.5.3)](the-desktop-around-the-windows.md)
+- [Native layers and captures (0.5.4)](native-layers-and-captures.md)
 
 ## Functions
 
@@ -126,6 +127,7 @@ Rules that hold for every function below:
 - [`zg_file_chooser_cancel`](views.md#zg_file_chooser_cancel)
 - [`zg_file_chooser_choose`](views.md#zg_file_chooser_choose)
 - [`zg_free`](direct-javascript-bindings.md#zg_free)
+- [`zg_gl_get_proc_address`](native-layers-and-captures.md#zg_gl_get_proc_address)
 - [`zg_last_error`](errors.md#zg_last_error)
 - [`zg_menu_add_item`](windows.md#zg_menu_add_item)
 - [`zg_menu_add_separator`](windows.md#zg_menu_add_separator)
@@ -243,6 +245,7 @@ Rules that hold for every function below:
 - [`zg_view_show_inspector`](views.md#zg_view_show_inspector)
 - [`zg_view_stop`](views.md#zg_view_stop)
 - [`zg_view_surface`](views.md#zg_view_surface)
+- [`zg_window_capture`](native-layers-and-captures.md#zg_window_capture)
 - [`zg_window_center`](windows.md#zg_window_center)
 - [`zg_window_create`](windows.md#zg_window_create)
 - [`zg_window_destroy`](windows.md#zg_window_destroy)
@@ -252,6 +255,7 @@ Rules that hold for every function below:
 - [`zg_window_get_size`](windows.md#zg_window_get_size)
 - [`zg_window_get_state`](windows.md#zg_window_get_state)
 - [`zg_window_hide`](windows.md#zg_window_hide)
+- [`zg_window_layer_invalidate`](native-layers-and-captures.md#zg_window_layer_invalidate)
 - [`zg_window_maximize`](windows.md#zg_window_maximize)
 - [`zg_window_menu_set_checked`](windows.md#zg_window_menu_set_checked)
 - [`zg_window_menu_set_enabled`](windows.md#zg_window_menu_set_enabled)
@@ -265,6 +269,7 @@ Rules that hold for every function below:
 - [`zg_window_set_callbacks`](windows.md#zg_window_set_callbacks)
 - [`zg_window_set_fullscreen`](windows.md#zg_window_set_fullscreen)
 - [`zg_window_set_icon`](windows.md#zg_window_set_icon)
+- [`zg_window_set_layer`](native-layers-and-captures.md#zg_window_set_layer)
 - [`zg_window_set_max_size`](windows.md#zg_window_set_max_size)
 - [`zg_window_set_menu`](windows.md#zg_window_set_menu)
 - [`zg_window_set_min_size`](windows.md#zg_window_set_min_size)

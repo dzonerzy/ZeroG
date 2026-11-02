@@ -6,6 +6,22 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## 0.5.4
+
+Native layers and captures, added at the end of the header:
+
+- **Native layers:** a window created with `zg_window_config.native_layer`
+  (a new field at the end) composites its page over the application's own GPU
+  drawing. `zg_window_set_layer` sets the `draw` callback, called at each
+  presented frame with the window's OpenGL ES 3 context current and
+  framebuffer 0 bound; the page is blended over it (premultiplied), so what it
+  leaves transparent shows the layer. `zg_window_layer_invalidate` (any thread)
+  asks for another frame, for animation; `zg_gl_get_proc_address` resolves GLES
+  functions.
+- **Captures:** `zg_window_capture` gives the window's next presented frame,
+  layer included, as RGBA rows on the runtime thread (NULL if the window closes
+  first).
+
 ## 0.5.3
 
 The desktop around the windows, added at the end of the header:

@@ -265,12 +265,16 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
     auto surface = createGPUSurface(2);
     if (!surface)
         return fail("no GPU surface"_s);
-    auto view = View::create({ configuration.size, scale > 0 ? scale : 1, configuration.transparent, true, WTF::move(surface), WTF::move(configuration.session) });
+    // Over a native layer the page is transparent where it draws nothing, the
+    // window not.
+    bool viewTransparent = configuration.transparent || configuration.nativeLayer;
+    auto view = View::create({ configuration.size, scale > 0 ? scale : 1, viewTransparent, true, WTF::move(surface), WTF::move(configuration.session) });
 
     destroyWindow.release();
     std::unique_ptr<Window> result(new Window(window, WTF::move(view), WTF::move(presentContext), native->window));
     result->m_showWhenPresented = configuration.visible;
     result->m_transparent = configuration.transparent;
+    result->m_nativeLayer = configuration.nativeLayer && !clickThrough;
     result->m_clickThrough = clickThrough;
 #if OS(WINDOWS)
     result->m_layered = clickThrough;
@@ -424,12 +428,21 @@ Window::~Window()
 #endif
     // Assistive technologies let go of the page before it goes.
     m_accessibility = nullptr;
+    // Captures still waiting: no frame will come.
+    for (auto& callback : std::exchange(m_captureCallbacks, { }))
+        callback({ }, { });
     windows().remove(m_window);
     // The window's context comes back to this thread.
     if (auto* compositor = m_view->compositor())
         compositor->setPresenter(nullptr);
-    if (m_presentContext->makeContextCurrent() && m_readFramebuffer)
-        glDeleteFramebuffers(1, &m_readFramebuffer);
+    if (m_presentContext->makeContextCurrent()) {
+        if (m_readFramebuffer)
+            glDeleteFramebuffers(1, &m_readFramebuffer);
+        if (m_compositeProgram)
+            glDeleteProgram(m_compositeProgram);
+        if (m_compositeBuffer)
+            glDeleteBuffers(1, &m_compositeBuffer);
+    }
     m_presentContext = nullptr;
     m_view = nullptr;
     for (auto* cursor : m_cursors) {
@@ -1623,9 +1636,15 @@ bool Window::present()
 #if OS(WINDOWS)
     if (m_layered) {
         if (m_captureRequested.exchange(false)) {
-            Locker locker { m_presentLock };
-            m_capture = readback;
-            m_captureSize = { width, height };
+            {
+                Locker locker { m_presentLock };
+                m_capture = readback;
+                m_captureSize = { width, height };
+            }
+            callOnMainThread([sdlWindow = m_window] {
+                if (auto* window = windows().get(sdlWindow))
+                    window->deliverCapture();
+            });
         }
         // To the window as a 32-bit premultiplied BGRA bitmap.
         BITMAPINFO info { };
@@ -1685,22 +1704,37 @@ bool Window::present()
     }
 #endif
 
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_readFramebuffer);
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, static_cast<GLuint>(reinterpret_cast<uintptr_t>(frame.texture)), 0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glViewport(0, 0, width, height);
-    // A frame older than a resize does not cover the window: clear the rest.
-    if (static_cast<int>(frame.width) < width || static_cast<int>(frame.height) < height) {
-        if (m_transparent)
-            glClearColor(0, 0, 0, 0);
-        else
-            glClearColor(1, 1, 1, 1);
+    auto pageTexture = static_cast<GLuint>(reinterpret_cast<uintptr_t>(frame.texture));
+    if (m_nativeLayer) {
+        // The application's layer, then the page over it.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, width, height);
+        glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
+        {
+            Locker locker { m_layerLock };
+            if (m_layerDraw)
+                m_layerDraw(width, height, MonotonicTime::now().secondsSinceEpoch().milliseconds());
+        }
+        compositeOverLayer(pageTexture, frame.width, frame.height, width, height);
+    } else {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_readFramebuffer);
+        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pageTexture, 0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glViewport(0, 0, width, height);
+        // A frame older than a resize does not cover the window: clear the rest.
+        if (static_cast<int>(frame.width) < width || static_cast<int>(frame.height) < height) {
+            if (m_transparent)
+                glClearColor(0, 0, 0, 0);
+            else
+                glClearColor(1, 1, 1, 1);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+        // Frames are stored top row first, GL windows bottom row first.
+        int copyWidth = std::min<int>(frame.width, width);
+        int copyHeight = std::min<int>(frame.height, height);
+        glBlitFramebuffer(0, 0, copyWidth, copyHeight, 0, height, copyWidth, height - copyHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
-    // Frames are stored top row first, GL windows bottom row first.
-    int copyWidth = std::min<int>(frame.width, width);
-    int copyHeight = std::min<int>(frame.height, height);
-    glBlitFramebuffer(0, 0, copyWidth, copyHeight, 0, height, copyWidth, height - copyHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
     if (m_captureRequested.exchange(false)) {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
@@ -1709,9 +1743,15 @@ bool Window::present()
         Vector<uint8_t> capture(bottomUp.size());
         for (int y = 0; y < height; ++y)
             std::memcpy(capture.mutableSpan().data() + static_cast<size_t>(y) * width * 4, bottomUp.span().data() + static_cast<size_t>(height - 1 - y) * width * 4, width * 4);
-        Locker locker { m_presentLock };
-        m_capture = WTF::move(capture);
-        m_captureSize = { width, height };
+        {
+            Locker locker { m_presentLock };
+            m_capture = WTF::move(capture);
+            m_captureSize = { width, height };
+        }
+        callOnMainThread([sdlWindow = m_window] {
+            if (auto* window = windows().get(sdlWindow))
+                window->deliverCapture();
+        });
     }
 
     m_presentContext->swapBuffers();
@@ -1756,6 +1796,140 @@ bool Window::takeCapture(Vector<uint8_t>& pixels, IntSize& size)
     pixels = std::exchange(m_capture, { });
     size = m_captureSize;
     return true;
+}
+
+void Window::capture(CaptureCallback&& done)
+{
+    m_captureCallbacks.append(WTF::move(done));
+    m_captureRequested = true;
+    // A frame even if the page has nothing new to draw.
+    m_view->repaint();
+}
+
+void Window::deliverCapture()
+{
+    // Without callbacks the capture is for takeCapture (the window tests).
+    if (m_captureCallbacks.isEmpty())
+        return;
+    Vector<uint8_t> pixels;
+    IntSize size;
+    if (!takeCapture(pixels, size))
+        return;
+    auto callbacks = std::exchange(m_captureCallbacks, { });
+    for (size_t i = 0; i < callbacks.size(); ++i)
+        callbacks[i](i + 1 < callbacks.size() ? Vector<uint8_t> { pixels } : WTF::move(pixels), size);
+}
+
+void Window::setLayerDraw(LayerDraw&& draw)
+{
+    {
+        Locker locker { m_layerLock };
+        m_layerDraw = WTF::move(draw);
+    }
+    invalidateLayer();
+}
+
+void Window::invalidateLayer()
+{
+    if (!m_nativeLayer || m_layerInvalidated.exchange(true))
+        return;
+    // A new page frame, presented with the layer, where frames are presented.
+    callOnMainThread([sdlWindow = m_window] {
+        auto* window = windows().get(sdlWindow);
+        if (!window)
+            return;
+        window->m_layerInvalidated = false;
+        window->m_view->repaint();
+    });
+}
+
+static GLuint compileShader(GLenum type, const char* source)
+{
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint compiled = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (!compiled) {
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+void Window::compositeOverLayer(unsigned texture, int frameWidth, int frameHeight, int width, int height)
+{
+    if (!m_compositeProgram) {
+        // The page's texels as they are (premultiplied), top row first; none
+        // past the frame (older than a resize).
+        static constexpr const char* vertexSource =
+            "#version 300 es\n"
+            "layout(location = 0) in vec2 position;\n"
+            "void main() { gl_Position = vec4(position, 0.0, 1.0); }\n";
+        static constexpr const char* fragmentSource =
+            "#version 300 es\n"
+            "precision highp float;\n"
+            "uniform highp sampler2D page;\n"
+            "uniform ivec2 frameSize;\n"
+            "uniform int viewHeight;\n"
+            "out vec4 color;\n"
+            "void main() {\n"
+            "  ivec2 at = ivec2(int(gl_FragCoord.x), viewHeight - 1 - int(gl_FragCoord.y));\n"
+            "  color = (at.x < frameSize.x && at.y < frameSize.y) ? texelFetch(page, at, 0) : vec4(0.0);\n"
+            "}\n";
+        GLuint vertex = compileShader(GL_VERTEX_SHADER, vertexSource);
+        GLuint fragment = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
+        if (!vertex || !fragment)
+            return;
+        GLuint program = glCreateProgram();
+        glAttachShader(program, vertex);
+        glAttachShader(program, fragment);
+        glLinkProgram(program);
+        glDeleteShader(vertex);
+        glDeleteShader(fragment);
+        GLint linked = 0;
+        glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        if (!linked) {
+            glDeleteProgram(program);
+            return;
+        }
+        m_compositeProgram = program;
+        m_compositeFrameSize = glGetUniformLocation(program, "frameSize");
+        m_compositeViewHeight = glGetUniformLocation(program, "viewHeight");
+        glUseProgram(program);
+        glUniform1i(glGetUniformLocation(program, "page"), 0);
+        static constexpr GLfloat quad[] = { -1, -1, 1, -1, -1, 1, 1, 1 };
+        glGenBuffers(1, &m_compositeBuffer);
+        glBindBuffer(GL_ARRAY_BUFFER, m_compositeBuffer);
+        glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+    }
+
+    // The state this draw needs, whatever the layer left.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, width, height);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glBindVertexArray(0);
+    glUseProgram(m_compositeProgram);
+    glUniform2i(m_compositeFrameSize, frameWidth, frameHeight);
+    glUniform1i(m_compositeViewHeight, height);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glBindBuffer(GL_ARRAY_BUFFER, m_compositeBuffer);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDisableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glUseProgram(0);
+    glDisable(GL_BLEND);
 }
 
 } // namespace ZeroG

@@ -398,8 +398,14 @@ int main()
             return GetAncestor(WindowFromPoint(point), GA_ROOT);
         };
         if (!hiddenByDesktop()) {
+            // Which window is at a point is a question of z-order: above any
+            // other (a terminal, another test's window, a notification), and
+            // given a moment for the layered window's update to land.
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            bool ownsOpaque = runUntil(*through, 1_s, [&] { return windowAt(50, 20) == hwnd && windowAt(60, 100) == hwnd; });
             ok &= check(windowAt(200, 150) != hwnd, "a click on the transparent part goes behind the window");
-            ok &= check(windowAt(50, 20) == hwnd && windowAt(60, 100) == hwnd, "on the header and the translucent card it is the window's");
+            ok &= check(ownsOpaque, "on the header and the translucent card it is the window's");
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         } else
             std::printf("     skipped the clicks: the window is hidden or the display off\n");
 #else

@@ -5,6 +5,8 @@
 #include "APIInternal.h"
 
 #include "desktop/Desktop.h"
+#include "window/Window.h"
+#include <EGL/egl.h>
 #include <SDL3/SDL.h>
 #include <wtf/MainThread.h>
 #include <wtf/text/MakeString.h>
@@ -297,5 +299,65 @@ zg_result zg_shortcut_unregister(zg_runtime* rt, unsigned id)
         return result;
     if (!Shortcuts::remove(id))
         return fail(ZG_ERROR_NOT_FOUND, "no such shortcut"_s);
+    return ZG_OK;
+}
+
+// ---- Native layers and captures ----
+
+static zg_result checkWindow(zg_window* window)
+{
+    clearError();
+    if (!window || !window->window)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no window"_s);
+    if (!checkThread())
+        return ZG_ERROR_WRONG_THREAD;
+    return ZG_OK;
+}
+
+zg_result zg_window_set_layer(zg_window* window, const zg_window_layer* layer)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!window->window->hasNativeLayer())
+        return fail(ZG_ERROR_UNSUPPORTED, "the window was created without native_layer"_s);
+    zg_window_layer copy { };
+    if (layer)
+        std::memcpy(&copy, layer, std::min(layer->size, sizeof copy));
+    if (!layer || !copy.draw) {
+        window->window->setLayerDraw(nullptr);
+        return ZG_OK;
+    }
+    window->window->setLayerDraw([window, copy](int width, int height, double time) {
+        copy.draw(window, static_cast<unsigned>(width), static_cast<unsigned>(height), time, copy.user);
+    });
+    return ZG_OK;
+}
+
+void zg_window_layer_invalidate(zg_window* window)
+{
+    // Any thread: the window's own coalescing hands it to the engine thread.
+    if (window && window->window)
+        window->window->invalidateLayer();
+}
+
+void* zg_gl_get_proc_address(const char* name)
+{
+    if (!name)
+        return nullptr;
+    return reinterpret_cast<void*>(eglGetProcAddress(name));
+}
+
+zg_result zg_window_capture(zg_window* window, zg_capture_fn done, void* user)
+{
+    if (auto result = checkWindow(window))
+        return result;
+    if (!done)
+        return fail(ZG_ERROR_INVALID_ARGUMENT, "no callback"_s);
+    window->window->capture([window, done, user](Vector<uint8_t>&& pixels, WebCore::IntSize size) {
+        if (pixels.isEmpty())
+            done(window, nullptr, 0, 0, user);
+        else
+            done(window, pixels.span().data(), static_cast<unsigned>(size.width()), static_cast<unsigned>(size.height()), user);
+    });
     return ZG_OK;
 }

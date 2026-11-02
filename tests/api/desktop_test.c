@@ -8,7 +8,10 @@
  *     Windows a message box and a file dialog closed by the test;
  *   - native menus: on Windows a menu bar chosen by WM_COMMAND and by its
  *     accelerator (and not while disabled), a popup menu chosen by keyboard;
- *     elsewhere ZG_ERROR_UNSUPPORTED.
+ *     elsewhere ZG_ERROR_UNSUPPORTED;
+ *   - (0.5.4) a native layer under the page: drawn, seen through the page's
+ *     transparent parts in a capture, drawn again when invalidated; a capture
+ *     answered with NULL when its window goes first.
  *
  * Usage: desktop_test
  */
@@ -236,6 +239,56 @@ static const char *evaluate(zg_view *view, const char *script)
     return text;
 }
 static int hasCloseRequest(void) { return closeRequests > 0; }
+
+/* ---- Native layer and captures ---- */
+
+typedef void (*PFNGLCLEARCOLOR)(float, float, float, float);
+typedef void (*PFNGLCLEAR)(unsigned);
+static PFNGLCLEARCOLOR clearColor;
+static PFNGLCLEAR clear;
+static int layerDraws, drawsWanted;
+static unsigned layerWidth, layerHeight;
+static unsigned char *capturedPixels;
+static unsigned captureWidth, captureHeight;
+static int captureClosed;
+
+static void drawLayer(zg_window *window, unsigned width, unsigned height, double time, void *user)
+{
+    (void)window;
+    (void)time;
+    (void)user;
+    clearColor(0.0f, 0.5f, 1.0f, 1.0f);
+    clear(0x00004000); /* GL_COLOR_BUFFER_BIT */
+    layerWidth = width;
+    layerHeight = height;
+    ++layerDraws;
+}
+
+static void onCapture(zg_window *window, const void *rgba, unsigned width, unsigned height, void *user)
+{
+    (void)window;
+    (void)user;
+    if (!rgba) {
+        captureClosed = 1;
+        return;
+    }
+    free(capturedPixels);
+    capturedPixels = malloc((size_t)width * height * 4);
+    if (capturedPixels)
+        memcpy(capturedPixels, rgba, (size_t)width * height * 4);
+    captureWidth = width;
+    captureHeight = height;
+}
+
+static unsigned capturedAt(unsigned x, unsigned y)
+{
+    const unsigned char *p = capturedPixels + ((size_t)y * captureWidth + x) * 4;
+    return (unsigned)p[0] << 16 | (unsigned)p[1] << 8 | p[2];
+}
+
+static int hasLayerDraws(void) { return layerDraws > 0; }
+static int hasMoreDraws(void) { return layerDraws >= drawsWanted; }
+static int hasCapture(void) { return capturedPixels != NULL; }
 
 /* ---- Destroying windows from callbacks ---- */
 
@@ -976,6 +1029,57 @@ int main(void)
         CHECK(isGreen(middlePixel(openedSecond)), "and shows it (0x%06x)", middlePixel(openedSecond));
 #endif
         zg_window_destroy(openedSecond);
+    }
+
+    /* A native layer under the page, and captures (0.5.4). */
+    {
+        zg_window_config config = { sizeof config };
+        zg_window_layer layer = { sizeof layer };
+        zg_window *layered;
+        static const char page[] =
+            "<!DOCTYPE html><body style='margin:0'>"
+            "<div style='width:100px;height:100px;background:#f00'></div><script>"
+            "setInterval(() => Test.tick(), 10);"
+            "</script></body>";
+        CHECK(zg_window_set_layer(mainWindow, &layer) == ZG_ERROR_UNSUPPORTED, "a window without native_layer has no layer");
+        clearColor = (PFNGLCLEARCOLOR)zg_gl_get_proc_address("glClearColor");
+        clear = (PFNGLCLEAR)zg_gl_get_proc_address("glClear");
+        CHECK(clearColor && clear, "zg_gl_get_proc_address resolves GLES functions");
+        config.title = "ZeroG layer";
+        config.width = 400;
+        config.height = 300;
+        config.native_layer = 1;
+        layered = zg_window_create(context, &config);
+        CHECK(layered != NULL, "a window with native_layer");
+        if (layered && clearColor && clear) {
+            zg_view_bind(zg_window_view(layered), "Test.tick", tick, NULL);
+            zg_view_load_html(zg_window_view(layered), page, sizeof page - 1, NULL);
+            layer.draw = drawLayer;
+            CHECK(zg_window_set_layer(layered, &layer) == ZG_OK, "zg_window_set_layer");
+            CHECK(runUntil(hasLayerDraws, 3000), "the layer draws (%d times, %ux%u)", layerDraws, layerWidth, layerHeight);
+            CHECK(zg_window_capture(layered, onCapture, NULL) == ZG_OK, "zg_window_capture");
+            CHECK(runUntil(hasCapture, 3000), "a capture comes (%ux%u)", captureWidth, captureHeight);
+            if (capturedPixels) {
+                unsigned scaleX = captureWidth / 400 ? captureWidth / 400 : 1;
+                unsigned square = capturedAt(25 * scaleX, 25 * scaleX), below = capturedAt(captureWidth / 2, captureHeight / 2);
+                CHECK(square == 0xff0000, "the page over the layer: its red square (0x%06x)", square);
+                CHECK((below >> 16) < 16 && ((below >> 8) & 0xff) > 112 && ((below >> 8) & 0xff) < 144 && (below & 0xff) > 240,
+                    "the layer where the page is transparent (0x%06x)", below);
+            }
+            {
+                int before = layerDraws, i;
+                for (i = 0; i < 5; ++i)
+                    zg_window_layer_invalidate(layered);
+                drawsWanted = before + 1;
+                CHECK(runUntil(hasMoreDraws, 2000), "zg_window_layer_invalidate draws again (%d after %d)", layerDraws, before);
+            }
+            free(capturedPixels);
+            capturedPixels = NULL;
+            CHECK(zg_window_capture(layered, onCapture, NULL) == ZG_OK, "a capture asked for, then the window destroyed");
+            zg_window_destroy(layered);
+            runUntil(NULL, 300);
+            CHECK(captureClosed, "the capture's callback got NULL for the destroyed window");
+        }
     }
 
 #ifdef _WIN32

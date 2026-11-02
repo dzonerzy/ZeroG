@@ -68,7 +68,7 @@ extern "C" {
 
 #define ZG_VERSION_MAJOR 0
 #define ZG_VERSION_MINOR 5
-#define ZG_VERSION_PATCH 3
+#define ZG_VERSION_PATCH 4
 
 /* ------------------------------------------------------------------------ */
 /* Handles                                                                   */
@@ -1087,6 +1087,10 @@ typedef struct zg_window_config {
     /* (0.5) Nonzero: the window starts hidden; zg_window_show shows it.
        Otherwise it appears with its first frame. */
     int hidden;
+    /* (0.5.4) Nonzero: the page is composited over a native layer the
+       application draws (zg_window_set_layer): what the page leaves
+       transparent shows the layer. The window itself stays opaque. */
+    int native_layer;
 } zg_window_config;
 
 /* Frameless windows move by the page's regions marked with the CSS custom
@@ -1448,6 +1452,48 @@ ZG_API zg_result zg_runtime_set_shortcut_callback(zg_runtime *rt, zg_shortcut_fn
    taken), ZG_ERROR_UNSUPPORTED on Wayland without the portal. */
 ZG_API zg_result zg_shortcut_register(zg_runtime *rt, unsigned id, const char *accelerator);
 ZG_API zg_result zg_shortcut_unregister(zg_runtime *rt, unsigned id);
+
+/* ------------------------------------------------------------------------ */
+/* Native layers and captures (0.5.4)                                        */
+
+/* A window created with zg_window_config.native_layer draws the application's
+   own GPU content under its page: a 3D scene, a video, a map, a game's
+   viewport, with HTML over it. At each frame the window presents, `draw` runs
+   with the window's OpenGL ES 3 context current, framebuffer 0 bound, the
+   viewport the window's size in pixels, cleared to opaque black; the page is
+   then blended over what it drew (premultiplied alpha), so the page's
+   transparent parts (no html/body background) show it.
+
+   `draw` runs where frames are presented: the engine's compositor thread, not
+   the runtime thread. It must leave framebuffer 0 bound and must not make
+   another context current; the GL state it changes besides is its own (the
+   window sets what it needs). Resolve GL functions with
+   zg_gl_get_proc_address. A layer draws when the page has a new frame, or when
+   zg_window_layer_invalidate asks for one (once per display refresh at most):
+   call it after each draw for continuous animation. */
+typedef struct zg_window_layer {
+    size_t size;
+    void *user;
+    /* width and height: pixels; time_ms: a monotonic clock, milliseconds. */
+    void (*draw)(zg_window *win, unsigned width, unsigned height, double time_ms, void *user);
+} zg_window_layer;
+
+/* Runtime thread. NULL removes the layer's callback (the layer is black).
+   ZG_ERROR_UNSUPPORTED for a window created without native_layer. */
+ZG_API zg_result zg_window_set_layer(zg_window *win, const zg_window_layer *layer);
+/* Any thread, the layer's draw included: present again soon, with a new page
+   frame. Cheap to call repeatedly: requests coalesce until the frame. */
+ZG_API void zg_window_layer_invalidate(zg_window *win);
+/* An OpenGL ES 3 function of the windows' contexts, for layers (EGL's
+   eglGetProcAddress: ANGLE on Windows, the system's EGL on Linux). */
+ZG_API void *zg_gl_get_proc_address(const char *name);
+
+/* The window's next presented frame as the user sees it (native layer
+   included): RGBA8, premultiplied, rows top to bottom, width * 4 bytes per
+   row, valid during the call. `done` runs on the runtime thread; with NULL
+   `rgba` if the window closed first. For screenshots, exports, thumbnails. */
+typedef void (*zg_capture_fn)(zg_window *win, const void *rgba, unsigned width, unsigned height, void *user);
+ZG_API zg_result zg_window_capture(zg_window *win, zg_capture_fn done, void *user);
 
 #ifdef __cplusplus
 }

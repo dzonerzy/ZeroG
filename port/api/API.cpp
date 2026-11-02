@@ -2173,8 +2173,10 @@ zg_window* zg_window_create(zg_context* context, const zg_window_config* configu
         return nullptr;
     auto config = copyConfig(configuration);
     IntSize size { static_cast<int>(config.width ? config.width : 1024), static_cast<int>(config.height ? config.height : 768) };
-    auto window = Window::create({ stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, !config.hidden, context->session, !!config.transparent, !!config.click_through,
-        String::fromUTF8(context->appID.c_str()) });
+    Window::Configuration windowConfiguration { stringFromUTF8(config.title), size, !config.fixed_size, !!config.frameless, !config.hidden, context->session, !!config.transparent, !!config.click_through,
+        String::fromUTF8(context->appID.c_str()) };
+    windowConfiguration.nativeLayer = !!config.native_layer;
+    auto window = Window::create(WTF::move(windowConfiguration));
     if (!window) {
         fail(ZG_ERROR_GPU, makeString("cannot create the window: "_s, Window::lastError()));
         return nullptr;

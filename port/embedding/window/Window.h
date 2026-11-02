@@ -59,6 +59,9 @@ public:
         // parent view's logical pixels; no frame, no taskbar entry.
         Window* parent { nullptr };
         WebCore::IntPoint position;
+        // The page is composited over a native layer (setLayerDraw): the view
+        // is transparent, the window opaque.
+        bool nativeLayer { false };
     };
     // Null if no window or no GPU is available. The first window decides the GPU
     // display on Linux (X11 or Wayland); it has to be created before any GPU view.
@@ -207,6 +210,20 @@ public:
     unsigned presentedFrames() const { return m_presentedFrames; }
     void captureNextFrame() { m_captureRequested = true; }
     bool takeCapture(Vector<uint8_t>& pixels, WebCore::IntSize& size);
+    // The next presented frame (RGBA, rows top to bottom), given to `done` on
+    // the engine thread; empty pixels if the window goes first.
+    using CaptureCallback = Function<void(Vector<uint8_t>&&, WebCore::IntSize)>;
+    void capture(CaptureCallback&&);
+
+    // A window with Configuration::nativeLayer: `draw(width, height, timeMs)`
+    // under the page at each present, where frames are presented (the
+    // compositor thread for a composited view), with the window's context
+    // current and framebuffer 0 bound. Engine thread; null draws nothing.
+    using LayerDraw = Function<void(int width, int height, double timeMilliseconds)>;
+    bool hasNativeLayer() const { return m_nativeLayer; }
+    void setLayerDraw(LayerDraw&&);
+    // Any thread: another frame soon, for the layer.
+    void invalidateLayer();
 
 private:
     Window(SDL_Window*, std::unique_ptr<View>&&, std::unique_ptr<WebCore::GLContext>&&, void* nativeWindow);
@@ -261,6 +278,22 @@ private:
     WebCore::IntSize m_lastPresentedSize;
     Vector<uint8_t> m_capture WTF_GUARDED_BY_LOCK(m_presentLock);
     WebCore::IntSize m_captureSize WTF_GUARDED_BY_LOCK(m_presentLock);
+    // Engine thread: capture()'s callbacks waiting for a presented frame.
+    Vector<CaptureCallback> m_captureCallbacks;
+    void deliverCapture();
+
+    // The native layer: its draw, read where frames are presented.
+    bool m_nativeLayer { false };
+    Lock m_layerLock;
+    LayerDraw m_layerDraw WTF_GUARDED_BY_LOCK(m_layerLock);
+    std::atomic<bool> m_layerInvalidated { false };
+    // Draws the page's frame texture over the layer, premultiplied (where
+    // frames are presented).
+    void compositeOverLayer(unsigned texture, int frameWidth, int frameHeight, int width, int height);
+    unsigned m_compositeProgram { 0 };
+    unsigned m_compositeBuffer { 0 };
+    int m_compositeFrameSize { -1 };
+    int m_compositeViewHeight { -1 };
     std::array<SDL_Cursor*, 32> m_cursors { }; // by SDL_SystemCursor
     // Files and text dropped on the window: SDL sends them one by one, then
     // DROP_COMPLETE; the page gets the drop then.

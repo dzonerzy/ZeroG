@@ -24,6 +24,10 @@ typedef struct zg_window_config {
     /* (0.5) Nonzero: the window starts hidden; zg_window_show shows it.
        Otherwise it appears with its first frame. */
     int hidden;
+    /* (0.5.4) Nonzero: the page is composited over a native layer the
+       application draws (zg_window_set_layer): what the page leaves
+       transparent shows the layer. The window itself stays opaque. */
+    int native_layer;
 } zg_window_config;
 ```
 
