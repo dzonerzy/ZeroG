@@ -37,6 +37,11 @@ std::optional<Accelerator> parseAccelerator(const String&);
 Accelerator acceleratorForKey(uint32_t scancode, uint16_t modifiers);
 
 #if OS(WINDOWS)
+// A popup menu of `menu`'s items (an HMENU; DestroyMenu it), for the tray.
+void* createNativePopupMenu(const Menu&);
+// Popup menus opened next are light or dark.
+void applyNativeMenuTheme(bool dark);
+
 // A window's menu bar and popup menus (Win32 HMENUs; the handles are opaque
 // here, for the files that include this without windows.h). Chosen items come
 // back as SDL events of type `menuEvent` for the window, the item in `code`.
@@ -49,6 +54,10 @@ public:
     void setMenuBar(const Menu*);
     void setChecked(unsigned id, bool);
     void setEnabled(unsigned id, bool);
+    // Dark with a dark page, as the title bar: the menu bar is drawn dark and
+    // the window's dropdowns and popups are dark ones.
+    void setDark(bool);
+    bool isDark() const { return m_dark; }
     // Shows a popup menu at a point of the window's client area (pixels);
     // returns once it is closed.
     void popup(const Menu&, int x, int y);
@@ -63,6 +72,7 @@ private:
     uint32_t m_menuEvent { 0 };
     void* m_menuBar { nullptr }; // HMENU
     intptr_t m_originalProcedure { 0 }; // WNDPROC
+    bool m_dark { false };
 };
 #endif
 

@@ -146,6 +146,33 @@ static int isNormal(void) { return lastState == ZG_WINDOW_NORMAL; }
 static int isHidden(void) { return lastState == ZG_WINDOW_HIDDEN; }
 static int hasMenuChoice(void) { return menuChoices > 0; }
 
+/* 0.5.3: work posted from another thread; the tray and global shortcuts. */
+static int postedRan, postedOnRuntimeThread;
+static void postedTask(void *user)
+{
+    /* Off the runtime thread this fails with ZG_ERROR_WRONG_THREAD. */
+    unsigned width = 0, height = 0;
+    postedOnRuntimeThread = zg_window_get_size((zg_window *)user, &width, &height) == ZG_OK;
+    ++postedRan;
+}
+static int hasPostedRan(void) { return postedRan > 0; }
+#ifdef _WIN32
+static DWORD WINAPI postFromThread(void *window) { return zg_runtime_post(runtime, postedTask, window) == ZG_OK ? 0 : 1; }
+#else
+#include <pthread.h>
+static void *postFromThread(void *window) { zg_runtime_post(runtime, postedTask, window); return NULL; }
+#endif
+
+static int trayActivations, trayX, trayY;
+static unsigned trayItem;
+static unsigned shortcutPressed;
+static void onTrayActivated(zg_tray *tray, int x, int y, void *user) { (void)tray; (void)user; trayX = x; trayY = y; ++trayActivations; }
+static void onTrayMenuItem(zg_tray *tray, unsigned id, void *user) { (void)tray; (void)user; trayItem = id; }
+static void onShortcut(zg_runtime *rt, unsigned id, void *user) { (void)rt; (void)user; shortcutPressed = id; }
+static int hasTrayActivation(void) { return trayActivations > 0; }
+static int hasTrayItem(void) { return trayItem != 0; }
+static int hasShortcut(void) { return shortcutPressed != 0; }
+
 static char droppedPath[512];
 static int drops;
 
@@ -378,6 +405,20 @@ static void postKey(HWND window, UINT message, WPARAM key)
     if (message == WM_KEYUP)
         lParam |= (LPARAM)3 << 30;
     PostMessageW(window, message, key, lParam);
+}
+
+/* A pixel of the menu bar past its items, as on screen. */
+static COLORREF menuBarPixel(HWND window)
+{
+    MENUBARINFO info = { sizeof info };
+    HDC screen;
+    COLORREF pixel;
+    if (!GetMenuBarInfo(window, OBJID_MENU, 0, &info))
+        return CLR_INVALID;
+    screen = GetDC(NULL);
+    pixel = GetPixel(screen, info.rcBar.right - 6, (info.rcBar.top + info.rcBar.bottom) / 2);
+    ReleaseDC(NULL, screen);
+    return pixel;
 }
 
 static void pressCtrl(HWND window, WPARAM key)
@@ -620,6 +661,133 @@ int main(void)
         CHECK(zg_window_set_icon(mainWindow, NULL, 32, 32) == ZG_ERROR_INVALID_ARGUMENT, "an icon needs pixels");
     }
 
+    /* The desktop around the windows (0.5.3). Linux's tray and notifications
+       go over D-Bus: tests/render/desktop_dbus.cpp. */
+    CHECK(zg_open_url(runtime, NULL) == ZG_ERROR_INVALID_ARGUMENT && zg_open_url(NULL, "https://example.com") == ZG_ERROR_INVALID_ARGUMENT,
+        "zg_open_url checks its arguments");
+    {
+#ifdef _WIN32
+        HANDLE thread = CreateThread(NULL, 0, postFromThread, mainWindow, 0, NULL);
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+#else
+        pthread_t thread;
+        pthread_create(&thread, NULL, postFromThread, mainWindow);
+        pthread_join(thread, NULL);
+#endif
+        CHECK(runUntil(hasPostedRan, 3000) && postedOnRuntimeThread, "a task posted from another thread runs on the runtime thread");
+        CHECK(zg_runtime_post(runtime, NULL, NULL) == ZG_ERROR_INVALID_ARGUMENT, "zg_runtime_post needs a task");
+    }
+#ifdef _WIN32
+    {
+        static unsigned char icon[32 * 32 * 4];
+        static Closer trayMenuCloser = { L"#32768", NULL, 1 };
+        zg_tray_config config = { sizeof config };
+        zg_tray_callbacks callbacks = { sizeof callbacks };
+        zg_tray *tray;
+        HWND desktop;
+        size_t i;
+        for (i = 0; i < sizeof icon; i += 4) {
+            icon[i] = 0x2b;
+            icon[i + 1] = 0x59;
+            icon[i + 2] = 0xd9;
+            icon[i + 3] = 0xff;
+        }
+        config.icon_rgba = icon;
+        config.icon_width = config.icon_height = 32;
+        config.tooltip = "ZeroG test tray";
+        callbacks.activated = onTrayActivated;
+        callbacks.menu_item = onTrayMenuItem;
+        tray = zg_tray_create(runtime, &config, &callbacks);
+        desktop = FindWindowW(L"ZeroGDesktop", NULL);
+        CHECK(tray != NULL && desktop != NULL, "a tray icon, of the hidden desktop window: %s", tray ? "made" : zg_last_error());
+        if (tray && desktop) {
+            zg_menu *menu = zg_menu_create();
+            int x = 0, y = 0;
+            unsigned width = 0, height = 0;
+            zg_menu_add_item(menu, 21, "Show", NULL, 0);
+            zg_menu_add_item(menu, 22, "Quit", NULL, 0);
+            CHECK(zg_tray_set_menu(tray, menu) == ZG_OK, "its menu");
+            zg_menu_destroy(menu);
+            /* The notification area's callbacks, as Explorer sends them (version 4). */
+            PostMessageW(desktop, WM_APP + 0x5A, MAKEWPARAM(120, 340), MAKELPARAM(NIN_SELECT, 1));
+            CHECK(runUntil(hasTrayActivation, 3000) && trayX == 120 && trayY == 340, "a click activates it, where it was (%d, %d)", trayX, trayY);
+            closeLater(&trayMenuCloser);
+            PostMessageW(desktop, WM_APP + 0x5A, MAKEWPARAM(120, 340), MAKELPARAM(WM_CONTEXTMENU, 1));
+            CHECK(runUntil(hasTrayItem, 3000) && trayItem == 21, "a right click opens its menu, an item chosen: %u", trayItem);
+            CHECK(zg_tray_set_tooltip(tray, "Changed") == ZG_OK && zg_tray_set_icon(tray, icon, 32, 32) == ZG_OK
+                && zg_tray_menu_set_checked(tray, 21, 1) == ZG_OK && zg_tray_menu_set_enabled(tray, 22, 0) == ZG_OK, "its tooltip, icon and items changed");
+            result = zg_tray_get_rect(tray, &x, &y, &width, &height);
+            CHECK((result == ZG_OK && width > 0) || result == ZG_ERROR_NOT_FOUND, "its place (in the overflow, not known): %d, %d %ux%u", x, y, width, height);
+            zg_tray_destroy(tray);
+        }
+        config.icon_rgba = NULL;
+        CHECK(zg_tray_create(runtime, &config, &callbacks) == NULL, "a tray needs an icon: %s", zg_last_error());
+    }
+#endif
+    {
+        zg_notifications_config config = { sizeof config };
+        zg_notification notification = { sizeof notification };
+        const char *buttons[4] = { "Yes", "No", "Later", "Never" };
+        notification.title = "ZeroG test";
+        notification.body = "From desktop_test";
+        notification.tag = "zerog-test";
+        notification.actions = buttons;
+        notification.action_count = 2;
+        CHECK(zg_notification_show(runtime, &notification) != ZG_OK, "a notification needs the application's identity first: %s", zg_last_error());
+        config.app_id = "com.zerog.desktop-test";
+        config.app_name = "ZeroG desktop test";
+        result = zg_runtime_set_notifications(runtime, &config);
+#ifdef _WIN32
+        CHECK(result == ZG_OK, "the application's identity: %s", result ? zg_last_error() : "set");
+        {
+            HKEY key;
+            LONG opened = RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\AppUserModelId\\com.zerog.desktop-test", 0, KEY_READ, &key);
+            CHECK(opened == ERROR_SUCCESS, "registered for the notification center");
+            if (opened == ERROR_SUCCESS)
+                RegCloseKey(key);
+        }
+        result = zg_notification_show(runtime, &notification);
+        CHECK(result == ZG_OK, "a notification shown, with two buttons: %s", result ? zg_last_error() : "shown");
+        CHECK(zg_notification_remove(runtime, "zerog-test") == ZG_OK, "and removed");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\AppUserModelId\\com.zerog.desktop-test");
+#else
+        CHECK(result == ZG_OK || result == ZG_ERROR_UNSUPPORTED, "the application's identity (or no session bus): %s", result ? zg_last_error() : "set");
+#endif
+        notification.action_count = 4;
+        CHECK(zg_notification_show(runtime, &notification) == ZG_ERROR_INVALID_ARGUMENT, "up to 3 buttons");
+    }
+    {
+        CHECK(zg_runtime_set_shortcut_callback(runtime, onShortcut, NULL) == ZG_OK, "a shortcut callback");
+        CHECK(zg_shortcut_register(runtime, 7, "F11") == ZG_ERROR_INVALID_ARGUMENT && zg_shortcut_register(runtime, 0, "Ctrl+Alt+F11") == ZG_ERROR_INVALID_ARGUMENT,
+            "a shortcut needs modifiers and an id");
+        result = zg_shortcut_register(runtime, 7, "Ctrl+Alt+Shift+F11");
+#ifdef _WIN32
+        CHECK(result == ZG_OK, "a global shortcut: %s", result ? zg_last_error() : "registered");
+        CHECK(zg_shortcut_register(runtime, 8, "Ctrl+Alt+Shift+F11") == ZG_ERROR_ALREADY_EXISTS, "the same keys again are taken: %s", zg_last_error());
+        {
+            /* Pressed as the keyboard would, whichever window is in front. */
+            static const WORD order[4] = { VK_CONTROL, VK_MENU, VK_SHIFT, VK_F11 };
+            INPUT keys[8];
+            int k;
+            memset(keys, 0, sizeof keys);
+            for (k = 0; k < 4; ++k) {
+                keys[k].type = INPUT_KEYBOARD;
+                keys[k].ki.wVk = order[k];
+                keys[7 - k].type = INPUT_KEYBOARD;
+                keys[7 - k].ki.wVk = order[k];
+                keys[7 - k].ki.dwFlags = KEYEVENTF_KEYUP;
+            }
+            SendInput(8, keys, sizeof keys[0]);
+            CHECK(runUntil(hasShortcut, 3000) && shortcutPressed == 7, "pressed anywhere: shortcut %u", shortcutPressed);
+        }
+#else
+        CHECK(result == ZG_OK || result == ZG_ERROR_UNSUPPORTED, "a global shortcut (X11), or none here: %s", result ? zg_last_error() : "registered");
+#endif
+        if (result == ZG_OK)
+            CHECK(zg_shortcut_unregister(runtime, 7) == ZG_OK && zg_shortcut_unregister(runtime, 7) == ZG_ERROR_NOT_FOUND, "and unregistered");
+    }
+
 #ifdef _WIN32
     /* Files dropped from outside, to the application (WM_DROPFILES). */
     {
@@ -681,6 +849,20 @@ int main(void)
                 closeLater(&dismisser);
                 CHECK(zg_window_popup_menu(mainWindow, popup, 20, 20) == ZG_OK && runUntil(hasMenuChoice, 3000) && chosenItem == 0,
                     "a popup menu dismissed: menu_item with 0 (%u)", chosenItem);
+            }
+            {
+                /* The menu bar in the page's scheme, as the title bar. */
+                zg_view *view = zg_window_view(mainWindow);
+                COLORREF dark, light;
+                zg_view_set_color_scheme(view, ZG_COLOR_SCHEME_DARK);
+                runUntil(NULL, 400);
+                dark = menuBarPixel(hwnd);
+                zg_view_set_color_scheme(view, ZG_COLOR_SCHEME_LIGHT);
+                runUntil(NULL, 400);
+                light = menuBarPixel(hwnd);
+                zg_view_set_color_scheme(view, ZG_COLOR_SCHEME_SYSTEM);
+                CHECK(GetRValue(dark) < 64 && GetRValue(light) > 192, "the menu bar follows the page's scheme: dark %06lx, light %06lx",
+                    (unsigned long)dark, (unsigned long)light);
             }
             CHECK(zg_window_set_menu(mainWindow, NULL) == ZG_OK && GetMenu(hwnd) == NULL, "the menu bar removed");
         }

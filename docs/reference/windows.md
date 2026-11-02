@@ -448,7 +448,9 @@ A zg_menu describes a menu: the window builds its native menu from it when
 it is set, so the description may be changed or destroyed afterwards
 (change the window's items with zg_window_menu_set_*). Chosen items come to
 the window's menu_item callback with their id; a checkbox item's mark
-changes only with zg_window_menu_set_checked.
+changes only with zg_window_menu_set_checked. (0.5.3) The menu bar and the
+popup menus are light or dark as the window's view (zg_view_set_color_scheme),
+like its title bar.
 
 Windows only: elsewhere zg_window_set_menu and zg_window_popup_menu fail
 with ZG_ERROR_UNSUPPORTED (draw menus in the page there).

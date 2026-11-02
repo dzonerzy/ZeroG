@@ -38,6 +38,9 @@ set(ZeroGEmbedding_SOURCES
     # The Web Inspector (dev and debug; stubs elsewhere).
     inspector/InspectorZeroG.cpp
 
+    # The desktop around the windows: tray, notifications, global shortcuts.
+    desktop/Desktop.cpp
+
     # Window mode (SDL3).
     window/ClipboardSDL.cpp
     window/KeyboardSDL.cpp
@@ -67,13 +70,23 @@ if (WIN32)
         graphics/SurfaceD3D12.cpp
         graphics/SurfaceD3D9.cpp
         window/MenuWin.cpp
+        desktop/DesktopWin.cpp
+        desktop/NotificationsWin.cpp
+        desktop/ShortcutsWin.cpp
+        desktop/TrayWin.cpp
     )
-    list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dwmapi dxgi ole32 oleaut32 shell32 uiautomationcore)
+    # runtimeobject: WinRT (toasts).
+    list(APPEND ZeroGEmbedding_LIBRARIES d3d11 dwmapi dxgi ole32 oleaut32 runtimeobject shell32 uiautomationcore)
 else ()
-    # AT-SPI over libdbus, which is loaded at run time.
+    # AT-SPI and the desktop's services over libdbus, which is loaded at run
+    # time, as libX11 is for the global shortcuts.
     list(APPEND ZeroGEmbedding_SOURCES
         accessibility/AccessibilityAtspi.cpp
         accessibility/DBus.cpp
+        desktop/NotificationsLinux.cpp
+        desktop/SessionBus.cpp
+        desktop/ShortcutsLinux.cpp
+        desktop/TrayLinux.cpp
         graphics/SurfaceDMABuf.cpp
     )
     list(APPEND ZeroGEmbedding_LIBRARIES ${CMAKE_DL_LIBS})
@@ -406,3 +419,16 @@ set(ZeroGAccessibility_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCL
 WEBKIT_EXECUTABLE_DECLARE(ZeroGAccessibility)
 WEBKIT_EXECUTABLE(ZeroGAccessibility)
 ZEROG_USE_WEBCORE_INCLUDES(ZeroGAccessibility)
+
+# The desktop's services on Linux (API 0.5.3) from the desktop's side of the
+# session bus: a status notifier watcher, a notification server and the
+# GlobalShortcuts portal, faked, against the C API.
+if (NOT WIN32)
+    set(ZeroGDesktopDBus_SOURCES ${ZEROG_SOURCE_DIR}/tests/api/desktop_dbus.cpp)
+    set(ZeroGDesktopDBus_LIBRARIES ZeroGAPI ${CMAKE_DL_LIBS})
+    set(ZeroGDesktopDBus_FRAMEWORKS ${ZeroGEmbedding_FRAMEWORKS})
+    set(ZeroGDesktopDBus_PRIVATE_INCLUDE_DIRECTORIES ${ZeroGEmbedding_PRIVATE_INCLUDE_DIRECTORIES} ${ZEROG_SOURCE_DIR}/include)
+    WEBKIT_EXECUTABLE_DECLARE(ZeroGDesktopDBus)
+    WEBKIT_EXECUTABLE(ZeroGDesktopDBus)
+    ZEROG_USE_WEBCORE_INCLUDES(ZeroGDesktopDBus)
+endif ()

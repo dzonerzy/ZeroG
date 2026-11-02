@@ -5,6 +5,7 @@ set(ZeroGAPI_LIBRARY_TYPE STATIC)
 set(ZeroGAPI_SOURCES
     API.cpp
     Bindings.cpp
+    DesktopAPI.cpp
 )
 
 set(ZeroGAPI_LIBRARIES

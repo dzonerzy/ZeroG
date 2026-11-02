@@ -83,6 +83,8 @@ struct zg_runtime {
     std::vector<std::unique_ptr<ZeroG::Window>> inspectorWindows;
     std::atomic<bool> quit { false }; // zg_runtime_quit, from any thread
     zg_native_handle wakeUpHandle { 0 };
+    // (0.5.3) Its tray icons, gone with it (DesktopAPI.cpp).
+    std::vector<zg_tray*> trays;
 };
 
 namespace ZeroG::API {

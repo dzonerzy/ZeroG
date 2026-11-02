@@ -58,6 +58,9 @@ run "Web Inspector (dev and debug builds)" "$bin/ZeroGInspector"
 run "create and destroy cycles" xvfb-run -a "$bin/ZeroGLifecycleTest"
 # A session bus of its own; the AT-SPI bus and registry start on demand.
 run "accessibility (AT-SPI)" dbus-run-session -- xvfb-run -a timeout 120 "$bin/ZeroGAccessibility"
+# The tray, notifications and the shortcuts portal against a desktop faked on a
+# session bus of its own; then X11's key grabs in the windows' test above.
+run "tray, notifications and shortcuts portal (D-Bus)" dbus-run-session -- timeout 120 "$bin/ZeroGDesktopDBus"
 for target in assets requests values; do
     run "fuzz corpus: $target" "$bin/ZeroGFuzz$(echo $target | sed 's/./\U&/')" /src/tests/fuzz/corpus/$target/*
 done

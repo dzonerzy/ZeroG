@@ -81,6 +81,8 @@ nav:
       - Views: reference/views.md
       - JavaScript bindings: reference/direct-javascript-bindings.md
       - Windows: reference/windows.md
+      - Work for the runtime thread: reference/work-for-the-runtime-thread.md
+      - The desktop: reference/the-desktop-around-the-windows.md
   - Design:
       - design/index.md
       - Overview: design/overview.md

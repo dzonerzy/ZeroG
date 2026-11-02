@@ -562,6 +562,9 @@ void Window::colorSchemeChanged()
     constexpr DWORD useImmersiveDarkMode = 20; // DWMWA_USE_IMMERSIVE_DARK_MODE
     BOOL dark = m_view->page().useDarkAppearance();
     DwmSetWindowAttribute(static_cast<HWND>(nativeHandle()), useImmersiveDarkMode, &dark, sizeof dark);
+    // The menus with it.
+    if (m_menus)
+        m_menus->setDark(dark);
 #endif
 }
 
@@ -894,6 +897,7 @@ bool Window::setMenu(const Menu* menu)
         if (!menu)
             return true;
         m_menus = std::make_unique<NativeMenus>(nativeHandle(), id(), s_menuEvent);
+        m_menus->setDark(m_view->page().useDarkAppearance());
     }
     // Alt and the items' access keys open the menu bar (SDL keeps them from
     // Windows by default).
@@ -935,8 +939,10 @@ void Window::setMenuItemEnabled(unsigned id, bool enabled)
 bool Window::popupMenu(const Menu& menu, const FloatPoint& point)
 {
 #if OS(WINDOWS)
-    if (!m_menus)
+    if (!m_menus) {
         m_menus = std::make_unique<NativeMenus>(nativeHandle(), id(), s_menuEvent);
+        m_menus->setDark(m_view->page().useDarkAppearance());
+    }
     // The view's logical pixels to the client area's.
     float scale = m_view->scale();
     m_menus->popup(menu, std::lround(point.x() * scale), std::lround(point.y() * scale));

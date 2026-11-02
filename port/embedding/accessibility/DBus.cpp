@@ -57,6 +57,8 @@ const Library* Library::get()
         load(result.message_iter_init, "dbus_message_iter_init");
         load(result.message_iter_init_append, "dbus_message_iter_init_append");
         load(result.message_iter_append_basic, "dbus_message_iter_append_basic");
+        load(result.message_iter_append_fixed_array, "dbus_message_iter_append_fixed_array");
+        load(result.bus_request_name, "dbus_bus_request_name");
         load(result.message_iter_open_container, "dbus_message_iter_open_container");
         load(result.message_iter_close_container, "dbus_message_iter_close_container");
         load(result.message_iter_get_arg_type, "dbus_message_iter_get_arg_type");
@@ -125,6 +127,16 @@ void Writer::float64(double value)
     library().message_iter_append_basic(&m_iter, TypeDouble, &value);
 }
 
+void Writer::bytes(std::span<const uint8_t> values)
+{
+    char signature[] = { static_cast<char>(TypeByte), 0 };
+    Writer array;
+    library().message_iter_open_container(&m_iter, TypeArray, signature, &array.m_iter);
+    const uint8_t* data = values.data();
+    library().message_iter_append_fixed_array(&array.m_iter, TypeByte, &data, static_cast<int>(values.size()));
+    library().message_iter_close_container(&m_iter, &array.m_iter);
+}
+
 void Writer::container(int type, const char* signature, NOESCAPE const Function<void(Writer&)>& contents)
 {
     Writer sub;
@@ -152,6 +164,14 @@ bool Reader::boolean()
 {
     Bool value = 0;
     if (type() == TypeBoolean)
+        library().message_iter_get_basic(&m_iter, &value);
+    return value;
+}
+
+uint8_t Reader::byte()
+{
+    uint8_t value = 0;
+    if (type() == TypeByte)
         library().message_iter_get_basic(&m_iter, &value);
     return value;
 }

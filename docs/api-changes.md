@@ -6,6 +6,37 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## 0.5.3
+
+The desktop around the windows, added at the end of the header:
+
+- **Work for the runtime thread:** `zg_runtime_post(rt, task, user)`, from any
+  thread: `task(user)` runs on the runtime thread, in order, waking its loop.
+- **Opening with the system:** `zg_open_url` (a web page in the browser,
+  `mailto:` in the mail program, `file://` with the file's program).
+- **System tray:** `zg_tray_create` with an RGBA icon, a tooltip and
+  `zg_tray_callbacks` (`activated` with where, `menu_item`);
+  `zg_tray_set_icon`, `set_tooltip`, `set_menu` (a `zg_menu`, as windows'),
+  `menu_set_checked`, `menu_set_enabled`, `get_rect`, `zg_tray_destroy`. The
+  notification area on Windows (`Shell_NotifyIcon`, back after Explorer
+  restarts); a StatusNotifierItem with a `com.canonical.dbusmenu` menu on Linux
+  (KDE, GNOME with the AppIndicator extension, most other desktops).
+- **Notifications:** `zg_runtime_set_notifications` (the application's id,
+  name, icon and an `activated` callback), then `zg_notification_show` (a
+  title, a body, a tag that replaces, up to three buttons) and
+  `zg_notification_remove`. Toasts on Windows (the app id registered under
+  the user's `AppUserModelId` key); `org.freedesktop.Notifications` on Linux.
+- **Global shortcuts:** `zg_runtime_set_shortcut_callback`,
+  `zg_shortcut_register(rt, id, "Ctrl+Shift+K")`, `zg_shortcut_unregister`.
+  `RegisterHotKey` on Windows, a key grab on X11, the GlobalShortcuts portal
+  on Wayland (`ZG_ERROR_UNSUPPORTED` without it).
+
+Fixes:
+
+- Windows: menu bars and popup menus are dark with the view's color scheme
+  (`zg_view_set_color_scheme`, or the system's), as the window's frame was
+  already.
+
 ## 0.5.2
 
 Fixes, no API change:

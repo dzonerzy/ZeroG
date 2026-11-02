@@ -829,6 +829,8 @@ void zg_runtime_destroy(zg_runtime* rt)
     if (!rt || !checkThread())
         return;
     rt->inspectorWindows.clear();
+    while (!rt->trays.empty())
+        zg_tray_destroy(rt->trays.back());
     while (!rt->windows.empty())
         zg_window_destroy(rt->windows.back());
     destroyDeferredWindows(*rt);

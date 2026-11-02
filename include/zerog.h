@@ -68,7 +68,7 @@ extern "C" {
 
 #define ZG_VERSION_MAJOR 0
 #define ZG_VERSION_MINOR 5
-#define ZG_VERSION_PATCH 2
+#define ZG_VERSION_PATCH 3
 
 /* ------------------------------------------------------------------------ */
 /* Handles                                                                   */
@@ -1294,7 +1294,9 @@ ZG_API zg_result zg_window_message_box(zg_window *win, const zg_message_box *box
    it is set, so the description may be changed or destroyed afterwards
    (change the window's items with zg_window_menu_set_*). Chosen items come to
    the window's menu_item callback with their id; a checkbox item's mark
-   changes only with zg_window_menu_set_checked.
+   changes only with zg_window_menu_set_checked. (0.5.3) The menu bar and the
+   popup menus are light or dark as the window's view (zg_view_set_color_scheme),
+   like its title bar.
 
    Windows only: elsewhere zg_window_set_menu and zg_window_popup_menu fail
    with ZG_ERROR_UNSUPPORTED (draw menus in the page there). */
@@ -1327,6 +1329,125 @@ ZG_API zg_result zg_window_menu_set_enabled(zg_window *win, unsigned id, int ena
    position). After the call menu_item comes with the chosen item's id, or
    with 0 if the menu was dismissed (to answer a zg_context_menu either way). */
 ZG_API zg_result zg_window_popup_menu(zg_window *win, const zg_menu *menu, float x, float y);
+
+/* ------------------------------------------------------------------------ */
+/* Work for the runtime thread (0.5.3)                                       */
+
+/* Any thread: runs `task(user)` on the runtime thread soon (from zg_runtime_run's
+   loop, or the next zg_runtime_update), in the order posted: a worker thread's
+   way to the API. Tasks posted after zg_runtime_destroy never run. */
+typedef void (*zg_task_fn)(void *user);
+ZG_API zg_result zg_runtime_post(zg_runtime *rt, zg_task_fn task, void *user);
+
+/* ------------------------------------------------------------------------ */
+/* The desktop around the windows (0.5.3)                                    */
+
+/* ---- Opening with the system ----
+
+   `url` with the desktop's application for it: http(s) and mailto links in the
+   default browser or mail client, a file:// URL with the file's application,
+   a folder's in the file manager. Returns once handed over (not when the
+   application has opened). */
+ZG_API zg_result zg_open_url(zg_runtime *rt, const char *url);
+
+/* ---- System tray ----
+
+   An icon in the notification area (Windows) or among the status notifier
+   items (Linux: StatusNotifierItem over D-Bus, with its menu over the
+   com.canonical.dbusmenu interface, as KDE, Xfce, Cinnamon, MATE and GNOME
+   with the AppIndicator extension show them; no GTK). A click calls
+   `activated` with where it was, desktop coordinates; the menu (a zg_menu,
+   copied when set) opens on a right click, its items reported to
+   `menu_item`. On Linux the icon is shown once a status notifier host runs: a
+   tray created before one starts appears when it does. Runtime thread. */
+typedef struct zg_tray zg_tray;
+
+typedef struct zg_tray_callbacks {
+    size_t size;
+    void *user;
+    /* A click on the icon (Windows: the left button; Linux: the host's
+       primary activation), at x, y (0, 0 when the host does not say). */
+    void (*activated)(zg_tray *tray, int x, int y, void *user);
+    void (*menu_item)(zg_tray *tray, unsigned id, void *user);
+} zg_tray_callbacks;
+
+typedef struct zg_tray_config {
+    size_t size;
+    /* The icon: RGBA8 pixels, rows top to bottom (copied); 32 × 32 or more
+       looks right at every scale. */
+    const void *icon_rgba;
+    unsigned icon_width, icon_height;
+    const char *tooltip;   /* NULL: none */
+    /* Linux: the item's Id and Title for the host (the application's name);
+       NULL: "zerog". */
+    const char *id;
+} zg_tray_config;
+
+/* NULL on failure (zg_last_error); ZG_ERROR_UNSUPPORTED on Linux without
+   libdbus or a session bus. */
+ZG_API zg_tray *zg_tray_create(zg_runtime *rt, const zg_tray_config *config, const zg_tray_callbacks *callbacks);
+ZG_API void zg_tray_destroy(zg_tray *tray);
+ZG_API zg_result zg_tray_set_icon(zg_tray *tray, const void *rgba, unsigned width, unsigned height);
+ZG_API zg_result zg_tray_set_tooltip(zg_tray *tray, const char *tooltip);
+/* Its menu, NULL for none (copied: change items with zg_tray_menu_set_*). */
+ZG_API zg_result zg_tray_set_menu(zg_tray *tray, const zg_menu *menu);
+ZG_API zg_result zg_tray_menu_set_checked(zg_tray *tray, unsigned id, int checked);
+ZG_API zg_result zg_tray_menu_set_enabled(zg_tray *tray, unsigned id, int enabled);
+/* Where the icon is, desktop coordinates, to place a window by it. Linux has
+   no way to ask: the point of the last activation, ZG_ERROR_NOT_FOUND before
+   one. */
+ZG_API zg_result zg_tray_get_rect(zg_tray *tray, int *x, int *y, unsigned *width, unsigned *height);
+
+/* ---- Notifications ----
+
+   The desktop's notifications: toasts in the Windows notification center,
+   org.freedesktop.Notifications on Linux. The application says who it is
+   first: on Windows its app_id becomes an AppUserModelID registered for the
+   user (HKCU\Software\Classes\AppUserModelId) with the name and icon, which the
+   notification center shows; on Linux the name and icon go with each
+   notification. A click on a notification, or one of its buttons, comes to
+   `activated` while the application runs. Runtime thread. */
+typedef struct zg_notifications_config {
+    size_t size;
+    const char *app_id;     /* reverse-DNS ("com.example.notes"); required */
+    const char *app_name;   /* shown as the sender; NULL: app_id */
+    const char *icon_path;  /* a PNG file; NULL: none (Linux), the executable's (Windows) */
+    void *user;
+    /* `tag` is the notification's; `action` the button's index, -1 for a
+       click on the notification itself. */
+    void (*activated)(zg_runtime *rt, const char *tag, int action, void *user);
+} zg_notifications_config;
+
+ZG_API zg_result zg_runtime_set_notifications(zg_runtime *rt, const zg_notifications_config *config);
+
+typedef struct zg_notification {
+    size_t size;
+    const char *title;
+    const char *body;       /* NULL: none */
+    /* Identifies it: a notification with the same tag replaces it, and
+       zg_notification_remove takes it away. NULL: a new one each time. */
+    const char *tag;
+    const char *const *actions; /* button labels, up to 3 */
+    size_t action_count;
+} zg_notification;
+
+/* ZG_ERROR_UNSUPPORTED where the desktop has no notification service. */
+ZG_API zg_result zg_notification_show(zg_runtime *rt, const zg_notification *notification);
+ZG_API zg_result zg_notification_remove(zg_runtime *rt, const char *tag);
+
+/* ---- Global shortcuts ----
+
+   Keys pressed anywhere, whichever application has the keyboard: Windows
+   (RegisterHotKey), X11 (a key grab on the root window), Wayland through the
+   GlobalShortcuts portal where the compositor offers it (the user confirms
+   the binding there, which may change the keys). `accelerator` as a menu
+   item's ("Ctrl+Shift+K", "Alt+F12"); `id` from 1. Runtime thread. */
+typedef void (*zg_shortcut_fn)(zg_runtime *rt, unsigned id, void *user);
+ZG_API zg_result zg_runtime_set_shortcut_callback(zg_runtime *rt, zg_shortcut_fn pressed, void *user);
+/* ZG_ERROR_ALREADY_EXISTS if another application holds the keys (or `id` is
+   taken), ZG_ERROR_UNSUPPORTED on Wayland without the portal. */
+ZG_API zg_result zg_shortcut_register(zg_runtime *rt, unsigned id, const char *accelerator);
+ZG_API zg_result zg_shortcut_unregister(zg_runtime *rt, unsigned id);
 
 #ifdef __cplusplus
 }

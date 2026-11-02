@@ -128,6 +128,8 @@ struct Library {
     Bool (*message_iter_init)(Message*, Iter*);
     void (*message_iter_init_append)(Message*, Iter*);
     Bool (*message_iter_append_basic)(Iter*, int type, const void* value);
+    Bool (*message_iter_append_fixed_array)(Iter*, int elementType, const void* value, int count);
+    int (*bus_request_name)(Connection*, const char* name, unsigned flags, Error*);
     Bool (*message_iter_open_container)(Iter*, int type, const char* containedSignature, Iter* sub);
     Bool (*message_iter_close_container)(Iter*, Iter* sub);
     int (*message_iter_get_arg_type)(Iter*);
@@ -152,6 +154,8 @@ public:
     void int32(int32_t);
     void uint32(uint32_t);
     void float64(double);
+    // An array of bytes ("ay"), in one call.
+    void bytes(std::span<const uint8_t>);
     // A container: array ('a', with its element signature), struct ('r'),
     // dict entry ('e') or variant ('v', with its value's signature).
     void container(int type, const char* signature, NOESCAPE const Function<void(Writer&)>&);
@@ -169,6 +173,7 @@ public:
     int type();
     bool next();
     bool boolean();
+    uint8_t byte();
     int32_t int32();
     uint32_t uint32();
     double float64();
