@@ -352,8 +352,23 @@ void Compositor::scheduleUpdateLocked()
     }
 }
 
+void Compositor::setSuspended(bool suspended)
+{
+    Locker locker { m_stateLock };
+    if (m_suspended == suspended)
+        return;
+    m_suspended = suspended;
+    if (!suspended && std::exchange(m_renderDeferred, false))
+        scheduleRenderLocked();
+}
+
 void Compositor::scheduleRenderLocked()
 {
+    // Hidden: rendered when shown again.
+    if (m_suspended) {
+        m_renderDeferred = true;
+        return;
+    }
     if (std::exchange(m_renderScheduled, true))
         return;
     runOnCompositorThread([this] {

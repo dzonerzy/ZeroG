@@ -116,6 +116,10 @@ public:
     // itself, one frame per frame interval).
     enum class Pacing : bool { Host, Display };
     void setPacing(Pacing pacing) { m_pacing = pacing; }
+
+    // Suspended (its view hidden): nothing rendered or presented; what was
+    // asked for meanwhile is rendered once resumed.
+    void setSuspended(bool);
     // The shortest time between two animation frames: the display's refresh
     // interval in window mode; in texture mode a cap the application may set
     // (zero, the default: none).
@@ -128,6 +132,11 @@ public:
     // (it presents it, and its swap may wait for vsync there). Null removes it,
     // once any call in progress has returned.
     void setPresenter(Function<void()>&&);
+
+    // Any thread: another frame of what is committed, without a rendering update
+    // (a window's native layer drawing again under the page: nothing on the page
+    // is painted again).
+    void recomposite() { requestComposition(WebCore::CompositionReason::Animation); }
 
     // For tests: frames composited so far, any thread.
     unsigned compositedFrames() const { return m_compositedFrames; }
@@ -192,6 +201,8 @@ private:
     bool m_waitingForTiles WTF_GUARDED_BY_LOCK(m_stateLock) { false };
     bool m_notifyRenderingUpdate WTF_GUARDED_BY_LOCK(m_stateLock) { false };
     bool m_renderScheduled WTF_GUARDED_BY_LOCK(m_stateLock) { false };
+    bool m_suspended WTF_GUARDED_BY_LOCK(m_stateLock) { false };
+    bool m_renderDeferred WTF_GUARDED_BY_LOCK(m_stateLock) { false };
     Lock m_attributesLock;
     WebCore::IntSize m_physicalSize WTF_GUARDED_BY_LOCK(m_attributesLock);
     float m_scale WTF_GUARDED_BY_LOCK(m_attributesLock) { 1 };

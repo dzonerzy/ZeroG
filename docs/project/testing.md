@@ -14,7 +14,9 @@ check and ends with `PASS` or `FAILED`.
     ```
 
     `linktest` (part of `all`) links C programs against the bundle the way
-    applications do and runs them.
+    applications do and runs them. `ZEROG_D3D_DEVICE=warp` renders on
+    Direct3D's software rasterizer instead of the GPU, to tell a driver's
+    fault from the engine's.
 
 === "Linux"
 
@@ -41,7 +43,7 @@ outside dev and debug) check that it is absent instead.
 | `ZeroGFirstRender [--gpu]` | HTML, CSS, script and text painted on the CPU (and GPU), pixels checked |
 | `ZeroGFrameLoop` | `requestAnimationFrame` on the application's frame clock; each frame repaints only the damage; buffers match a full repaint |
 | `ZeroGInput` | mouse (clicks, click count, `:hover`), focus, typing and editing commands (Backspace, arrows, Ctrl+A/Z/Shift+Z), key event properties, smooth wheel scrolling |
-| `ZeroGWindow` | window mode (SDL3 window, GPU presentation at vsync): rAF at the display's rate, presented image matches a CPU render, cursor and typing from window events, resizing reaches the page. A frameless transparent window: its empty part is transparent in what it presents, a translucent part premultiplied; a header marked `--zg-app-region: drag` moves it, a `no-drag` button inside does not, the edges resize it (on Windows, `WM_NCHITTEST` answers caption, client and edge, and the desktop shows through on screen when the desktop lets the test see it). Click-through: the same page's transparent part lets clicks through (Windows: `WindowFromPoint` finds the window behind there, this one on the header and the translucent card; X11: the input shape the X server has is the page's alpha). On Linux: `xvfb-run -a ZeroGWindow` |
+| `ZeroGWindow` | window mode (SDL3 window, GPU presentation at vsync): rAF at the display's rate, presented image matches a CPU render, cursor and typing from window events, resizing reaches the page. A window opened hidden renders nothing (its page hidden, no animation frames, nothing presented) until shown, and stops presenting when hidden again. A native layer drawn again and again is presented over the page as it is, with no rendering update of the page. A frameless transparent window: its empty part is transparent in what it presents, a translucent part premultiplied; a header marked `--zg-app-region: drag` moves it, a `no-drag` button inside does not, the edges resize it (on Windows, `WM_NCHITTEST` answers caption, client and edge, and the desktop shows through on screen when the desktop lets the test see it). Click-through: the same page's transparent part lets clicks through (Windows: `WindowFromPoint` finds the window behind there, this one on the header and the translucent card; X11: the input shape the X server has is the page's alpha). On Linux: `xvfb-run -a ZeroGWindow` |
 | `ZeroGTexture` | texture mode: frames shared with the application's own device (D3D11 on Windows, an EGL display on Linux) and read on its render thread while the engine renders; no torn frames; the result matches a CPU render; on Linux, WebGL on the application's display |
 | `ZeroGTextureD3D12` | Windows, texture mode for D3D12 games: frames opened on the reader's `ID3D12CommandQueue`, waited for and released on it, copied into a readback buffer while the engine renders; no torn frames, the last one matches a CPU render; a queue on another adapter (WARP) is refused, saying why |
 | `ZeroGTextureD3D9` | Windows, texture mode for Direct3D 9 games: a 9Ex device opens the engine's textures, and the same device with the copy path (what plain devices and 9Ex devices on another adapter get) receives the changed pixels; each frame drawn as a textured quad and read back, none torn, the last one matching a CPU render, then `zg_surface_device_lost` and a Reset and frames again. A plain `IDirect3DDevice9` too, where the desktop allows one (skipped in remote sessions) |

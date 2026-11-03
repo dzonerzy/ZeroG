@@ -14,7 +14,13 @@ if (WIN32)
     # backend keeps one device context and one state cache for all GL contexts,
     # so calls alternating between threads must re-apply their context's state
     # (angle_force_context_check_every_call; it replaces the per-context mutex).
-    list(APPEND ANGLE_DEFINITIONS ANGLE_ENABLE_SHARE_CONTEXT_LOCK=1 ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1)
+    # The EGL calls on contexts and surfaces take the same global lock
+    # (libGLESv2/global_state.h, patched): without the context mutex they took
+    # none, and an eglSwapBuffers or eglMakeCurrent on one thread ran beside GL
+    # calls on another, on the one device context and state cache. Some EGL
+    # entry points hold the global lock already: it is made recursive.
+    list(APPEND ANGLE_DEFINITIONS ANGLE_ENABLE_SHARE_CONTEXT_LOCK=1 ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1
+        ANGLE_ENABLE_GLOBAL_MUTEX_RECURSION=1)
     # Static too: platform/PlatformMethods.h would otherwise mark ANGLE's platform
     # functions dllimport where they are used, and MSVC's linker warns about it
     # (LNK4217) in every application that links the engine.

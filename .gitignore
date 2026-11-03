@@ -17,6 +17,8 @@
 # Plume, the Zig framework: its own repository (github.com/dzonerzy/plume),
 # worked on from here
 /plume/
+# Headroom, a disk space explorer built with Plume: its own repository too
+/headroom/
 
 # Editors
 /.vs/

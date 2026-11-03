@@ -1,0 +1,66 @@
+diff --git a/Source/ThirdParty/ANGLE/src/libGLESv2/egl_ext_stubs.cpp b/Source/ThirdParty/ANGLE/src/libGLESv2/egl_ext_stubs.cpp
+index ec4d7d8b80..dea09d3d8d 100644
+--- a/Source/ThirdParty/ANGLE/src/libGLESv2/egl_ext_stubs.cpp
++++ b/Source/ThirdParty/ANGLE/src/libGLESv2/egl_ext_stubs.cpp
+@@ -567,6 +567,10 @@ EGLBoolean SwapBuffersWithDamageKHR(Thread *thread,
+ {
+     ANGLE_EGL_TRY_RETURN(thread, eglSurface->swapWithDamage(thread->getContext(), rects, n_rects),
+                          "eglSwapBuffersWithDamageKHR", eglSurface, EGL_FALSE);
++#if defined(ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL)
++    // ZeroG: the swap draws through the backend's shared state cache (SwapChain11).
++    SetGlobalLastContext(nullptr);
++#endif
+ 
+     thread->setSuccess();
+     return EGL_TRUE;
+diff --git a/Source/ThirdParty/ANGLE/src/libGLESv2/egl_stubs.cpp b/Source/ThirdParty/ANGLE/src/libGLESv2/egl_stubs.cpp
+index d7c648658e..21aec509d2 100644
+--- a/Source/ThirdParty/ANGLE/src/libGLESv2/egl_stubs.cpp
++++ b/Source/ThirdParty/ANGLE/src/libGLESv2/egl_stubs.cpp
+@@ -482,6 +482,12 @@ EGLBoolean MakeCurrent(Thread *thread,
+             thread,
+             display->makeCurrent(thread, previousContext, drawSurface, readSurface, context),
+             "eglMakeCurrent", GetContextIfValid(display, contextID), EGL_FALSE);
++#if defined(ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL)
++        // ZeroG: making a context current resets the backend's shared state cache
++        // (StateManager11::onMakeCurrent): the next GL call, any context's, applies its
++        // state again.
++        SetGlobalLastContext(nullptr);
++#endif
+     }
+ 
+     thread->setSuccess();
+@@ -642,6 +648,10 @@ EGLBoolean SwapBuffers(Thread *thread, Display *display, Surface *eglSurface)
+ {
+     ANGLE_EGL_TRY_RETURN(thread, eglSurface->swap(thread->getContext()), "eglSwapBuffers",
+                          eglSurface, EGL_FALSE);
++#if defined(ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL)
++    // ZeroG: the swap draws through the backend's shared state cache (SwapChain11).
++    SetGlobalLastContext(nullptr);
++#endif
+ 
+     thread->setSuccess();
+     return EGL_TRUE;
+diff --git a/Source/ThirdParty/ANGLE/src/libGLESv2/global_state.h b/Source/ThirdParty/ANGLE/src/libGLESv2/global_state.h
+index 7810ce4728..4794be3192 100644
+--- a/Source/ThirdParty/ANGLE/src/libGLESv2/global_state.h
++++ b/Source/ThirdParty/ANGLE/src/libGLESv2/global_state.h
+@@ -96,7 +96,17 @@ ANGLE_INLINE ScopedContextMutexLock LockAndTryMergeContextMutexes(gl::Context *c
+     return lock;
+ }
+ 
+-#if !defined(ANGLE_ENABLE_CONTEXT_MUTEX)
++#if defined(ANGLE_ENABLE_SHARE_CONTEXT_LOCK) && defined(ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL)
++// ZeroG: GL calls hold the global mutex (SCOPED_SHARE_CONTEXT_LOCK below); the EGL calls
++// on contexts and surfaces (eglMakeCurrent, eglSwapBuffers, ...) must too, or they run
++// beside another thread's GL calls on the backend's one device context and state
++// cache. Some entry points hold the global mutex already: it is recursive
++// (ANGLE_ENABLE_GLOBAL_MUTEX_RECURSION).
++#    define ANGLE_EGL_SCOPED_CONTEXT_LOCK(EP, THREAD, ...) \
++        egl::ScopedGlobalEGLMutexLock shareContextLock
++#    define ANGLE_EGL_SCOPED_CONTEXT_LOCK_DPY(EP, THREAD, DPY, ...) \
++        egl::ScopedGlobalEGLMutexLock shareContextLock
++#elif !defined(ANGLE_ENABLE_CONTEXT_MUTEX)
+ #    define ANGLE_EGL_SCOPED_CONTEXT_LOCK(EP, THREAD, ...)
+ #    define ANGLE_EGL_SCOPED_CONTEXT_LOCK_DPY(EP, THREAD, DPY, ...)
+ #else

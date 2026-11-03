@@ -239,6 +239,7 @@ private:
     // display's scale; 1 on Wayland).
     float unitsPerLogicalPixel() const;
     void stateMayHaveChanged();
+    void updateVisibility();
     // True if the key chose a menu bar item.
     bool handleAccelerator(const SDL_Event&);
     // The select popup's events from the parent's side; true if used.

@@ -22,7 +22,9 @@ typedef struct zg_window_config {
        updated from it). Windows and X11; Wayland ignores it. */
     int click_through;
     /* (0.5) Nonzero: the window starts hidden; zg_window_show shows it.
-       Otherwise it appears with its first frame. */
+       Otherwise it appears with its first frame. Since 0.5.5 a hidden or
+       minimized window renders nothing: its page is hidden (document.hidden,
+       no animation frames) until it is shown. */
     int hidden;
     /* (0.5.4) Nonzero: the page is composited over a native layer the
        application draws (zg_window_set_layer): what the page leaves

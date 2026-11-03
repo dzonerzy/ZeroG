@@ -281,6 +281,8 @@ std::unique_ptr<Window> Window::create(Configuration&& configuration)
 #endif
     result->updateSize();
     result->m_state = result->state();
+    // A window opened hidden renders nothing until shown.
+    result->updateVisibility();
     result->m_isPopup = configuration.parent;
     if (result->m_isPopup)
         return std::unique_ptr<Window> { result.release() };
@@ -679,8 +681,10 @@ void Window::restore()
 
 void Window::show()
 {
-    // Shown now if it has a frame to show, else with its first one.
+    // Shown now if it has a frame to show, else with its first one (it
+    // renders again first).
     m_showWhenPresented = true;
+    updateVisibility();
     if (m_presentedFrames && !m_shown) {
         SDL_ShowWindow(m_window);
         m_shown = true;
@@ -692,6 +696,16 @@ void Window::hide()
     m_showWhenPresented = false;
     m_shown = false;
     SDL_HideWindow(m_window);
+    updateVisibility();
+}
+
+void Window::updateVisibility()
+{
+    // Seen: shown (or waiting for its first frame to be), not minimized. A
+    // window nobody sees renders nothing: its page is hidden (no animation
+    // frames, timers throttled) and its compositor presents nothing.
+    bool minimized = SDL_GetWindowFlags(m_window) & SDL_WINDOW_MINIMIZED;
+    m_view->setVisible(m_showWhenPresented && !minimized);
 }
 
 void Window::setAlwaysOnTop(bool onTop)
@@ -1416,10 +1430,13 @@ void Window::handleEvent(const SDL_Event& event)
             m_view->repaint();
             stateMayHaveChanged();
             break;
-        case SDL_EVENT_WINDOW_HIDDEN:
         case SDL_EVENT_WINDOW_MINIMIZED:
-        case SDL_EVENT_WINDOW_MAXIMIZED:
         case SDL_EVENT_WINDOW_RESTORED:
+            updateVisibility();
+            stateMayHaveChanged();
+            break;
+        case SDL_EVENT_WINDOW_HIDDEN:
+        case SDL_EVENT_WINDOW_MAXIMIZED:
         case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
         case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
             stateMayHaveChanged();
@@ -1831,7 +1848,17 @@ void Window::setLayerDraw(LayerDraw&& draw)
 
 void Window::invalidateLayer()
 {
-    if (!m_nativeLayer || m_layerInvalidated.exchange(true))
+    if (!m_nativeLayer)
+        return;
+    // A composited page: another frame of its layers as they are, presented
+    // with the layer. Painting the page again for it would repaint every tile
+    // each frame of an animated layer (GPU textures made and dropped at the
+    // display's rate).
+    if (auto* compositor = m_view->compositor()) {
+        compositor->recomposite();
+        return;
+    }
+    if (m_layerInvalidated.exchange(true))
         return;
     // A new page frame, presented with the layer, where frames are presented.
     callOnMainThread([sdlWindow = m_window] {

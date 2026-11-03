@@ -68,7 +68,7 @@ extern "C" {
 
 #define ZG_VERSION_MAJOR 0
 #define ZG_VERSION_MINOR 5
-#define ZG_VERSION_PATCH 4
+#define ZG_VERSION_PATCH 5
 
 /* ------------------------------------------------------------------------ */
 /* Handles                                                                   */
@@ -1085,7 +1085,9 @@ typedef struct zg_window_config {
        updated from it). Windows and X11; Wayland ignores it. */
     int click_through;
     /* (0.5) Nonzero: the window starts hidden; zg_window_show shows it.
-       Otherwise it appears with its first frame. */
+       Otherwise it appears with its first frame. Since 0.5.5 a hidden or
+       minimized window renders nothing: its page is hidden (document.hidden,
+       no animation frames) until it is shown. */
     int hidden;
     /* (0.5.4) Nonzero: the page is composited over a native layer the
        application draws (zg_window_set_layer): what the page leaves
@@ -1481,8 +1483,9 @@ typedef struct zg_window_layer {
 /* Runtime thread. NULL removes the layer's callback (the layer is black).
    ZG_ERROR_UNSUPPORTED for a window created without native_layer. */
 ZG_API zg_result zg_window_set_layer(zg_window *win, const zg_window_layer *layer);
-/* Any thread, the layer's draw included: present again soon, with a new page
-   frame. Cheap to call repeatedly: requests coalesce until the frame. */
+/* Any thread, the layer's draw included: present again soon, the layer drawn
+   again under the page as it is (since 0.5.5 the page is not painted again
+   for it). Cheap to call repeatedly: requests coalesce until the frame. */
 ZG_API void zg_window_layer_invalidate(zg_window *win);
 /* An OpenGL ES 3 function of the windows' contexts, for layers (EGL's
    eglGetProcAddress: ANGLE on Windows, the system's EGL on Linux). */

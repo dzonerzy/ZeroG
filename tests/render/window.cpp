@@ -63,6 +63,25 @@ constexpr auto shapedPage = R"HTML(<!DOCTYPE html>
   #card { position: absolute; top: 60px; left: 20px; width: 100px; height: 100px; background: rgba(255, 0, 0, 0.5); }
 </style></head><body><header><button>x</button></header><div id="card"></div></body></html>)HTML";
 
+// A page that paints a tiled gradient of another tile size every frame: GPU
+// work on the engine thread each frame (the gradient's pattern image, made
+// and handed to the compositor).
+constexpr auto gradientPage = R"HTML(<!DOCTYPE html>
+<html><head><style>
+  html, body { margin: 0; height: 100%; }
+  body { background: radial-gradient(circle at 30% 30%, #4a7, #123 70%); background-size: 60px 60px; }
+</style></head><body>
+  <script>
+    window.callbacks = 0;
+    function step() {
+      const size = 40 + (++callbacks % 60);
+      document.body.style.backgroundSize = size + "px " + size + "px";
+      requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  </script>
+</body></html>)HTML";
+
 #define check(condition, ...) [&] {                    \
         bool result = (condition);                     \
         std::printf("%s ", result ? "ok  " : "FAIL");  \
@@ -253,6 +272,108 @@ int main()
     auto innerWidth = window->view().evaluateScript("innerWidth + 'x' + innerHeight"_s);
     ok &= check(innerWidth == "500x300"_s, "window.innerWidth/innerHeight: %s", innerWidth.utf8().data());
     window = nullptr;
+
+    // A window opened hidden renders nothing: its page is hidden (no animation
+    // frames: an animating page in a hidden window, a tray's popover, must not
+    // keep the GPU busy presenting what nobody sees) until it is shown.
+    auto hidden = ZeroG::Window::create({ "ZeroG hidden window"_s, { 300, 200 }, true, false, false });
+    if (check(!!hidden, "a window opened hidden %s", ZeroG::Window::lastError().utf8().data())) {
+        hidden->view().loadHTML(String::fromUTF8(page));
+        runUntil(*hidden, 700_ms, [&] { return false; });
+        auto whileHidden = parseInteger<uint64_t>(hidden->view().evaluateScript("callbacks"_s)).value_or(0);
+        ok &= check(hidden->view().evaluateScript("String(document.hidden)"_s) == "true"_s, "its page is hidden");
+        ok &= check(whileHidden == 0, "no animation frames while hidden: %llu", static_cast<unsigned long long>(whileHidden));
+        ok &= check(hidden->presentedFrames() == 0, "nothing presented while hidden: %u frames", hidden->presentedFrames());
+        hidden->show();
+        bool animating = runUntil(*hidden, 3_s, [&] {
+            return parseInteger<uint64_t>(hidden->view().evaluateScript("callbacks"_s)).value_or(0) > 10;
+        });
+        ok &= check(hidden->view().evaluateScript("String(document.hidden)"_s) == "false"_s, "shown, its page is visible");
+        ok &= check(animating && hidden->presentedFrames() > 0, "shown, it animates and presents: %u frames", hidden->presentedFrames());
+        hidden->hide();
+        runUntil(*hidden, 200_ms, [&] { return false; });
+        auto atHide = hidden->presentedFrames();
+        runUntil(*hidden, 500_ms, [&] { return false; });
+        ok &= check(hidden->presentedFrames() == atHide, "hidden again, it stops presenting: %u, then %u frames", atHide, hidden->presentedFrames());
+    }
+    hidden = nullptr;
+
+    // A native layer drawn again and again (an animated scene under the page)
+    // is presented with the page's layers as they are: the page is not painted
+    // again for it, no rendering update (repainting every tile at the display's
+    // rate made and dropped GPU textures by the hundred a second).
+    ZeroG::Window::Configuration layeredConfiguration;
+    layeredConfiguration.title = "ZeroG layered window"_s;
+    layeredConfiguration.size = { 900, 600 };
+    layeredConfiguration.nativeLayer = true;
+    auto layered = ZeroG::Window::create(WTF::move(layeredConfiguration));
+    if (check(!!layered, "a window with a native layer %s", ZeroG::Window::lastError().utf8().data())) {
+        std::atomic<unsigned> draws { 0 };
+        layered->setLayerDraw([&](int, int, double) {
+            ++draws;
+        });
+        layered->view().loadHTML("<p style='font: 20px sans-serif'>A still page over a layer</p>"_s);
+        runUntil(*layered, 1_s, [&] { return false; });
+        auto updates = layered->view().renderingUpdates();
+        auto drawsBefore = draws.load();
+        auto presentedBefore = layered->presentedFrames();
+        auto deadline = MonotonicTime::now() + 1_s;
+        while (MonotonicTime::now() < deadline) {
+            layered->invalidateLayer();
+            layered->runOnce(16_ms);
+        }
+        unsigned drawn = draws.load() - drawsBefore;
+        unsigned presented = layered->presentedFrames() - presentedBefore;
+        unsigned newUpdates = layered->view().renderingUpdates() - updates;
+        if (!drawn)
+            std::printf("     skipped: no frames (the display is off, or the desktop minimized or covered the window)\n");
+        else {
+            ok &= check(drawn >= 10 && presented >= 10, "the layer drawn again: %u draws, %u frames presented", drawn, presented);
+            ok &= check(newUpdates <= 1, "the page not painted again for it: %u rendering updates", newUpdates);
+        }
+
+        // Beside it, a window painting a gradient every frame, shown and hidden
+        // every 300 ms: two windows presenting (eglMakeCurrent, eglSwapBuffers
+        // on the compositor thread) while the engine thread makes GL calls, on
+        // ANGLE's one D3D11 device context. (Without patch 0037 those EGL calls
+        // took no lock: an application doing this crashed NVIDIA's driver
+        // within seconds; this test did not reproduce it.)
+        // Frameless and transparent, as a tray's popover (DirectComposition on Windows).
+        ZeroG::Window::Configuration otherConfiguration;
+        otherConfiguration.title = "ZeroG second window"_s;
+        otherConfiguration.size = { 400, 500 };
+        otherConfiguration.frameless = true;
+        otherConfiguration.transparent = true;
+        auto other = ZeroG::Window::create(WTF::move(otherConfiguration));
+        if (check(!!other, "a second window %s", ZeroG::Window::lastError().utf8().data())) {
+            other->view().loadHTML(String::fromUTF8(gradientPage));
+            auto layerFrames = layered->presentedFrames();
+            unsigned toggles = 0;
+            auto end = MonotonicTime::now() + 8_s;
+            auto nextToggle = MonotonicTime::now() + 300_ms;
+            while (MonotonicTime::now() < end) {
+                layered->invalidateLayer();
+                layered->runOnce(8_ms);
+                if (MonotonicTime::now() >= nextToggle) {
+                    if (toggles++ % 2)
+                        other->show();
+                    else
+                        other->hide();
+                    nextToggle = MonotonicTime::now() + 300_ms;
+                }
+            }
+            other->show();
+            bool otherAnimating = runUntil(*other, 3_s, [&] {
+                return parseInteger<uint64_t>(other->view().evaluateScript("callbacks"_s)).value_or(0) > 30;
+            });
+            unsigned frames = layered->presentedFrames() - layerFrames;
+            if (!frames)
+                std::printf("     skipped: no frames (the display is off, or the desktop minimized or covered the window)\n");
+            else
+                ok &= check(frames >= 60 && otherAnimating, "two windows presenting, one shown and hidden %u times: %u layer frames, the other animating", toggles, frames);
+        }
+    }
+    layered = nullptr;
 
     // A frameless, transparent window: what the page leaves transparent is
     // transparent in what the window presents, a translucent part translucent;

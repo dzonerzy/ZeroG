@@ -44,8 +44,9 @@ ZG_ERROR_UNSUPPORTED for a window created without native_layer.
 ZG_API void zg_window_layer_invalidate(zg_window *win);
 ```
 
-Any thread, the layer's draw included: present again soon, with a new page
-frame. Cheap to call repeatedly: requests coalesce until the frame.
+Any thread, the layer's draw included: present again soon, the layer drawn
+again under the page as it is (since 0.5.5 the page is not painted again
+for it). Cheap to call repeatedly: requests coalesce until the frame.
 
 ### `zg_gl_get_proc_address`
 

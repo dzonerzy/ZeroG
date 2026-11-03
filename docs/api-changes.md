@@ -6,6 +6,17 @@ fields at the end of config structs (clients set `size`, so older ones keep
 working); renaming, removing or changing what something means takes a new minor
 version and an entry here.
 
+## 0.5.5
+
+No changes to the header's functions or structs. Two behaviors:
+
+- **Hidden windows:** a window that is hidden (`zg_window_config.hidden`,
+  `zg_window_hide`) or minimized renders nothing: its page is hidden
+  (`document.hidden`, no animation frames, timers throttled) and nothing is
+  presented until it is shown again.
+- **Layer invalidation:** `zg_window_layer_invalidate` presents the layer
+  again under the page as it is; it no longer paints the page again.
+
 ## 0.5.4
 
 Native layers and captures, added at the end of the header:

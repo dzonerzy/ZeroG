@@ -852,6 +852,25 @@ void View::setFocused(bool focused)
     focusController.setFocused(focused);
 }
 
+void View::setVisible(bool visible)
+{
+    if (m_visible == visible)
+        return;
+    m_visible = visible;
+    // A hidden page: document.hidden, requestAnimationFrame and timers
+    // suspended, no rendering updates; and its compositor presents nothing.
+    auto state = m_page->activityState();
+    if (visible)
+        state.add({ ActivityState::IsVisible, ActivityState::IsVisibleOrOccluded });
+    else
+        state.remove({ ActivityState::IsVisible, ActivityState::IsVisibleOrOccluded });
+    m_page->setActivityState(state);
+    if (m_compositor)
+        m_compositor->setSuspended(!visible);
+    if (visible)
+        repaint();
+}
+
 void View::setColorScheme(ColorScheme scheme)
 {
     m_colorScheme = scheme;

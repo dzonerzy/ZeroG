@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <wtf/Vector.h>
 
 namespace WebCore {
 
@@ -25,21 +26,26 @@ void PlatformDisplayZeroG::setAdapterLUID(uint64_t luid)
     s_adapterLUID = luid;
 }
 
+// ZEROG_D3D_DEVICE=warp: Direct3D's software rasterizer instead of the GPU, for
+// tests and for telling a driver's faults from the engine's.
 static RefPtr<GLDisplay> createGLDisplay(std::optional<NativePlatform>&)
 {
-    EGLint attributes[] = {
+    Vector<EGLint, 12> attributes {
         EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
         // Debug layers fill uninitialized buffers with a clear color.
         EGL_PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE, EGL_FALSE,
-        // The application's adapter (a game's), so its device can open the
-        // engine's textures; ANGLE takes the LUID in two halves.
-        EGL_PLATFORM_ANGLE_D3D_LUID_HIGH_ANGLE, static_cast<EGLint>(s_adapterLUID >> 32),
-        EGL_PLATFORM_ANGLE_D3D_LUID_LOW_ANGLE, static_cast<EGLint>(s_adapterLUID & 0xffffffff),
-        EGL_NONE,
     };
-    if (!s_adapterLUID)
-        attributes[4] = EGL_NONE; // the system's default adapter
-    return GLDisplay::create(eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attributes));
+    if (const char* device = getenv("ZEROG_D3D_DEVICE"); device && !strcmp(device, "warp"))
+        attributes.appendList({ EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_D3D_WARP_ANGLE });
+    else if (s_adapterLUID) {
+        // The application's adapter (a game's), so its device can open the
+        // engine's textures; ANGLE takes the LUID in two halves. Without one:
+        // the system's default adapter.
+        attributes.appendList({ EGL_PLATFORM_ANGLE_D3D_LUID_HIGH_ANGLE, static_cast<EGLint>(s_adapterLUID >> 32),
+            EGL_PLATFORM_ANGLE_D3D_LUID_LOW_ANGLE, static_cast<EGLint>(s_adapterLUID & 0xffffffff) });
+    }
+    attributes.append(EGL_NONE);
+    return GLDisplay::create(eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attributes.span().data()));
 }
 
 #else

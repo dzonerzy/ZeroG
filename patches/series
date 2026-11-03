@@ -37,3 +37,4 @@
 0034-webcore-service-worker-connection-per-session.patch
 0035-wtf-thread-description-on-windows.patch
 0036-webcore-adwaita-inset-check-mark.patch
+0037-angle-egl-calls-take-the-global-lock.patch

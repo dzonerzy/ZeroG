@@ -213,6 +213,12 @@ public:
 
     void setFocused(bool);
 
+    // Whether its page is seen (a window shown and not minimized). Hidden:
+    // document.hidden, requestAnimationFrame and timers suspended, nothing
+    // rendered or presented until it is visible again.
+    void setVisible(bool);
+    bool isVisible() const { return m_visible; }
+
     // What prefers-color-scheme says to the pages, and the look of form
     // controls and scrollbars. System: the desktop's setting, as window mode
     // learns it and follows it (setSystemDarkAppearance); light until then.
@@ -301,6 +307,7 @@ private:
     bool m_transparent { false };
     ColorScheme m_colorScheme { ColorScheme::System };
     bool m_needsRenderingUpdate { true };
+    bool m_visible { true };
     unsigned m_renderingUpdates { 0 };
     bool m_forceRepaint { false };
     WebCore::Region m_damage; // logical pixels
